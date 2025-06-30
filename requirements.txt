@@ -1,1 +1,4 @@
 torch
+numpy # for getting Numpy
+matplotlib # for triton.testing
+pandas # for triton.testing

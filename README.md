@@ -12,6 +12,7 @@ pip install -e thirdparty/triton/python/
 
 # TEST
 export PYTHONPATH=$(pwd)/python/
+#if get 'GLIBCXX_3.4.30' not found, do `conda install -c conda-forge gcc=12.1.0`
 TRITON_KERNEL_DUMP=1 TRITON_DUMP_DIR=dump TRITON_ALWAYS_COMPILE=1 python python/txl/tests/01-vector-add.py
 ```
 

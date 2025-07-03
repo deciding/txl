@@ -181,3 +181,4 @@ log/
 *.hatchet
 *.nvcudmp
 tmp.*
+tmp/

@@ -28,6 +28,12 @@ def gridDim(builder: ir.builder, axis:int=0) -> tl.tensor:
         raise ValueError(f"grid dim axis must be 0, 1, or 2 but got {axis}")
     return tl.tensor(builder.create_get_num_programs(axis), tl.int32)
 
+def warp_id(builder: ir.builder) -> tl.tensor:
+    return tl.tensor(builder.create_get_canonical_wrap_id(), tl.int32)
+
+def warpgroup_id(builder: ir.builder) -> tl.tensor:
+    return tl.tensor(builder.create_get_canonical_wrapgroup_id(), tl.int32)
+
 def local_alloc(builder: ir.builder, ptr: tl.tensor, space: str='smem', swizzle:tuple=(1,1,1), row_major: bool=False) -> tl.tensor:
     dst_ty = ptr.type
     return tl.tensor(

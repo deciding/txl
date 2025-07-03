@@ -381,6 +381,7 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
         passes.common.add_canonicalizer,
         passes.common.add_cse,
         nvidia.passes.ttnvgpuir.add_nvgpu_to_llvm,
+        nvidia.passes.txlgpuir.add_txlgpu_to_llvm,
         nvidia.passes.ttnvgpuir.add_warp_specialize_to_llvm,
         passes.common.add_canonicalizer,
         passes.common.add_cse,
@@ -569,6 +570,7 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None):
             next_module.create_location_snapshot(ir_full_name)
             print(f"Creating new locations for {ir_full_name}")
         module = next_module
+
     # write-back metadata
     metadata_group[metadata_filename] = fn_cache_manager.put(json.dumps(metadata, default=vars), metadata_filename,
                                                              binary=False)

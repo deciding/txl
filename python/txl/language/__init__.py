@@ -1,9 +1,11 @@
 from .core import (
-    tidx,
+    tid,
     tdim,
-    bidx,
+    bid,
     bdim,
     thread0,
+    warp_id,
+    warpgroup_id,
     print,
 )
 

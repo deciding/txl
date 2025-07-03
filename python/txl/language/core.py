@@ -2,56 +2,28 @@ from triton.language.core import builtin
 from . import semantic
 from .utils import _constexpr_to_value, _apply_binary_method
 
-class tidx:
-    @builtin
-    def x(_builder=None):
-        return semantic.threadIdx(_builder, 0)
-    @builtin
-    def y(_builder=None):
-        return semantic.threadIdx(_builder, 1)
-    @builtin
-    def z(_builder=None):
-        return semantic.threadIdx(_builder, 2)
+@builtin
+def tid(axis, _builder=None):
+    return semantic.threadIdx(_builder, axis)
 
-class tdim:
-    @builtin
-    def x(_builder=None):
-        return semantic.blockDim(_builder, 0)
-    @builtin
-    def y(_builder=None):
-        return semantic.blockDim(_builder, 1)
-    @builtin
-    def z(_builder=None):
-        return semantic.blockDim(_builder, 2)
+@builtin
+def tdim(axis, _builder=None):
+    return semantic.blockDim(_builder, axis)
 
-class bidx:
-    @builtin
-    def x(_builder=None):
-        return semantic.blockIdx(_builder, 0)
-    @builtin
-    def y(_builder=None):
-        return semantic.blockIdx(_builder, 1)
-    @builtin
-    def z(_builder=None):
-        return semantic.blockIdx(_builder, 2)
+@builtin
+def bid(axis, _builder=None):
+    return semantic.blockIdx(_builder, axis)
 
-class bdim:
-    @builtin
-    def x(_builder=None):
-        return semantic.gridDim(_builder, 0)
-    @builtin
-    def y(_builder=None):
-        return semantic.gridDim(_builder, 1)
-    @builtin
-    def z(_builder=None):
-        return semantic.gridDim(_builder, 2)
+@builtin
+def bdim(axis, _builder=None):
+    return semantic.gridDim(_builder, axis)
 
 @builtin
 def thread0(_builder=None):
-    is_bidx_x = bidx.x(_builder=_builder)
-    is_bidx_y = bidx.y(_builder=_builder)
-    is_bidx_z = bidx.z(_builder=_builder)
-    is_tidx_x = tidx.x(_builder=_builder)
+    is_bidx_x = bid(0, _builder=_builder)
+    is_bidx_y = bid(1, _builder=_builder)
+    is_bidx_z = bid(2, _builder=_builder)
+    is_tidx_x = tid(0, _builder=_builder)
     is_bidx_x0 = is_bidx_x.__eq__(0, _builder=_builder)
     is_bidx_y0 = is_bidx_y.__eq__(0, _builder=_builder)
     is_bidx_z0 = is_bidx_z.__eq__(0, _builder=_builder)
@@ -61,10 +33,14 @@ def thread0(_builder=None):
     is_thread0 = is_thread0.__and__(is_bidx_z0, _builder=_builder)
     is_thread0 = is_thread0.__and__(is_tidx_x0, _builder=_builder)
     return is_thread0
-    #return bidx.x(_builder=_builder) and \
-    #        bidx.y(_builder=_builder) and \
-    #        bidx.z(_builder=_builder) and \
-    #        tidx.x(_builder=_builder)
+
+@builtin
+def warp_id(_builder=None):
+    return semantic.warp_id(_builder)
+
+@builtin
+def warpgroup_id(_builder=None):
+    return semantic.warpgroup_id(_builder)
 
 @builtin
 def print(prefix_or_data, data=None, _builder=None):

@@ -5,6 +5,7 @@
 #include "third_party/nvidia/include/Dialect/TXLGPU/IR/Dialect.h"
 #include "third_party/proton/dialect/include/Dialect/Proton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 
@@ -80,7 +81,9 @@ inline void registerTritonDialects(mlir::DialectRegistry &registry) {
               mlir::triton::gpu::TritonGPUDialect, mlir::math::MathDialect,
               mlir::arith::ArithDialect, mlir::scf::SCFDialect,
               mlir::gpu::GPUDialect, mlir::LLVM::LLVMDialect,
-              mlir::NVVM::NVVMDialect, mlir::triton::nvgpu::NVGPUDialect, mlir::triton::txlgpu::TXLGPUDialect,
+              mlir::NVVM::NVVMDialect, mlir::triton::nvgpu::NVGPUDialect,
+              mlir::triton::txlgpu::TXLGPUDialect,
+              mlir::triton::TXLDialect,
               mlir::triton::amdgpu::TritonAMDGPUDialect,
               mlir::triton::proton::ProtonDialect, mlir::ROCDL::ROCDLDialect>();
 }

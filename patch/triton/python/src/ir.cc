@@ -28,6 +28,7 @@
 #include "triton/Dialect/Triton/IR/Types.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "txl/Dialect/TXL/IR/Dialect.h"
 #include "nvidia/include/Dialect/TXLGPU/IR/Dialect.h" // in third_party/nvidia/include
 #include "nvidia/include/Dialect/NVGPU/IR/Dialect.h"
 #include "triton/Tools/Sys/GetEnv.hpp"
@@ -324,6 +325,7 @@ void init_triton_ir(py::module &&m) {
   m.def("load_dialects", [](MLIRContext &context) {
     DialectRegistry registry;
     registry.insert<TritonDialect, ::mlir::triton::gpu::TritonGPUDialect,
+                    ::mlir::triton::TXLDialect,
                     ::mlir::triton::txlgpu::TXLGPUDialect,
                     math::MathDialect, arith::ArithDialect, scf::SCFDialect,
                     ::mlir::gpu::GPUDialect, cf::ControlFlowDialect,
@@ -1783,30 +1785,30 @@ void init_triton_ir(py::module &&m) {
            [](TritonOpBuilder &self, Value &val, Type &type) -> Value {
              return self.create<arith::IndexCastOp>(type, val);
            })
-      .def("create_local_alloc",
-           [](TritonOpBuilder &self, Value &ptr,
-              std::string space,
-              std::vector<unsigned> &swizzle, bool rowMajor) -> Value {
+      .def("create_smem_alloc",
+           [](TritonOpBuilder &self,
+               std::vector<int64_t> &shape, Type &elementType, bool isMutable) -> Value {
 
-             auto argType = cast<RankedTensorType>(ptr.getType());
-             int rank = argType.getRank();
-             auto ctaLayout = mlir::triton::gpu::CTALayoutAttr::getDefault(self.getContext(), argType.getRank());
-             auto order = mlir::triton::gpu::getMatrixOrder(rank, rowMajor);
-             llvm::outs() << "order: " << "\n";
-             auto newLayout = mlir::triton::gpu::SwizzledSharedEncodingAttr::get(
-                     self.getContext(), swizzle[0], swizzle[1], swizzle[2],
-                     order,
-                     ctaLayout
-                     //mlir::triton::gpu::getCTALayout(argType.getEncoding())
-                 );
-             llvm::outs() << "newLayout: "<< newLayout << "\n";
+               //std::vector<int64_t> block_shape(shape.size()); // Pre-allocate space
+               //std::transform(shape.begin(), shape.end(),
+               //                block_shape.begin(),
+               //                [](int32_t x) { return static_cast<int64_t>(x); }
+               //              );
 
-             auto sharedMemorySpace = mlir::triton::gpu::SharedMemorySpaceAttr::get(self.getContext());
-             auto newType = mlir::triton::gpu::MemDescType::get(argType.getShape(), argType.getElementType(),
-                         newLayout, sharedMemorySpace);
-             llvm::outs() << "newType: "<< newType << "\n";
+               //auto context = self.getContext();
+               //Attribute SharedMemorySpace =
+               //    mlir::triton::gpu::SharedMemorySpaceAttr::get(context);
+               //auto order = mlir::triton::gpu::getMatrixOrder(shape.size(), false);
+               //auto ctaLayout = mlir::triton::gpu::CTALayoutAttr::getDefault(context, shape.size());
+               //Attribute encoding = mlir::triton::gpu::SwizzledSharedEncodingAttr::get(
+               //    context, 1, 1, 1, order, ctaLayout);
+               //Attribute encoding = mlir::triton::gpu::getDefaultBlockedEncoding(
+               //        self.getContext(), shape, 4, 32, 1);
+               auto tensorType = RankedTensorType::get(shape, elementType);
 
-             return self.create<mlir::triton::gpu::LocalAllocOp>(newType, ptr);
+               //auto newType = mlir::triton::gpu::MemDescType::get(tensorType.getShape(), tensorType.getElementType(),
+               //                               encoding, SharedMemorySpace, isMutable);
+               return self.create<mlir::triton::SmemAllocOp>(tensorType, isMutable);
            })
       // dim
       .def("create_get_threadidx",
@@ -1827,6 +1829,14 @@ void init_triton_ir(py::module &&m) {
       .def("create_get_canonical_wrapgroup_id",
            [](TritonOpBuilder& self) -> Value{
                return self.create<mlir::triton::txlgpu::CanonicalWarpgroupIdOp>(self.getBuilder().getI32Type());
+           })
+      .def("create_reg_alloc",
+           [](TritonOpBuilder& self, int32_t count) -> void{
+               self.create<mlir::triton::nvgpu::RegAllocOp>(count);
+           })
+      .def("create_reg_dealloc",
+           [](TritonOpBuilder& self, int32_t count) -> void{
+               self.create<mlir::triton::nvgpu::RegDeallocOp>(count);
            });
 
   py::class_<PassManager>(m, "pass_manager", py::module_local())

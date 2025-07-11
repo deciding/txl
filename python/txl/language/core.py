@@ -1,4 +1,5 @@
-from triton.language.core import builtin
+import triton.language as tl
+from triton.language.core import builtin, _shape_check_impl
 from . import semantic
 from .utils import _constexpr_to_value, _apply_binary_method
 
@@ -41,6 +42,21 @@ def warp_id(_builder=None):
 @builtin
 def warpgroup_id(_builder=None):
     return semantic.warpgroup_id(_builder)
+
+@builtin
+def reg_alloc(count, _builder=None):
+    return semantic.reg_alloc(_builder, count)
+
+@builtin
+def reg_dealloc(count, _builder=None):
+    return semantic.reg_dealloc(_builder, count)
+
+@builtin
+def smem_alloc(shape, dtype: tl.dtype, mutable:bool=False, _builder=None) -> tl.tensor:
+    shape = _shape_check_impl(shape)
+    dtype = _constexpr_to_value(dtype)
+    mutable = _constexpr_to_value(mutable)
+    return semantic.smem_alloc(_builder, shape, dtype, mutable)
 
 @builtin
 def print(prefix_or_data, data=None, _builder=None):

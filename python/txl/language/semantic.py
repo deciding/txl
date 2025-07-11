@@ -34,7 +34,14 @@ def warp_id(builder: ir.builder) -> tl.tensor:
 def warpgroup_id(builder: ir.builder) -> tl.tensor:
     return tl.tensor(builder.create_get_canonical_wrapgroup_id(), tl.int32)
 
-def local_alloc(builder: ir.builder, ptr: tl.tensor, space: str='smem', swizzle:tuple=(1,1,1), row_major: bool=False) -> tl.tensor:
-    dst_ty = ptr.type
+def reg_alloc(builder: ir.builder, count:int):
+    builder.create_reg_alloc(count)
+
+def reg_dealloc(builder: ir.builder, count:int):
+    builder.create_reg_dealloc(count)
+
+def smem_alloc(builder: ir.builder, shape, dtype: tl.dtype, mutable:bool=False) -> tl.tensor:
+    block_type = tl.block_type(dtype, shape)
+    dtype = dtype.to_ir(builder)
     return tl.tensor(
-        builder.create_local_alloc(ptr.handle, space, swizzle, row_major), dst_ty)
+        builder.create_smem_alloc(shape, dtype, mutable), block_type)

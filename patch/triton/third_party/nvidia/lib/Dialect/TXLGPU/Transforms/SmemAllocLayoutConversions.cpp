@@ -37,6 +37,8 @@ namespace mlir::triton::txlgpu {
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
+// cvt(smem_alloc(ty1), ty2) -> smem_alloc(ty2)
+// DEPRECATED: convert layout should only affect local load, not global load like smem_alloc
 struct SmemAllocCvtToSmemAlloc
     : public OpRewritePattern<ConvertLayoutOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -50,8 +52,10 @@ struct SmemAllocCvtToSmemAlloc
 
     if (auto smem_alloc = dyn_cast<SmemAllocOp>(arg)) {
       rewriter.setInsertionPoint(arg);
-      rewriter.replaceOpWithNewOp<SmemAllocOp>(op, op->getResult(0).getType(),
+      auto new_smem_alloc = rewriter.replaceOpWithNewOp<SmemAllocOp>(op, op->getResult(0).getType(),
                                                smem_alloc.getIsMutable());
+      rewriter.replaceAllOpUsesWith(smem_alloc, new_smem_alloc);
+      rewriter.eraseOp(smem_alloc);
 
       return success();
     }

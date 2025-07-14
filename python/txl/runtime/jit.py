@@ -8,11 +8,12 @@ from triton._utils import find_paths_if, get_iterable_path
 T = TypeVar("T")
 
 class ZLJITFunction(JITFunction):
-    def __init__(self, fn, version=None, do_not_specialize=None, do_not_specialize_on_alignment=None, debug=None, noinline=None, repr=None, launch_metadata=None, diff_mode=None, log_dir=None, src_file=None):
+    def __init__(self, fn, version=None, do_not_specialize=None, do_not_specialize_on_alignment=None, debug=None, noinline=None, repr=None, launch_metadata=None, diff_mode=None, log_dir=None, src_file=None, use_txl=True):
         super().__init__(fn=fn, version=version, do_not_specialize=do_not_specialize, do_not_specialize_on_alignment=do_not_specialize_on_alignment, debug=debug, noinline=noinline, repr=repr, launch_metadata=launch_metadata)
         self.diff_mode = diff_mode
         self.log_dir = log_dir
         self.src_file = src_file
+        self.use_txl = use_txl
 
     def create_binder(self):
         """
@@ -77,7 +78,8 @@ class ZLJITFunction(JITFunction):
                 src = self.src_file
             else:
                 src = self.ASTSource(self, signature, constexprs, attrs)
-            kernel = self.compile(src, target=target, options=options.__dict__, diff_mode=self.diff_mode, log_dir=self.log_dir)
+            kernel = self.compile(src, target=target, options=options.__dict__,
+                    diff_mode=self.diff_mode, log_dir=self.log_dir, use_txl=self.use_txl)
             if self.diff_mode:
                 exit()
             kernel_cache[key] = kernel
@@ -165,10 +167,11 @@ def jit(
     do_not_specialize_on_alignment: Optional[Iterable[int | str]] = None,
     debug: Optional[bool] = None,
     noinline: Optional[bool] = None,
-    diff_mode: Optional[str] = None,
-    log_dir: Optional[str] = None,
-    src_file: Optional[str] = None,
 
+    diff_mode: Optional[str] = None, # diff the passes
+    log_dir: Optional[str] = None, # log the intermediate ir
+    src_file: Optional[str] = None, # use the src file directly for compilation
+    use_txl: bool = True, # use txl passes
 ) -> Union[JITFunction[T], Callable[[T], JITFunction[T]]]:
     """
     Decorator for JIT-compiling a function using the Triton compiler.
@@ -208,6 +211,7 @@ def jit(
                 diff_mode=diff_mode,
                 log_dir=log_dir,
                 src_file=src_file,
+                use_txl=use_txl,
             )
 
     if fn is not None:

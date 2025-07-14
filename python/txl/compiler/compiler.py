@@ -198,7 +198,7 @@ def make_nv_dbg_ttir(mod, metadata, opt, log_dir=None):
             f.write(ret)
     return mod
 
-def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None):
+def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True):
     cluster_info = nvidia.ClusterInfo()
     if opt.cluster_dims is not None:
         cluster_info.clusterDimX = opt.cluster_dims[0]
@@ -217,11 +217,20 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None):
     def add_plan_cta(i):
         nvidia.passes.ttnvgpuir.add_plan_cta(i, cluster_info)
 
+    def add_smem_alloc_legalize_txl(i):
+        passes.ttgpuir.add_smem_alloc_legalize_txl(i, opt.num_warps, 32, opt.num_ctas, f"cuda:{capability}")
+
     def add_optimize_dot_operands(i):
         passes.ttgpuir.add_optimize_dot_operands(i, capability >= 80)
 
+    def add_optimize_dot_operands_txl(i):
+        passes.ttgpuir.add_optimize_dot_operands_txl(i, capability >= 80)
+
     def add_pipeline(i):
-        passes.ttgpuir.add_pipeline(i, opt.num_stages, dump_enabled)
+        if use_txl:
+            passes.ttgpuir.add_pipeline_txl(i, opt.num_stages, dump_enabled)
+        else:
+            passes.ttgpuir.add_pipeline(i, opt.num_stages, dump_enabled)
 
     def add_warp_specialize(i):
         passes.ttgpuir.add_warp_specialize(i, opt.num_stages)
@@ -257,14 +266,15 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None):
     pass_funcs += [
         # TODO(Qingyi): Move PlanCTAPass to the front of CoalescePass
         add_plan_cta,
-        passes.ttgpuir.add_smem_alloc_legalize_txl,
+        add_smem_alloc_legalize_txl,
         passes.ttgpuir.add_remove_layout_conversions,
-        passes.ttgpuir.add_smem_alloc_layout_conversions_txl,
+        #passes.ttgpuir.add_smem_alloc_layout_conversions_txl,
         passes.ttgpuir.add_optimize_thread_locality,
-        passes.ttgpuir.add_accelerate_matmul,
+        #passes.ttgpuir.add_accelerate_matmul,
+        passes.ttgpuir.add_accelerate_matmul_txl,
         passes.ttgpuir.add_remove_layout_conversions,
-        add_optimize_dot_operands,
-        #nvidia.passes.ttnvgpuir.add_optimize_descriptor_encoding,
+        #add_optimize_dot_operands,
+        add_optimize_dot_operands_txl,
         passes.common.add_cse,
     ]
     if capability // 10 in [8, 9]:
@@ -457,20 +467,20 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
             f.write(ret)
     return ret
 
-def add_dbg_stages(backend, stages, options, diff_mode='ttgir', log_dir=None):
+def add_dbg_stages(backend, stages, options, diff_mode='ttgir', log_dir=None, use_txl=True):
     capability = backend._parse_arch(options.arch)
     if diff_mode == 'ttir':
         stages["ttir"] = lambda src, metadata: make_nv_dbg_ttir(src, metadata, options, log_dir=log_dir)
     elif diff_mode == 'ttgir':
         stages["ttir"] = lambda src, metadata: backend.make_ttir(src, metadata, options)
-        stages["ttgir"] = lambda src, metadata: make_nv_dbg_ttgir(src, metadata, options, capability, log_dir=log_dir)
+        stages["ttgir"] = lambda src, metadata: make_nv_dbg_ttgir(src, metadata, options, capability, log_dir=log_dir, use_txl=use_txl)
     else:
         stages["ttir"] = lambda src, metadata: backend.make_ttir(src, metadata, options)
         stages["ttgir"] = lambda src, metadata: backend.make_ttgir(src, metadata, options, capability)
         stages["llir"] = lambda src, metadata: make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=log_dir)
 
 
-def compile(src, target=None, options=None, diff_mode=None, log_dir=None):
+def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_txl=True):
     if target is None:
         target = driver.active.get_current_target()
     assert isinstance(target, GPUTarget), "target must be of GPUTarget type"
@@ -529,7 +539,7 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None):
     # run compilation pipeline  and populate metadata
     stages = dict()
     if diff_mode:
-        add_dbg_stages(backend, stages, options, diff_mode=diff_mode, log_dir=log_dir)
+        add_dbg_stages(backend, stages, options, diff_mode=diff_mode, log_dir=log_dir, use_txl=use_txl)
     else:
         backend.add_stages(stages, options)
     first_stage = list(stages.keys()).index(src.ext)

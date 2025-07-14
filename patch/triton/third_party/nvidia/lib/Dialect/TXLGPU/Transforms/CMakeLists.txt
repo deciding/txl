@@ -1,5 +1,7 @@
 add_triton_library(TXLGPUTransforms
   AccelerateMatmul.cpp
+  OptimizeDotOperands.cpp
+  SoftwarePipeliner.cpp
   SmemAllocLegalize.cpp
   SmemAllocLayoutConversions.cpp
   DEPENDS

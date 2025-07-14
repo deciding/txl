@@ -237,6 +237,22 @@ void init_triton_ir(py::module &&m) {
   using ret = py::return_value_policy;
   using namespace pybind11::literals;
 
+  py::enum_<CacheModifierX>(m, "CACHE_MODIFIERX", py::module_local())
+      .value("NONE", CacheModifierX::NONE)
+      .value("CA", CacheModifierX::CA)
+      .value("CG", CacheModifierX::CG)
+      .value("WB", CacheModifierX::WB)
+      .value("CS", CacheModifierX::CS)
+      .value("WT", CacheModifierX::WT)
+      .value("CV", CacheModifierX::CV)
+      .export_values();
+
+  py::enum_<EvictionPolicyX>(m, "EVICTION_POLICYX", py::module_local())
+      .value("NORMAL", EvictionPolicyX::NORMAL)
+      .value("EVICT_FIRST", EvictionPolicyX::EVICT_FIRST)
+      .value("EVICT_LAST", EvictionPolicyX::EVICT_LAST)
+      .export_values();
+
   py::enum_<PaddingOption>(m, "PADDING_OPTION", py::module_local())
       .value("PAD_ZERO", PaddingOption::PAD_ZERO)
       .value("PAD_NAN", PaddingOption::PAD_NAN)
@@ -1788,27 +1804,18 @@ void init_triton_ir(py::module &&m) {
       .def("create_smem_alloc",
            [](TritonOpBuilder &self,
                std::vector<int64_t> &shape, Type &elementType, bool isMutable) -> Value {
-
-               //std::vector<int64_t> block_shape(shape.size()); // Pre-allocate space
-               //std::transform(shape.begin(), shape.end(),
-               //                block_shape.begin(),
-               //                [](int32_t x) { return static_cast<int64_t>(x); }
-               //              );
-
-               //auto context = self.getContext();
-               //Attribute SharedMemorySpace =
-               //    mlir::triton::gpu::SharedMemorySpaceAttr::get(context);
-               //auto order = mlir::triton::gpu::getMatrixOrder(shape.size(), false);
-               //auto ctaLayout = mlir::triton::gpu::CTALayoutAttr::getDefault(context, shape.size());
-               //Attribute encoding = mlir::triton::gpu::SwizzledSharedEncodingAttr::get(
-               //    context, 1, 1, 1, order, ctaLayout);
-               //Attribute encoding = mlir::triton::gpu::getDefaultBlockedEncoding(
-               //        self.getContext(), shape, 4, 32, 1);
                auto tensorType = RankedTensorType::get(shape, elementType);
-
-               //auto newType = mlir::triton::gpu::MemDescType::get(tensorType.getShape(), tensorType.getElementType(),
-               //                               encoding, SharedMemorySpace, isMutable);
                return self.create<mlir::triton::SmemAllocOp>(tensorType, isMutable);
+           })
+      .def("create_tma_load",
+           [](TritonOpBuilder &self, Value src, Value desc, std::vector<Value> &indices,
+              CacheModifierX cacheModifier,
+              EvictionPolicyX evictionPolicy) -> void {
+             //auto descTy = cast<triton::TensorDescType>(desc.getType());
+             //auto resTy = descTy.getBlockType();
+             // TODO: check the type of desc and src
+             self.create<TmaLoadOp>(
+                 src, desc, indices, cacheModifier, evictionPolicy);
            })
       // dim
       .def("create_get_threadidx",

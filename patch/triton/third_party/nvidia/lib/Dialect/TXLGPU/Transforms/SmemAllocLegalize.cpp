@@ -37,9 +37,21 @@ namespace mlir::triton::txlgpu {
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
-struct AddEncodingToSmemAlloc
+class AddEncodingToSmemAlloc
     : public OpRewritePattern<SmemAllocOp> {
-  using OpRewritePattern::OpRewritePattern;
+  //using OpRewritePattern::OpRewritePattern;
+
+  int numWarps;
+  int threadsPerWarp;
+  int numCTAs;
+  std::string target;
+
+public:
+  // constructor with some parameters set explicitly.
+  AddEncodingToSmemAlloc(mlir::MLIRContext *context, const std::string &target, int numWarps,
+                           int threadsPerWarp, int numCTAs)
+  : OpRewritePattern<SmemAllocOp>(context), numWarps(numWarps), threadsPerWarp(threadsPerWarp),
+    numCTAs(numCTAs), target(target) {}
 
   mlir::LogicalResult
   matchAndRewrite(SmemAllocOp op,
@@ -53,7 +65,7 @@ struct AddEncodingToSmemAlloc
     auto eltTy = oldTy.getElementType();
 
     Attribute encoding = mlir::triton::gpu::getDefaultBlockedEncoding(
-            context, shape, 4, 32, 1);
+            context, shape, this->numWarps, this->threadsPerWarp, this->numCTAs);
     auto tensorType = RankedTensorType::get(shape, eltTy, encoding);
 
     rewriter.replaceOpWithNewOp<SmemAllocOp>(op, tensorType, op.getIsMutable());
@@ -65,13 +77,15 @@ class TXLGPUSmemAllocLegalizePass
     : public impl::TXLGPUSmemAllocLegalizeBase<
           TXLGPUSmemAllocLegalizePass> {
 public:
+  // important for getting the options ctor
+  using impl::TXLGPUSmemAllocLegalizeBase<TXLGPUSmemAllocLegalizePass>::TXLGPUSmemAllocLegalizeBase;
   // Cleanup convert ops.
   void smemAllocConversion() {
     MLIRContext *context = &getContext();
     ModuleOp m = getOperation();
     RewritePatternSet smemAllocPatterns(context);
 
-    smemAllocPatterns.add<AddEncodingToSmemAlloc>(context);
+    smemAllocPatterns.add<AddEncodingToSmemAlloc>(context, target, numWarps, threadsPerWarp, numCTAs);
 
     if (applyPatternsGreedily(m, std::move(smemAllocPatterns)).failed()) {
       signalPassFailure();

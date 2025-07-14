@@ -54,16 +54,22 @@ void init_triton_passes_ttgpuir(py::module &&m) {
   ADD_PASS_WRAPPER_0("add_optimize_thread_locality",
                      createTritonGPUOptimizeThreadLocality);
   ADD_PASS_OPTION_WRAPPER_2("add_pipeline", createTritonGPUPipeline, int, bool);
+  ADD_PASS_OPTION_WRAPPER_2("add_pipeline_txl", createTXLGPUPipeline, int, bool);
   ADD_PASS_WRAPPER_0("add_prefetch", createTritonGPUPrefetch);
   ADD_PASS_WRAPPER_0("add_accelerate_matmul", createTritonGPUAccelerateMatmul);
   ADD_PASS_WRAPPER_0("add_accelerate_matmul_txl", createTXLGPUAccelerateMatmul);
-  ADD_PASS_WRAPPER_0("add_smem_alloc_legalize_txl", createTXLGPUSmemAllocLegalize);
+  //ADD_PASS_WRAPPER_0("add_smem_alloc_legalize_txl", createTXLGPUSmemAllocLegalize);
+  ADD_PASS_OPTION_WRAPPER_4("add_smem_alloc_legalize_txl",
+                     createTXLGPUSmemAllocLegalize,
+                     int, int, int, const std::string &);
   ADD_PASS_WRAPPER_0("add_smem_alloc_layout_conversions_txl", createTXLGPUSmemAllocLayoutConversions);
   ADD_PASS_WRAPPER_0("add_reorder_instructions",
                      createTritonGPUReorderInstructions);
   ADD_PASS_WRAPPER_0("add_f32_dot_tc", createTritonGPUF32DotTC);
   ADD_PASS_OPTION_WRAPPER_1("add_optimize_dot_operands",
                             createTritonGPUOptimizeDotOperands, bool);
+  ADD_PASS_OPTION_WRAPPER_1("add_optimize_dot_operands_txl",
+                            createTXLGPUOptimizeDotOperands, bool);
   ADD_PASS_WRAPPER_0("add_remove_layout_conversions",
                      createTritonGPURemoveLayoutConversions);
   ADD_PASS_WRAPPER_0("add_reduce_data_duplication",

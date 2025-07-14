@@ -6,6 +6,7 @@
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "triton/Analysis/Utility.h"
+#include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
@@ -324,7 +325,7 @@ public:
       // If this is problematic we can totally drop them
       return isa<BlockArgument>(v) ||
              (v.getDefiningOp() &&
-              isa<LoadOp, ExperimentalDescriptorLoadOp>(v.getDefiningOp()));
+              isa<LoadOp, ExperimentalDescriptorLoadOp, SmemAllocOp>(v.getDefiningOp()));
     };
 
     bool aFromLoad = comesFromLoadOrBlockArg(dotOp.getA());

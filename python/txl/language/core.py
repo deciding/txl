@@ -1,23 +1,24 @@
 import triton.language as tl
-from triton.language.core import builtin, _shape_check_impl
+from triton.language.core import builtin, _shape_check_impl, _experimental_reinterpret_tensor_descriptor
 from . import semantic
 from .utils import _constexpr_to_value, _apply_binary_method
+from typing import Sequence
 
 @builtin
 def tid(axis, _builder=None):
-    return semantic.threadIdx(_builder, axis)
+    return semantic.threadIdx(axis, _builder)
 
 @builtin
 def tdim(axis, _builder=None):
-    return semantic.blockDim(_builder, axis)
+    return semantic.blockDim(axis, _builder)
 
 @builtin
 def bid(axis, _builder=None):
-    return semantic.blockIdx(_builder, axis)
+    return semantic.blockIdx(axis, _builder)
 
 @builtin
 def bdim(axis, _builder=None):
-    return semantic.gridDim(_builder, axis)
+    return semantic.gridDim(axis, _builder)
 
 @builtin
 def thread0(_builder=None):
@@ -45,18 +46,29 @@ def warpgroup_id(_builder=None):
 
 @builtin
 def reg_alloc(count, _builder=None):
-    return semantic.reg_alloc(_builder, count)
+    return semantic.reg_alloc(count, _builder)
 
 @builtin
 def reg_dealloc(count, _builder=None):
-    return semantic.reg_dealloc(_builder, count)
+    return semantic.reg_dealloc(count, _builder)
 
 @builtin
 def smem_alloc(shape, dtype: tl.dtype, mutable:bool=False, _builder=None) -> tl.tensor:
-    shape = _shape_check_impl(shape)
     dtype = _constexpr_to_value(dtype)
     mutable = _constexpr_to_value(mutable)
-    return semantic.smem_alloc(_builder, shape, dtype, mutable)
+    return semantic.smem_alloc(shape, dtype, _builder, mutable)
+
+
+@builtin
+def tma_load(value: tl.tensor, desc_pointer, offsets, shape, dtype, _builder=None) -> tl.tensor:
+    """Store a block from the descriptor starting at the given element offsets.
+
+    Values outside of the tensor bounds will be ignored.
+
+    :note: Offset must be a multiple of 16-bytes
+    """
+    desc = _experimental_reinterpret_tensor_descriptor(desc_pointer, shape, dtype, _builder=_builder)
+    return semantic.tma_load(value, desc, offsets, "", "", _builder)
 
 @builtin
 def print(prefix_or_data, data=None, _builder=None):

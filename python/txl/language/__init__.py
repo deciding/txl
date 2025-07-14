@@ -9,6 +9,7 @@ from .core import (
     reg_alloc,
     reg_dealloc,
     smem_alloc,
+    tma_load,
     print,
 )
 

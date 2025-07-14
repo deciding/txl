@@ -168,8 +168,8 @@ def matmul_persistent_tma_txl_kernel(
     #a = txl.smem_alloc([BLOCK_SIZE_M, BLOCK_SIZE_K], dtype=dtype, stages=1)
     #b = txl.smem_alloc([BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, stages=1)
 
-    a = txl.smem_alloc([3, BLOCK_SIZE_M, BLOCK_SIZE_K], dtype=dtype, mutable=True)
-    b = txl.smem_alloc([3, BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, mutable=True)
+    a = txl.smem_alloc([BLOCK_SIZE_M, BLOCK_SIZE_K], dtype=dtype, mutable=True)
+    b = txl.smem_alloc([BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, mutable=True)
     #b = txl.local_alloc([BLOCK_SIZE_K, BLOCK_SIZE_N], dtype=dtype)
     for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
         group_id = pid // num_pid_in_group
@@ -185,14 +185,14 @@ def matmul_persistent_tma_txl_kernel(
         accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
         for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
             txl.tma_load(
-                a[0],
+                a,
                 a_desc_ptr,
                 [offs_am, offs_k],
                 [BLOCK_SIZE_M, BLOCK_SIZE_K],
                 dtype,
             )
             txl.tma_load(
-                b[0],
+                b,
                 b_desc_ptr,
                 [offs_bn, offs_k],
                 [BLOCK_SIZE_N, BLOCK_SIZE_K],
@@ -205,7 +205,7 @@ def matmul_persistent_tma_txl_kernel(
             #    dtype,
             #)
             #b = tl._experimental_descriptor_load(b_desc_ptr, [offs_bn, offs_k], [BLOCK_SIZE_N, BLOCK_SIZE_K], dtype)
-            accumulator = tl.dot(a[0], b[0].T, accumulator)
+            accumulator = tl.dot(a, b.T, accumulator)
             #accumulator = tl.dot(a, b, accumulator)
             offs_k += BLOCK_SIZE_K
         c = accumulator.to(dtype)
@@ -497,8 +497,8 @@ def bench(K, dtype, reps=1000, warmup_reps=10000):
         #bench_fn(reps, warmup_reps, matmul_tma_persistent, a, b)
         #bench_fn(reps, warmup_reps, matmul_descriptor_persistent, a, b)
 
-        #bench_fn(reps, warmup_reps, matmul_persistent_tma_ws_cooperative, a, b)
-        bench_fn(reps, warmup_reps, matmul_persistent_tma_txl, a, b)
+        bench_fn(reps, warmup_reps, matmul_persistent_tma_ws_cooperative, a, b)
+        #bench_fn(reps, warmup_reps, matmul_persistent_tma_txl, a, b)
 
 
 def validate0(M, N, K, dtype):
@@ -507,8 +507,8 @@ def validate0(M, N, K, dtype):
     b = b.T.contiguous()
     cublas_result = cublas_matmul(a, b) if cublas is not None else None
 
-    #matmul_persistent_tma_ws_cooperative_result = matmul_persistent_tma_ws_cooperative(a, b) if supports_tma() else None
-    matmul_persistent_tma_ws_cooperative_result = matmul_persistent_tma_txl(a, b) if supports_tma() else None
+    matmul_persistent_tma_ws_cooperative_result = matmul_persistent_tma_ws_cooperative(a, b) if supports_tma() else None
+    #matmul_persistent_tma_ws_cooperative_result = matmul_persistent_tma_txl(a, b) if supports_tma() else None
 
     print(matmul_persistent_tma_ws_cooperative_result)
     print(cublas_result)

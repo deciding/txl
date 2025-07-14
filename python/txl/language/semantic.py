@@ -4,26 +4,52 @@ from triton.language.semantic import (
     device_print,
     to_tensor,
     load,
+    validate_descriptor_block,
+    _convert_to_ir_values,
 )
 
-def threadIdx(builder: ir.builder, axis:int=0) -> tl.tensor:
+def _str_to_load_cache_modifierx(cache_modifier):
+    cache = ir.CACHE_MODIFIERX.NONE  # default
+    if cache_modifier:
+        if cache_modifier == ".ca":
+            cache = ir.CACHE_MODIFIERX.CA
+        elif cache_modifier == ".cg":
+            cache = ir.CACHE_MODIFIERX.CG
+        elif cache_modifier == ".cv":
+            cache = ir.CACHE_MODIFIERX.CV
+        else:
+            raise ValueError(f"Cache modifier {cache_modifier} not supported")
+    return cache
+
+def _str_to_eviction_policyx(eviction_policy):
+    eviction = ir.EVICTION_POLICYX.NORMAL  # default
+    if eviction_policy:
+        if eviction_policy == "evict_last":
+            eviction = ir.EVICTION_POLICYX.EVICT_LAST
+        elif eviction_policy == "evict_first":
+            eviction = ir.EVICTION_POLICYX.EVICT_FIRST
+        else:
+            raise ValueError(f"Eviction policy {eviction_policy} not supported")
+    return eviction
+
+def threadIdx(axis:int, builder: ir.builder) -> tl.tensor:
     if axis not in (0, 1, 2):
         raise ValueError(f"thread index axis must be 0, 1, or 2 but got {axis}")
     handle = builder.create_get_threadidx(axis)
     return tl.tensor(builder.create_index_cast(handle, tl.int32.to_ir(builder)), tl.int32)
 
-def blockDim(builder: ir.builder, axis:int=0) -> tl.tensor:
+def blockDim(axis:int, builder: ir.builder) -> tl.tensor:
     if axis not in (0, 1, 2):
         raise ValueError(f"block dim axis must be 0, 1, or 2 but got {axis}")
     handle = builder.create_get_blockdim(axis)
     return tl.tensor(builder.create_index_cast(handle, tl.int32.to_ir(builder)), tl.int32)
 
-def blockIdx(builder: ir.builder, axis:int=0) -> tl.tensor:
+def blockIdx(axis:int, builder: ir.builder) -> tl.tensor:
     if axis not in (0, 1, 2):
         raise ValueError(f"block index axis must be 0, 1, or 2 but got {axis}")
     return tl.tensor(builder.create_get_program_id(axis), tl.int32)
 
-def gridDim(builder: ir.builder, axis:int=0) -> tl.tensor:
+def gridDim(axis:int, builder: ir.builder) -> tl.tensor:
     if axis not in (0, 1, 2):
         raise ValueError(f"grid dim axis must be 0, 1, or 2 but got {axis}")
     return tl.tensor(builder.create_get_num_programs(axis), tl.int32)
@@ -34,14 +60,27 @@ def warp_id(builder: ir.builder) -> tl.tensor:
 def warpgroup_id(builder: ir.builder) -> tl.tensor:
     return tl.tensor(builder.create_get_canonical_wrapgroup_id(), tl.int32)
 
-def reg_alloc(builder: ir.builder, count:int):
+def reg_alloc(count:int, builder: ir.builder):
     builder.create_reg_alloc(count)
 
-def reg_dealloc(builder: ir.builder, count:int):
+def reg_dealloc(count:int, builder: ir.builder):
     builder.create_reg_dealloc(count)
 
-def smem_alloc(builder: ir.builder, shape, dtype: tl.dtype, mutable:bool=False) -> tl.tensor:
+def smem_alloc(shape, dtype: tl.dtype, builder: ir.builder, mutable:bool=False) -> tl.tensor:
     block_type = tl.block_type(dtype, shape)
     dtype = dtype.to_ir(builder)
     return tl.tensor(
         builder.create_smem_alloc(shape, dtype, mutable), block_type)
+
+def tma_load(value: tl.tensor, desc: tl._experimental_tensor_descriptor_base, offsets,
+                cache_modifier: str, eviction_policy: str,
+                builder: ir.builder) -> tl.tensor:
+    assert isinstance(desc, tl._experimental_tensor_descriptor_base)
+    validate_descriptor_block(desc.block_shape, desc.dtype)
+    ndim = len(desc.block_shape)
+    assert len(offsets) == ndim, f"expected {ndim} offsets, but got {len(offsets)}"
+
+    offsets = _convert_to_ir_values(builder, offsets, require_i64=False)
+    x = builder.create_tma_load(value.handle, desc.handle, offsets, _str_to_load_cache_modifierx(cache_modifier),
+                                       _str_to_eviction_policyx(eviction_policy))
+    return tl.tensor(x, tl.void)

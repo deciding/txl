@@ -7,6 +7,7 @@
 #include "mlir/Support/LLVM.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "txl/Dialect/TXL/IR/OpsEnums.cpp.inc"
 
 namespace mlir {
 namespace triton {

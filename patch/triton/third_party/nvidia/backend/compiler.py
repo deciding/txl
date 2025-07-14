@@ -260,9 +260,11 @@ class CUDABackend(BaseBackend):
         passes.ttgpuir.add_remove_layout_conversions(pm)
         passes.ttgpuir.add_smem_alloc_legalize_txl(pm)
         passes.ttgpuir.add_optimize_thread_locality(pm)
-        passes.ttgpuir.add_accelerate_matmul(pm)
+        #passes.ttgpuir.add_accelerate_matmul(pm)
+        passes.ttgpuir.add_accelerate_matmul_txl(pm)
         passes.ttgpuir.add_remove_layout_conversions(pm)
-        passes.ttgpuir.add_optimize_dot_operands(pm, capability >= 80)
+        #passes.ttgpuir.add_optimize_dot_operands(pm, capability >= 80)
+        passes.ttgpuir.add_optimize_dot_operands_txl(pm, capability >= 80)
         passes.common.add_cse(pm)
         if capability // 10 in [8, 9]:
             passes.ttgpuir.add_fuse_nested_loops(pm)
@@ -276,7 +278,8 @@ class CUDABackend(BaseBackend):
             passes.ttgpuir.add_ws_data_partition(pm, opt.num_consumer_groups)
             passes.ttgpuir.add_ws_code_partition(pm, opt.num_buffers_warp_spec, opt.num_consumer_groups,
                                                  opt.reg_dec_producer, opt.reg_inc_consumer)
-            passes.ttgpuir.add_pipeline(pm, opt.num_stages, dump_enabled)
+            #passes.ttgpuir.add_pipeline(pm, opt.num_stages, dump_enabled)
+            passes.ttgpuir.add_pipeline_txl(pm, opt.num_stages, dump_enabled)
             passes.ttgpuir.add_ping_pong_sync(pm, opt.num_consumer_groups)
             passes.ttgpuir.add_ws_lowering(pm, opt.num_consumer_groups)
         elif capability // 10 >= 10:

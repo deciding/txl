@@ -14,7 +14,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 //#include "triton/Dialect/Triton/IR/Dialect.h.inc"
 #include "triton/Dialect/Triton/IR/OpInterfaces.h"
-//#include "triton/Dialect/Triton/IR/OpsEnums.h.inc"
+#include "txl/Dialect/TXL/IR/OpsEnums.h.inc"
 #include "triton/Dialect/Triton/IR/Traits.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 
@@ -25,6 +25,10 @@
 
 namespace mlir {
 namespace triton { // not txl
+
+struct SmemMemory : public SideEffects::Resource::Base<SmemMemory> {
+  StringRef getName() final { return "<SmemMemory>"; }
+};
 
 } // namespace triton
 } // namespace mlir

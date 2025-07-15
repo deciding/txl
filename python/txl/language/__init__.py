@@ -9,6 +9,10 @@ from .core import (
     reg_alloc,
     reg_dealloc,
     smem_alloc,
+    mbar_alloc,
+    mbar_expect,
+    mbar_wait,
+    get_buffer,
     tma_load,
     print,
 )

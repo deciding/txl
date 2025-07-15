@@ -68,7 +68,7 @@ public:
             context, shape, this->numWarps, this->threadsPerWarp, this->numCTAs);
     auto tensorType = RankedTensorType::get(shape, eltTy, encoding);
 
-    rewriter.replaceOpWithNewOp<SmemAllocOp>(op, tensorType, op.getIsMutable());
+    rewriter.replaceOpWithNewOp<SmemAllocOp>(op, tensorType, op.getNumStages(), op.getIsMutable());
     return success();
   }
 };

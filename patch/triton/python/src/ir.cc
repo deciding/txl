@@ -1803,19 +1803,41 @@ void init_triton_ir(py::module &&m) {
            })
       .def("create_smem_alloc",
            [](TritonOpBuilder &self,
-               std::vector<int64_t> &shape, Type &elementType, bool isMutable) -> Value {
+               std::vector<int64_t> &shape, Type &elementType, int32_t numStages, bool isMutable) -> Value {
                auto tensorType = RankedTensorType::get(shape, elementType);
-               return self.create<mlir::triton::SmemAllocOp>(tensorType, isMutable);
+               return self.create<mlir::triton::SmemAllocOp>(tensorType, numStages, isMutable);
+           })
+      .def("create_mbar_alloc",
+           [](TritonOpBuilder &self,
+               int32_t arrCount, int32_t numStages) -> Value {
+               auto elementType = mlir::IntegerType::get(self.getContext(), 64);
+               auto tensorType = RankedTensorType::get({1}, elementType);
+               return self.create<mlir::triton::MbarAllocOp>(tensorType, arrCount, numStages);
+           })
+      .def("create_get_buffer",
+           [](TritonOpBuilder &self,
+               Value &src, Value &index) -> Value {
+               return self.create<mlir::triton::GetBufferOp>(src.getType(), src, index);
+           })
+      .def("create_mbar_expect",
+           [](TritonOpBuilder &self,
+               Value mbar, Value pred, int32_t expectCount) -> void {
+               self.create<mlir::triton::MbarExpectOp>(mbar, pred, expectCount);
+           })
+      .def("create_mbar_wait",
+           [](TritonOpBuilder &self,
+               Value mbar, Value phase) -> void {
+               self.create<mlir::triton::MbarWaitOp>(mbar, phase);
            })
       .def("create_tma_load",
-           [](TritonOpBuilder &self, Value src, Value desc, std::vector<Value> &indices,
+           [](TritonOpBuilder &self, Value src, Value desc, std::vector<Value> &indices, Value mbar,
               CacheModifierX cacheModifier,
               EvictionPolicyX evictionPolicy) -> void {
              //auto descTy = cast<triton::TensorDescType>(desc.getType());
              //auto resTy = descTy.getBlockType();
              // TODO: check the type of desc and src
              self.create<TmaLoadOp>(
-                 src, desc, indices, cacheModifier, evictionPolicy);
+                 src, desc, indices, mbar, cacheModifier, evictionPolicy);
            })
       // dim
       .def("create_get_threadidx",

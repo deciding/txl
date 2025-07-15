@@ -66,13 +66,19 @@ def reg_alloc(count:int, builder: ir.builder):
 def reg_dealloc(count:int, builder: ir.builder):
     builder.create_reg_dealloc(count)
 
-def smem_alloc(shape, dtype: tl.dtype, builder: ir.builder, mutable:bool=False) -> tl.tensor:
+def smem_alloc(shape, dtype: tl.dtype, builder: ir.builder, num_stages:int=1, mutable:bool=True) -> tl.tensor:
     block_type = tl.block_type(dtype, shape)
     dtype = dtype.to_ir(builder)
     return tl.tensor(
-        builder.create_smem_alloc(shape, dtype, mutable), block_type)
+        builder.create_smem_alloc(shape, dtype, num_stages, mutable), block_type)
+
+def mbar_alloc(arr_count: int, builder: ir.builder, num_stages:int=1) -> tl.tensor:
+    block_type = tl.block_type(tl.int64, [1])
+    return tl.tensor(
+        builder.create_mbar_alloc(arr_count, num_stages), block_type)
 
 def tma_load(value: tl.tensor, desc: tl._experimental_tensor_descriptor_base, offsets,
+                mbar: tl.tensor,
                 cache_modifier: str, eviction_policy: str,
                 builder: ir.builder) -> tl.tensor:
     assert isinstance(desc, tl._experimental_tensor_descriptor_base)
@@ -81,6 +87,20 @@ def tma_load(value: tl.tensor, desc: tl._experimental_tensor_descriptor_base, of
     assert len(offsets) == ndim, f"expected {ndim} offsets, but got {len(offsets)}"
 
     offsets = _convert_to_ir_values(builder, offsets, require_i64=False)
-    x = builder.create_tma_load(value.handle, desc.handle, offsets, _str_to_load_cache_modifierx(cache_modifier),
+    x = builder.create_tma_load(value.handle, desc.handle, offsets, mbar.handle, _str_to_load_cache_modifierx(cache_modifier),
                                        _str_to_eviction_policyx(eviction_policy))
+    return tl.tensor(x, tl.void)
+
+def get_buffer(src: tl.tensor, index: tl.tensor, builder: ir.builder) -> tl.tensor:
+    # TODO: check
+    x = builder.create_get_buffer(src.handle, index.handle)
+    return tl.tensor(x, src.type)
+
+def mbar_expect(mbar: tl.tensor, size_in_bytes:int, pred: tl.tensor, builder: ir.builder) -> tl.tensor:
+    # TODO: handle pred is None, then should be const True
+    x = builder.create_mbar_expect(mbar.handle, pred.handle, size_in_bytes)
+    return tl.tensor(x, tl.void)
+
+def mbar_wait(mbar: tl.tensor, phase:tl.tensor, builder: ir.builder) -> tl.tensor:
+    x = builder.create_mbar_wait(mbar.handle, phase.handle)
     return tl.tensor(x, tl.void)

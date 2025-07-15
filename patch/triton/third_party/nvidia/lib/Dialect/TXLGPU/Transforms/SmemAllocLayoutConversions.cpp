@@ -53,6 +53,7 @@ struct SmemAllocCvtToSmemAlloc
     if (auto smem_alloc = dyn_cast<SmemAllocOp>(arg)) {
       rewriter.setInsertionPoint(arg);
       auto new_smem_alloc = rewriter.replaceOpWithNewOp<SmemAllocOp>(op, op->getResult(0).getType(),
+                                               smem_alloc.getNumStages(),
                                                smem_alloc.getIsMutable());
       rewriter.replaceAllOpUsesWith(smem_alloc, new_smem_alloc);
       rewriter.eraseOp(smem_alloc);

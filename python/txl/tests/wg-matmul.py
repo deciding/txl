@@ -119,6 +119,7 @@ class TmaAutoTuneHelper:
                 "BLOCK_SIZE_K": 64,
                 "GROUP_SIZE_M": 8,
                 "NUM_CONSUMER_GROUPS": 1,
+                "NUM_STAGES": 3,
             },
             num_stages=3,
             num_warps=4,
@@ -142,6 +143,7 @@ def matmul_persistent_tma_txl_kernel(
     GROUP_SIZE_M: tl.constexpr,  #
     FP8_OUTPUT: tl.constexpr,  #
     NUM_CONSUMER_GROUPS: tl.constexpr,
+    NUM_STAGES: tl.constexpr,
 ):
     dtype = tl.float8e4nv if FP8_OUTPUT else tl.float16
     num_tiles = tl.cdiv(M, BLOCK_SIZE_M) * tl.cdiv(N, BLOCK_SIZE_N)
@@ -168,9 +170,13 @@ def matmul_persistent_tma_txl_kernel(
     #a = txl.smem_alloc([BLOCK_SIZE_M, BLOCK_SIZE_K], dtype=dtype, stages=1)
     #b = txl.smem_alloc([BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, stages=1)
 
-    a = txl.smem_alloc([3, BLOCK_SIZE_M, BLOCK_SIZE_K], dtype=dtype, mutable=True)
-    b = txl.smem_alloc([3, BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, mutable=True)
+    a = txl.smem_alloc([BLOCK_SIZE_M, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+    b = txl.smem_alloc([BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+
+    mbar_producer = txl.mbar_alloc(1, num_stages=NUM_STAGES)
     #b = txl.local_alloc([BLOCK_SIZE_K, BLOCK_SIZE_N], dtype=dtype)
+    phase = 0
+    bufIdx = 0
     for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
         group_id = pid // num_pid_in_group
         first_pid_m = group_id * GROUP_SIZE_M
@@ -184,19 +190,24 @@ def matmul_persistent_tma_txl_kernel(
 
         accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
         for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
+            cur_mbar = txl.get_buffer(mbar_producer, bufIdx)
+
             txl.tma_load(
-                a[0],
+                a,
                 a_desc_ptr,
                 [offs_am, offs_k],
-                [BLOCK_SIZE_M, BLOCK_SIZE_K],
-                dtype,
+                cur_mbar,
             )
             txl.tma_load(
-                b[0],
+                b,
                 b_desc_ptr,
                 [offs_bn, offs_k],
-                [BLOCK_SIZE_N, BLOCK_SIZE_K],
-                dtype)
+                cur_mbar,
+            )
+
+            txl.mbar_expect(cur_mbar, BLOCK_SIZE_M*BLOCK_SIZE_K*2 + BLOCK_SIZE_N*BLOCK_SIZE_K*2)
+            txl.mbar_wait(cur_mbar, phase)
+
             #accumulator = tl.dot(a[0], b[0].T, accumulator)
             #a = tl._experimental_descriptor_load(
             #    a_desc_ptr,
@@ -205,9 +216,12 @@ def matmul_persistent_tma_txl_kernel(
             #    dtype,
             #)
             #b = tl._experimental_descriptor_load(b_desc_ptr, [offs_bn, offs_k], [BLOCK_SIZE_N, BLOCK_SIZE_K], dtype)
-            accumulator = tl.dot(a[0], b[0].T, accumulator)
-            #accumulator = tl.dot(a, b, accumulator)
+            accumulator = tl.dot(a, b.T, accumulator)
+
             offs_k += BLOCK_SIZE_K
+            bufIdx = (bufIdx + 1) % NUM_STAGES
+            phase = phase if bufIdx > 0 else phase^1
+
         c = accumulator.to(dtype)
         tl._experimental_descriptor_store(c_desc_ptr, c, [offs_am, offs_bn])
 

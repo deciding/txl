@@ -36,12 +36,70 @@ def TXL_SmemAllocOp : TXL_Op<"smem_alloc", [DeclareOpInterfaceMethods<MemoryEffe
     Shared memory allocation.
   }];
   let arguments = (ins
+    DefaultValuedAttr<I32Attr, "1">:$numStages,
     DefaultValuedAttr<BoolAttr, "false">:$isMutable
   );
 
   let results = (outs TT_Tensor:$result);
 
   let assemblyFormat = "attr-dict `:` type($result)";
+}
+
+def TXL_MbarAllocOp : TXL_Op<"mbar_alloc", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "shared mem alloc";
+  let description = [{
+    Shared memory barrier allocation.
+  }];
+  let arguments = (ins
+    I32Attr:$arrCount,
+    DefaultValuedAttr<I32Attr, "1">:$numStages
+  );
+
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
+def TXL_GetBufferOp : TXL_Op<"get_buffer", [Pure]> {
+  let summary = "get stage buffer";
+  let description = [{
+    Get stage buffer from smem with index
+  }];
+  let arguments = (ins
+    TT_Tensor:$src,
+    I32:$index
+  );
+
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = "$src `,` $index attr-dict `:` functional-type(operands, $result)";
+}
+
+def TXL_MbarExpectOp : TXL_Op<"mbar_expect", [MemoryEffects<[MemWrite<SmemMemory>]>]> {
+  let summary = "mbarrier.expect_tx";
+  let description = [{
+    mbarrier expectCount
+  }];
+  let arguments = (ins
+    TT_Tensor:$mbar,
+    I1:$pred,
+    I32Attr:$expectCount
+  );
+
+  let assemblyFormat = "$mbar `,` $pred attr-dict `:` type($mbar) `,` type($pred)";
+}
+
+def TXL_MbarWaitOp : TXL_Op<"mbar_wait", [MemoryEffects<[MemRead<SmemMemory>]>]> {
+  let summary = "mbarrier.try/test_wait";
+  let description = [{
+    mbarrier wait
+  }];
+  let arguments = (ins
+    TT_Tensor:$mbar,
+    I1:$phase
+  );
+
+  let assemblyFormat = "$mbar `,` $phase attr-dict `:` type($mbar) `,` type($phase)";
 }
 
 def TXL_TmaLoadOp : TXL_Op<"tma_load", [MemoryEffects<[MemWrite<SmemMemory>]>]> {
@@ -58,17 +116,18 @@ def TXL_TmaLoadOp : TXL_Op<"tma_load", [MemoryEffects<[MemWrite<SmemMemory>]>]> 
     TT_Tensor:$src,
     TT_TensorDescType:$desc,
     Variadic<I32>:$indices,
+    TT_Tensor:$mbar,
     DefaultValuedAttr<TXL_CacheModifierXAttr, "::mlir::triton::CacheModifierX::NONE">:$cache,
     DefaultValuedAttr<TXL_EvictionPolicyXAttr, "::mlir::triton::EvictionPolicyX::NORMAL">:$evict
   );
 
   let assemblyFormat = [{
-    $src `,` $desc `[` $indices `]`
+    $src `,` $desc `[` $indices `]` `,` $mbar
     oilist(
       `cacheModifier` `=` $cache |
       `evictionPolicy` `=` $evict
     )
-    attr-dict `:` type($src) `,` qualified(type($desc))
+    attr-dict `:` type($src) `,` qualified(type($desc)) `,` type($mbar)
   }];
 
 }

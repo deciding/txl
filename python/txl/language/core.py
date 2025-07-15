@@ -53,22 +53,46 @@ def reg_dealloc(count, _builder=None):
     return semantic.reg_dealloc(count, _builder)
 
 @builtin
-def smem_alloc(shape, dtype: tl.dtype, mutable:bool=False, _builder=None) -> tl.tensor:
+def smem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, _builder=None) -> tl.tensor:
+    shape = _shape_check_impl(shape)
     dtype = _constexpr_to_value(dtype)
+    num_stages = _constexpr_to_value(num_stages)
     mutable = _constexpr_to_value(mutable)
-    return semantic.smem_alloc(shape, dtype, _builder, mutable)
-
+    return semantic.smem_alloc(shape, dtype, _builder, num_stages, mutable)
 
 @builtin
-def tma_load(value: tl.tensor, desc_pointer, offsets, shape, dtype, _builder=None) -> tl.tensor:
+def mbar_alloc(arr_count: int, num_stages:int=1, _builder=None) -> tl.tensor:
+    arr_count = _constexpr_to_value(arr_count)
+    num_stages = _constexpr_to_value(num_stages)
+    return semantic.mbar_alloc(arr_count, _builder, num_stages)
+
+@builtin
+def tma_load(value: tl.tensor, desc_pointer, offsets, mbar:tl.tensor, _builder=None) -> tl.tensor:
     """Store a block from the descriptor starting at the given element offsets.
 
     Values outside of the tensor bounds will be ignored.
 
     :note: Offset must be a multiple of 16-bytes
     """
-    desc = _experimental_reinterpret_tensor_descriptor(desc_pointer, shape, dtype, _builder=_builder)
-    return semantic.tma_load(value, desc, offsets, "", "", _builder)
+    desc = _experimental_reinterpret_tensor_descriptor(desc_pointer, value.shape, value.dtype, _builder=_builder)
+    return semantic.tma_load(value, desc, offsets, mbar, "", "", _builder)
+
+@builtin
+def get_buffer(src: tl.tensor, index: tl.tensor, _builder=None) -> tl.tensor:
+    # index is Value not constexpr
+    return semantic.get_buffer(src, index, _builder)
+
+@builtin
+def mbar_expect(mbar: tl.tensor, size_in_bytes: int, pred: tl.tensor=None, _builder=None) -> tl.tensor:
+    # pred is Value not const expr
+    if pred is None:
+        pred = tl.full((), True, dtype=tl.int1, _builder=_builder)
+    return semantic.mbar_expect(mbar, size_in_bytes, pred, _builder)
+
+@builtin
+def mbar_wait(mbar: tl.tensor, phase: tl.tensor, _builder=None) -> tl.tensor:
+    # pred is Value not const expr
+    return semantic.mbar_wait(mbar, phase, _builder)
 
 @builtin
 def print(prefix_or_data, data=None, _builder=None):

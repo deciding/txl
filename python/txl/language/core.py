@@ -95,6 +95,10 @@ def mbar_wait(mbar: tl.tensor, phase: tl.tensor, _builder=None) -> tl.tensor:
     return semantic.mbar_wait(mbar, phase, _builder)
 
 @builtin
+def dot_wait(pendings: int, _builder=None) -> tl.tensor:
+    return semantic.dot_wait(pendings)
+
+@builtin
 def print(prefix_or_data, data=None, _builder=None):
     import string
     prefix_or_data = _constexpr_to_value(prefix_or_data)

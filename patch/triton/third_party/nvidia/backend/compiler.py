@@ -257,6 +257,7 @@ class CUDABackend(BaseBackend):
         # TODO(Qingyi): Move PlanCTAPass to the front of CoalescePass
         nvidia.passes.ttnvgpuir.add_plan_cta(pm, cluster_info)
         passes.ttgpuir.add_smem_alloc_legalize_txl(pm, opt.num_warps, 32, opt.num_ctas, f"cuda:{capability}")
+        passes.ttgpuir.add_named_barrier_lower_txl(pm)
         passes.ttgpuir.add_remove_layout_conversions(pm)
         passes.ttgpuir.add_optimize_thread_locality(pm)
         #passes.ttgpuir.add_accelerate_matmul(pm)

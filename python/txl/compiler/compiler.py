@@ -267,6 +267,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
         # TODO(Qingyi): Move PlanCTAPass to the front of CoalescePass
         add_plan_cta,
         add_smem_alloc_legalize_txl,
+        passes.ttgpuir.add_named_barrier_lower_txl,
         passes.ttgpuir.add_remove_layout_conversions,
         #passes.ttgpuir.add_smem_alloc_layout_conversions_txl,
         passes.ttgpuir.add_optimize_thread_locality,

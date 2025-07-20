@@ -63,6 +63,7 @@ void init_triton_passes_ttgpuir(py::module &&m) {
                      createTXLGPUSmemAllocLegalize,
                      int, int, int, const std::string &);
   ADD_PASS_WRAPPER_0("add_smem_alloc_layout_conversions_txl", createTXLGPUSmemAllocLayoutConversions);
+  ADD_PASS_WRAPPER_0("add_named_barrier_lower_txl", createTXLGPUNamedBarrierLower);
   ADD_PASS_WRAPPER_0("add_reorder_instructions",
                      createTritonGPUReorderInstructions);
   ADD_PASS_WRAPPER_0("add_f32_dot_tc", createTritonGPUF32DotTC);

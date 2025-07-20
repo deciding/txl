@@ -105,6 +105,18 @@ def TXL_MbarWaitOp : TXL_Op<"mbar_wait", [MemoryEffects<[MemRead<SmemMemory>, Me
   let assemblyFormat = "$mbar `,` $phase attr-dict `:` type($mbar) `,` type($phase)";
 }
 
+def TXL_WGDotWaitOp : TXL_Op<"dot_wait", [MemoryEffects<[MemWrite]>]> {
+  let summary = "dot wait, specially for wg dot";
+  let description = [{
+    wg dot wait
+  }];
+  let arguments = (ins
+    I32Attr:$pendings
+  );
+
+  let assemblyFormat = "attr-dict";
+}
+
 def TXL_TmaLoadOp : TXL_Op<"tma_load", [MemoryEffects<[MemWrite<SmemMemory>]>]> {
   let summary = "Load from descriptor";
   let description = [{
@@ -133,6 +145,22 @@ def TXL_TmaLoadOp : TXL_Op<"tma_load", [MemoryEffects<[MemWrite<SmemMemory>]>]> 
     attr-dict `:` type($src) `,` qualified(type($desc)) `,` type($mbar)
   }];
 
+}
+
+def TXL_NamedBarrierArriveOp : TXL_Op<"barrier_arrive", [MemoryEffects<[MemWrite]>]> {
+  let summary = "named barrier arrive";
+
+  let arguments = (ins I32:$bar, I32: $numThreads);
+
+  let assemblyFormat = "$bar `,` $numThreads attr-dict `:` type(operands)";
+}
+
+def TXL_NamedBarrierWaitOp : TXL_Op<"barrier_wait", [MemoryEffects<[MemWrite]>]> {
+  let summary = "named barrier wait";
+
+  let arguments = (ins I32:$bar, I32: $numThreads);
+
+  let assemblyFormat = "$bar `,` $numThreads attr-dict `:` type(operands)";
 }
 
 #endif // TXL_OPS

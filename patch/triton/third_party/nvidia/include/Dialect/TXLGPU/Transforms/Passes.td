@@ -102,4 +102,17 @@ def TXLGPUSmemAllocLayoutConversions : Pass<"txlgpu-smem-alloc-layout-conversion
                            "mlir::triton::TritonDialect"];
 }
 
+def TXLGPUNamedBarrierLower : Pass<"txlgpu-named-barrier-lower", "mlir::ModuleOp"> {
+  let summary = "lower named barrier control to bar.sync and bar.arrive";
+
+  let description = [{
+    lower named barrier control to bar.sync and bar.arrive
+  }];
+
+  let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect",
+                           "mlir::triton::txlgpu::TXLGPUDialect",
+                           "mlir::triton::nvidia_gpu::TritonNvidiaGPUDialect",
+                           "mlir::triton::TritonDialect"];
+}
+
 #endif

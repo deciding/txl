@@ -1839,6 +1839,18 @@ void init_triton_ir(py::module &&m) {
              self.create<TmaLoadOp>(
                  src, desc, indices, mbar, cacheModifier, evictionPolicy);
            })
+      .def("create_dot_wait",
+           [](TritonOpBuilder &self, int32_t pendings) -> void {
+               self.create<mlir::triton::WGDotWaitOp>(pendings);
+           })
+      .def("create_bar_arrive",
+           [](TritonOpBuilder &self, Value bar, Value numThreads) -> void {
+               self.create<mlir::triton::NamedBarrierArriveOp>(bar, numThreads);
+           })
+      .def("create_bar_wait",
+           [](TritonOpBuilder &self, Value bar, Value numThreads) -> void {
+               self.create<mlir::triton::NamedBarrierWaitOp>(bar, numThreads);
+           })
       // dim
       .def("create_get_threadidx",
            [](TritonOpBuilder& self, int32_t axis) -> Value{

@@ -4,6 +4,8 @@ add_triton_library(TXLGPUTransforms
   SoftwarePipeliner.cpp
   SmemAllocLegalize.cpp
   SmemAllocLayoutConversions.cpp
+  WGMMAPipeline.cpp
+  NamedBarrierLower.cpp
   DEPENDS
   TXLGPUTransformsIncGen
 

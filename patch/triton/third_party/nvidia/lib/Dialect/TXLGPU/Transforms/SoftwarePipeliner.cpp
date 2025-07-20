@@ -13,6 +13,7 @@
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/PipelineExpander.h"
 #include "triton/Dialect/TritonGPU/Transforms/PipeliningUtility.h"
+#include "nvidia/include/Dialect/TXLGPU/Transforms/Schedule.h"
 #include "triton/Dialect/TritonGPU/Transforms/Schedule.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
@@ -36,6 +37,15 @@ namespace txlgpu {
 #define DEBUG_TYPE "txlgpu-pipeliner"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
+
+static void pipelineWgmma(ModuleOp moduleOp) {
+  SmallVector<scf::ForOp> loops;
+  moduleOp->walk([&](scf::ForOp forOp) { loops.push_back(forOp); });
+
+  for (scf::ForOp forOp : loops) {
+    mlir::triton::txlgpu::asyncLaunchDots(forOp);
+  }
+}
 
 bool isTMALoad(Operation *op) {
   return isa<tt::TmaLoadOp>(op);
@@ -408,6 +418,17 @@ class TXLGPUPipelinePass : public impl::TXLGPUPipelineBase<TXLGPUPipelinePass> {
 public:
   using impl::TXLGPUPipelineBase<TXLGPUPipelinePass>::TXLGPUPipelineBase;
 
+  int getNumStagesOrDefault(scf::ForOp forOp) {
+    // Use the attribute attached to the loop if it exists otherwise use the
+    // global control.
+    if (!forOp->hasAttr(mlir::triton::kNumStagesAttrName))
+      return numStages;
+    return mlir::cast<IntegerAttr>(
+               forOp->getAttr(mlir::triton::kNumStagesAttrName))
+        .getInt();
+  }
+
+
   void runOnOperation() override {
     MLIRContext *context = &getContext();
     ModuleOp m = getOperation();
@@ -415,6 +436,37 @@ public:
     lowerSmemAllocs(m);
     lowerMbars(m);
     lowerTmaLoads(m);
+
+    pipelineWgmma(m);
+
+    // schedule the waits
+    mlir::triton::txlgpu::updateWaits(getOperation());
+
+    // Clean up arithmetic before applying the next level of pipelining to
+    // simplify the IR.
+    auto arithDialect =
+        getOperation().getContext()->getLoadedDialect<arith::ArithDialect>();
+    RewritePatternSet patterns(getOperation().getContext());
+    arithDialect->getCanonicalizationPatterns(patterns);
+    if (applyPatternsGreedily(getOperation(), std::move(patterns)).failed())
+      return signalPassFailure();
+
+    {
+      SmallVector<scf::ForOp> loops;
+      getOperation()->walk([&](scf::ForOp forOp) {
+        // Bail out for loops with num_stage <= 1.
+        if (getNumStagesOrDefault(forOp) > 1)
+          loops.push_back(forOp);
+      });
+
+      for (scf::ForOp forOp : loops) {
+        mlir::triton::pipelineTMAStores(forOp);
+      }
+
+      for (scf::ForOp forOp : loops) {
+        mlir::triton::pipelineMMAWithScaledAcc(forOp);
+      }
+    }
 
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner internal IR Dump \n");

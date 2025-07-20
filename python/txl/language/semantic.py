@@ -91,6 +91,10 @@ def tma_load(value: tl.tensor, desc: tl._experimental_tensor_descriptor_base, of
                                        _str_to_eviction_policyx(eviction_policy))
     return tl.tensor(x, tl.void)
 
+def dot_wait(pendings:int, builder: ir.builder) -> tl.tensor:
+    x = builder.create_dot_wait(pendings)
+    return tl.tensor(x, tl.void)
+
 def get_buffer(src: tl.tensor, index: tl.tensor, builder: ir.builder) -> tl.tensor:
     # TODO: check
     x = builder.create_get_buffer(src.handle, index.handle)

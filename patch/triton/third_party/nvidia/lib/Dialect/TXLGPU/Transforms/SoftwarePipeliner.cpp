@@ -45,6 +45,7 @@ static void pipelineWgmma(ModuleOp moduleOp) {
   for (scf::ForOp forOp : loops) {
     mlir::triton::txlgpu::asyncLaunchDots(forOp);
   }
+  moduleOp->walk([&](tt::WGDotWaitOp waitOp) { waitOp.erase(); });
 }
 
 bool isTMALoad(Operation *op) {

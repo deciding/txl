@@ -110,6 +110,10 @@ class TmaAutoTuneHelper:
             assert self.cuda_descriptors[name] is not None
             return self.cuda_descriptors[name]
 
+##########################################
+# With WS and TMA, full version
+##########################################
+
 @txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
 #@txl.jit(launch_metadata=_matmul_launch_metadata)
 def matmul_persistent_wg_tma_txl_kernel(
@@ -245,6 +249,11 @@ def matmul_persistent_wg_tma_txl_kernel(
         if txl.warpgroup_id() == 2:
             tl._experimental_descriptor_store(c_desc_ptr, c, [offs_am+BLOCK_SIZE_M//2, offs_bn])
 
+
+##########################################
+# Test 0
+##########################################
+
 @txl.autotune(
     configs=[
         triton.Config(
@@ -263,8 +272,8 @@ def matmul_persistent_wg_tma_txl_kernel(
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
-@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
-#@txl.jit(launch_metadata=_matmul_launch_metadata)
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+@txl.jit(launch_metadata=_matmul_launch_metadata)
 def matmul_persistent_tma_txl_kernel(
     a_desc_ptr,
     b_desc_ptr,
@@ -371,6 +380,112 @@ def matmul_persistent_tma_txl_kernel(
     #    c = accumulator.to(dtype)
     #    tl._experimental_descriptor_store(c_desc_ptr, c, [offs_am, offs_bn])
 
+##########################################
+# Test 1: No WS + TMA
+##########################################
+
+@txl.autotune(
+    configs=[
+        triton.Config(
+            {
+                "BLOCK_SIZE_M": 128,
+                "BLOCK_SIZE_N": 128,
+                "BLOCK_SIZE_K": 64,
+                "GROUP_SIZE_M": 8,
+                "NUM_CONSUMER_GROUPS": 1,
+                "NUM_STAGES": 3,
+            },
+            num_stages=3,
+            num_warps=4,
+        ),
+    ],
+    key=["M", "N", "K"],
+    use_cuda_graph=True,
+)
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+@txl.jit(launch_metadata=_matmul_launch_metadata)
+def matmul_persistent_nows_tma_txl_kernel(
+    a_desc_ptr,
+    b_desc_ptr,
+    c_desc_ptr,
+    M,
+    N,
+    K,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    BLOCK_SIZE_K: tl.constexpr,  #
+    GROUP_SIZE_M: tl.constexpr,  #
+    FP8_OUTPUT: tl.constexpr,  #
+    NUM_CONSUMER_GROUPS: tl.constexpr,
+    NUM_STAGES: tl.constexpr,
+):
+    dtype = tl.float8e4nv if FP8_OUTPUT else tl.float16
+    num_tiles = tl.cdiv(M, BLOCK_SIZE_M) * tl.cdiv(N, BLOCK_SIZE_N)
+    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
+    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
+    num_pid_in_group = GROUP_SIZE_M * num_pid_n
+
+    a0 = txl.smem_alloc([BLOCK_SIZE_M, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+    b0 = txl.smem_alloc([BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+
+    mbar_producer = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+    phase = 0
+    bufIdxP = 0
+    bufIdxC = 0
+
+    for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
+        group_id = pid // num_pid_in_group
+        first_pid_m = group_id * GROUP_SIZE_M
+        group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+        pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+        pid_n = (pid % num_pid_in_group) // group_size_m
+
+        offs_am = pid_m * BLOCK_SIZE_M
+        offs_bn = pid_n * BLOCK_SIZE_N
+        offs_k = 0
+
+        # Prologue
+        for i in tl.static_range(2):
+            cur_mbar = txl.get_buffer(mbar_producer, bufIdxP)
+            a = txl.get_buffer(a0, bufIdxP)
+            b = txl.get_buffer(b0, bufIdxP)
+            txl.mbar_expect(cur_mbar, BLOCK_SIZE_M*BLOCK_SIZE_K*2 + BLOCK_SIZE_N*BLOCK_SIZE_K*2)
+            txl.tma_load(a, a_desc_ptr, [offs_am, offs_k], cur_mbar)
+            txl.tma_load(b, b_desc_ptr, [offs_bn, offs_k], cur_mbar)
+
+            bufIdxP = (bufIdxP + 1) % NUM_STAGES
+            offs_k += BLOCK_SIZE_K
+
+        accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+        num_k = tl.cdiv(K, BLOCK_SIZE_K)
+
+        for k in range(0, num_k):
+            cur_mbar = txl.get_buffer(mbar_producer, bufIdxC)
+            a = txl.get_buffer(a0, bufIdxC)
+            b = txl.get_buffer(b0, bufIdxC)
+
+            txl.mbar_wait(cur_mbar, phase)
+            accumulator = tl.dot(a, b.T, accumulator)
+            txl.dot_wait(1)
+
+            bufIdxC = (bufIdxC + 1) % NUM_STAGES
+            if bufIdxC == 0:
+                phase = phase ^ 1
+
+            if k < num_k - 2: # TODO: pred?
+                cur_mbar = txl.get_buffer(mbar_producer, bufIdxP)
+                a = txl.get_buffer(a0, bufIdxP)
+                b = txl.get_buffer(b0, bufIdxP)
+                txl.mbar_expect(cur_mbar, BLOCK_SIZE_M*BLOCK_SIZE_K*2 + BLOCK_SIZE_N*BLOCK_SIZE_K*2)
+                txl.tma_load(a, a_desc_ptr, [offs_am, offs_k], cur_mbar)
+                txl.tma_load(b, b_desc_ptr, [offs_bn, offs_k], cur_mbar)
+
+                bufIdxP = (bufIdxP + 1) % NUM_STAGES
+                offs_k += BLOCK_SIZE_K
+
+        # Epilogue
+        c = accumulator.to(dtype)
+        tl._experimental_descriptor_store(c_desc_ptr, c, [offs_am, offs_bn])
 
 def matmul_persistent_tma_txl(a, b):
     # Check constraints.
@@ -429,227 +544,15 @@ def matmul_persistent_tma_txl(a, b):
     desc_b = desc_helper.get_tma_descriptor_kernel_param("b")
     desc_c = desc_helper.get_tma_descriptor_kernel_param("c")
 
-    matmul_persistent_tma_txl_kernel[grid](
+    #matmul_persistent_tma_txl_kernel[grid](
+    matmul_persistent_nows_tma_txl_kernel[grid](
         desc_a, desc_b, desc_c,  #
         M, N, K,  #
         FP8_OUTPUT=dtype == torch.float8_e4m3fn,  #
     )
     return c
 
-@txl.autotune(
-    configs=[
-        triton.Config(
-            {
-                "BLOCK_SIZE_M": 128,
-                "BLOCK_SIZE_N": 128,
-                "BLOCK_SIZE_K": 64,
-                "GROUP_SIZE_M": 8,
-                "NUM_CONSUMER_GROUPS": 1,
-            },
-            num_stages=1,
-            num_warps=4,
-        ),
-    ],
-    key=["M", "N", "K"],
-    use_cuda_graph=True,
-)
-#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir', use_txl=False)
-@triton.jit(launch_metadata=_matmul_launch_metadata)
-def matmul_persistent_tma_ws_cooperative_kernel_test(
-    a_desc_ptr,
-    b_desc_ptr,
-    c_desc_ptr,
-    M,
-    N,
-    K,
-    BLOCK_SIZE_M: tl.constexpr,
-    BLOCK_SIZE_N: tl.constexpr,
-    BLOCK_SIZE_K: tl.constexpr,  #
-    GROUP_SIZE_M: tl.constexpr,  #
-    FP8_OUTPUT: tl.constexpr,  #
-    NUM_CONSUMER_GROUPS: tl.constexpr,
-):
-    dtype = tl.float8e4nv if FP8_OUTPUT else tl.float16
-    num_tiles = tl.cdiv(M, BLOCK_SIZE_M) * tl.cdiv(N, BLOCK_SIZE_N)
-    for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
-        num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
-        num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
-        num_pid_in_group = GROUP_SIZE_M * num_pid_n
-        group_id = pid // num_pid_in_group
-        first_pid_m = group_id * GROUP_SIZE_M
-        group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-        pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
-        pid_n = (pid % num_pid_in_group) // group_size_m
 
-        offs_am = pid_m * BLOCK_SIZE_M
-        offs_bn = pid_n * BLOCK_SIZE_N
-        offs_k = 0
-
-        accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
-        for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
-            a = tl._experimental_descriptor_load(
-                a_desc_ptr,
-                [offs_am, offs_k],
-                [BLOCK_SIZE_M, BLOCK_SIZE_K],
-                dtype,
-            )
-            b = tl._experimental_descriptor_load(b_desc_ptr, [offs_bn, offs_k], [BLOCK_SIZE_N, BLOCK_SIZE_K], dtype)
-
-            accumulator = tl.dot(a, b.T, accumulator)
-            offs_k += BLOCK_SIZE_K
-
-        c = accumulator.to(dtype)
-        tl._experimental_descriptor_store(c_desc_ptr, c, [offs_am, offs_bn])
-
-#@txl.autotune(
-#    configs=[
-#        triton.Config(
-#            {
-#                "BLOCK_SIZE_M": 128,
-#                "BLOCK_SIZE_N": 256,
-#                "BLOCK_SIZE_K": 64,
-#                "GROUP_SIZE_M": 8,
-#                "NUM_CONSUMER_GROUPS": 2,
-#            },
-#            num_stages=2,
-#            num_warps=4,
-#            num_consumer_groups=2,
-#            num_buffers_warp_spec=3,
-#        ),
-#    ],
-#    key=["M", "N", "K"],
-#    use_cuda_graph=True,
-#)
-@txl.autotune(
-    configs=[
-        triton.Config(
-            {
-                "BLOCK_SIZE_M": 128,
-                "BLOCK_SIZE_N": 128,
-                "BLOCK_SIZE_K": 64,
-                "GROUP_SIZE_M": 8,
-                "NUM_CONSUMER_GROUPS": 1,
-            },
-            num_stages=3,
-            num_warps=4,
-        ),
-    ],
-    key=["M", "N", "K"],
-    use_cuda_graph=True,
-)
-@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir', use_txl=False)
-#@txl.jit(launch_metadata=_matmul_launch_metadata)
-def matmul_persistent_tma_ws_cooperative_kernel(
-    a_desc_ptr,
-    b_desc_ptr,
-    c_desc_ptr,
-    M,
-    N,
-    K,
-    BLOCK_SIZE_M: tl.constexpr,
-    BLOCK_SIZE_N: tl.constexpr,
-    BLOCK_SIZE_K: tl.constexpr,  #
-    GROUP_SIZE_M: tl.constexpr,  #
-    FP8_OUTPUT: tl.constexpr,  #
-    NUM_CONSUMER_GROUPS: tl.constexpr,
-):
-    dtype = tl.float8e4nv if FP8_OUTPUT else tl.float16
-    num_tiles = tl.cdiv(M, BLOCK_SIZE_M) * tl.cdiv(N, BLOCK_SIZE_N)
-    for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
-        num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
-        num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
-        num_pid_in_group = GROUP_SIZE_M * num_pid_n
-        group_id = pid // num_pid_in_group
-        first_pid_m = group_id * GROUP_SIZE_M
-        group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-        pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
-        pid_n = (pid % num_pid_in_group) // group_size_m
-
-        offs_am = pid_m * BLOCK_SIZE_M
-        offs_bn = pid_n * BLOCK_SIZE_N
-        offs_k = 0
-
-        accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
-        for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
-            a = tl._experimental_descriptor_load(
-                a_desc_ptr,
-                [offs_am, offs_k],
-                [BLOCK_SIZE_M, BLOCK_SIZE_K],
-                dtype,
-            )
-            b = tl._experimental_descriptor_load(b_desc_ptr, [offs_bn, offs_k], [BLOCK_SIZE_N, BLOCK_SIZE_K], dtype)
-
-            accumulator = tl.dot(a, b.T, accumulator)
-            offs_k += BLOCK_SIZE_K
-
-        c = accumulator.to(dtype)
-        tl._experimental_descriptor_store(c_desc_ptr, c, [offs_am, offs_bn])
-
-
-def matmul_persistent_tma_ws_cooperative(a, b):
-    # Check constraints.
-    assert a.shape[1] == b.shape[1], "Incompatible dimensions"
-    assert a.dtype == b.dtype, "Incompatible dtypes"
-    NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
-
-    M, K = a.shape
-    N, K = b.shape
-    dtype = a.dtype
-
-    c = torch.empty((M, N), device=a.device, dtype=dtype)
-
-    desc_helper = TmaAutoTuneHelper()
-    desc_helper.init_tma_descriptor("a")
-    desc_helper.init_tma_descriptor("b")
-    desc_helper.init_tma_descriptor("c")
-
-    def grid(META):
-        nonlocal desc_helper
-        desc_helper.fill_2d_tma_descriptor(
-            "a",
-            a.data_ptr(),
-            M,
-            K,
-            META["BLOCK_SIZE_M"] // META["NUM_CONSUMER_GROUPS"],
-            META["BLOCK_SIZE_K"],
-            a.element_size(),
-        )
-
-        desc_helper.fill_2d_tma_descriptor(
-            "b",
-            b.data_ptr(),
-            N,
-            K,
-            META["BLOCK_SIZE_N"],
-            META["BLOCK_SIZE_K"],
-            b.element_size(),
-        )
-        desc_helper.fill_2d_tma_descriptor(
-            "c",
-            c.data_ptr(),
-            M,
-            N,
-            META["BLOCK_SIZE_M"] // META["NUM_CONSUMER_GROUPS"],
-            META["BLOCK_SIZE_N"],
-            c.element_size(),
-        )
-        res = (min(
-            NUM_SMS,
-            triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.cdiv(N, META["BLOCK_SIZE_N"]),
-        ), )
-        return res
-
-    desc_a = desc_helper.get_tma_descriptor_kernel_param("a")
-    desc_b = desc_helper.get_tma_descriptor_kernel_param("b")
-    desc_c = desc_helper.get_tma_descriptor_kernel_param("c")
-
-    #matmul_persistent_tma_ws_cooperative_kernel[grid](
-    matmul_persistent_tma_ws_cooperative_kernel_test[grid](
-        desc_a, desc_b, desc_c,  #
-        M, N, K,  #
-        FP8_OUTPUT=dtype == torch.float8_e4m3fn,  #
-    )
-    return c
 
 
 def cublas_matmul(a, b):
@@ -684,9 +587,9 @@ def bench_fn(reps, warmup_reps, fn, *args):
             fn(*args)
 
 
+M = 8192
+N = 8192
 def bench(K, dtype, reps=1000, warmup_reps=10000):
-    M = 8192
-    N = 8192
     a = torch.randn((M, K), device="cuda", dtype=torch.float16).to(dtype)
     b = torch.randn((K, N), device="cuda", dtype=torch.float16).to(dtype)
 
@@ -758,7 +661,7 @@ if __name__ == "__main__":
 
         torch.manual_seed(0)
 
-        validate0(8192, 8192, args.K_range[0], dtype)
+        validate0(M, N, args.K_range[0], dtype)
 
         if True:
             with txl.proton.profile("matmul", precision='fp16') as prof:

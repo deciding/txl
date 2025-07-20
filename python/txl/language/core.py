@@ -96,7 +96,17 @@ def mbar_wait(mbar: tl.tensor, phase: tl.tensor, _builder=None) -> tl.tensor:
 
 @builtin
 def dot_wait(pendings: int, _builder=None) -> tl.tensor:
-    return semantic.dot_wait(pendings)
+    return semantic.dot_wait(pendings, _builder)
+
+@builtin
+def bar_arrive(bar: tl.tensor, num_threads: tl.tensor, _builder=None) -> tl.tensor:
+    # pred is Value not const expr
+    return semantic.bar_arrive(bar, num_threads, _builder)
+
+@builtin
+def bar_wait(bar: tl.tensor, num_threads: tl.tensor, _builder=None) -> tl.tensor:
+    # pred is Value not const expr
+    return semantic.bar_wait(bar, num_threads, _builder)
 
 @builtin
 def print(prefix_or_data, data=None, _builder=None):

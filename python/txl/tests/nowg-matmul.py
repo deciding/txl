@@ -127,8 +127,8 @@ class TmaAutoTuneHelper:
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
-@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
-#@txl.jit(launch_metadata=_matmul_launch_metadata)
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+@txl.jit(launch_metadata=_matmul_launch_metadata)
 def matmul_persistent_tma_txl_kernel(
     a_desc_ptr,
     b_desc_ptr,
@@ -333,8 +333,8 @@ def matmul_persistent_tma_txl(a, b):
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
-@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir', use_txl=False)
-#@txl.jit(launch_metadata=_matmul_launch_metadata)
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir', use_txl=False)
+@txl.jit(launch_metadata=_matmul_launch_metadata, use_txl=False)
 def matmul_persistent_tma_ws_cooperative_kernel(
     a_desc_ptr,
     b_desc_ptr,

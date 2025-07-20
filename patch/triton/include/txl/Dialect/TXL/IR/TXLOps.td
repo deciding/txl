@@ -60,7 +60,10 @@ def TXL_MbarAllocOp : TXL_Op<"mbar_alloc", [DeclareOpInterfaceMethods<MemoryEffe
   let assemblyFormat = "attr-dict `:` type($result)";
 }
 
-def TXL_GetBufferOp : TXL_Op<"get_buffer", [Pure]> {
+def TXL_GetBufferOp : TXL_Op<"get_buffer", [Pure,
+  TypesMatchWith<"src type matches result type", "src", "result",
+                 "$_self">
+]> {
   let summary = "get stage buffer";
   let description = [{
     Get stage buffer from smem with index
@@ -89,14 +92,14 @@ def TXL_MbarExpectOp : TXL_Op<"mbar_expect", [MemoryEffects<[MemWrite<SmemMemory
   let assemblyFormat = "$mbar `,` $pred attr-dict `:` type($mbar) `,` type($pred)";
 }
 
-def TXL_MbarWaitOp : TXL_Op<"mbar_wait", [MemoryEffects<[MemRead<SmemMemory>]>]> {
+def TXL_MbarWaitOp : TXL_Op<"mbar_wait", [MemoryEffects<[MemRead<SmemMemory>, MemWrite<SmemMemory>]>]> {
   let summary = "mbarrier.try/test_wait";
   let description = [{
     mbarrier wait
   }];
   let arguments = (ins
     TT_Tensor:$mbar,
-    I1:$phase
+    I32:$phase
   );
 
   let assemblyFormat = "$mbar `,` $phase attr-dict `:` type($mbar) `,` type($phase)";

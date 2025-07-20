@@ -68,7 +68,42 @@ public:
             context, shape, this->numWarps, this->threadsPerWarp, this->numCTAs);
     auto tensorType = RankedTensorType::get(shape, eltTy, encoding);
 
-    rewriter.replaceOpWithNewOp<SmemAllocOp>(op, tensorType, op.getNumStages(), op.getIsMutable());
+    auto newSmemAlloc = rewriter.replaceOpWithNewOp<SmemAllocOp>(op, tensorType, op.getNumStages(), op.getIsMutable());
+
+    //for (auto user : newSmemAlloc->getUsers()) {
+    //  if (isa<GetBufferOp>(user)) {
+    //    auto getBuffer = dyn_cast<GetBufferOp>(user);
+    //    rewriter.replaceOpWithNewOp<GetBufferOp>(user, tensorType, getBuffer.getSrc(), getBuffer.getIndex());
+    //  }
+    //}
+    return success();
+  }
+};
+
+class AddEncodingToGetBuffer
+    : public OpRewritePattern<GetBufferOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+public:
+  mlir::LogicalResult
+  matchAndRewrite(GetBufferOp op,
+                  PatternRewriter &rewriter) const override {
+    auto srcType = op.getSrc().getType();
+    auto srcTensorType = dyn_cast<RankedTensorType>(srcType);
+    if (!srcTensorType)
+        return failure();
+
+    auto srcEnc = srcTensorType.getEncoding();
+    if (!srcEnc)
+        return failure();
+
+    auto oldTy = op.getType();
+    auto oldTensorType = dyn_cast<RankedTensorType>(oldTy);
+    if (oldTensorType.getEncoding())
+        return failure();
+
+    rewriter.replaceOpWithNewOp<GetBufferOp>(op, srcTensorType, op.getSrc(), op.getIndex());
+
     return success();
   }
 };
@@ -86,6 +121,7 @@ public:
     RewritePatternSet smemAllocPatterns(context);
 
     smemAllocPatterns.add<AddEncodingToSmemAlloc>(context, target, numWarps, threadsPerWarp, numCTAs);
+    smemAllocPatterns.add<AddEncodingToGetBuffer>(context);
 
     if (applyPatternsGreedily(m, std::move(smemAllocPatterns)).failed()) {
       signalPassFailure();

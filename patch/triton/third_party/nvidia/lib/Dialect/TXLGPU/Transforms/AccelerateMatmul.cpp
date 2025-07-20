@@ -159,6 +159,8 @@ getSharedMemoryMMAOperand(Value v, mlir::PatternRewriter &rewriter, int opIdx,
   Value arg = v;
   if (auto cvtOp = v.getDefiningOp<ConvertLayoutOp>())
     arg = cvtOp.getSrc();
+  if (auto getBufferOp = v.getDefiningOp<GetBufferOp>())
+    arg = getBufferOp.getSrc();
   auto argType = cast<RankedTensorType>(arg.getType());
   assert(argType.getEncoding() && "unexpected tensor type");
   auto newOrder = getOrder(argType);
@@ -317,6 +319,10 @@ public:
         }
         if (auto transOp = v.getDefiningOp<TransOp>()) {
           v = transOp.getSrc();
+          continue;
+        }
+        if (auto getBufferOp = v.getDefiningOp<GetBufferOp>()) {
+          v = getBufferOp.getSrc();
           continue;
         }
         break;

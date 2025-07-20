@@ -373,7 +373,12 @@ def matmul_persistent_tma_ws_cooperative_kernel(
                 [BLOCK_SIZE_M, BLOCK_SIZE_K],
                 dtype,
             )
-            b = tl._experimental_descriptor_load(b_desc_ptr, [offs_bn, offs_k], [BLOCK_SIZE_N, BLOCK_SIZE_K], dtype)
+            b = tl._experimental_descriptor_load(
+                    b_desc_ptr,
+                    [offs_bn, offs_k],
+                    [BLOCK_SIZE_N, BLOCK_SIZE_K],
+                    dtype
+                    )
 
             accumulator = tl.dot(a, b.T, accumulator)
             offs_k += BLOCK_SIZE_K

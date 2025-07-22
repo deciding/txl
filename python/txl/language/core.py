@@ -37,6 +37,25 @@ def thread0(_builder=None):
     return is_thread0
 
 @builtin
+def wg_thread0(wgid, _builder=None):
+    is_bidx_x = bid(0, _builder=_builder)
+    is_bidx_y = bid(1, _builder=_builder)
+    is_bidx_z = bid(2, _builder=_builder)
+    is_tidx_x = tid(0, _builder=_builder)
+
+    thread_id = _constexpr_to_value(wgid * 128)
+
+    is_bidx_x0 = is_bidx_x.__eq__(0, _builder=_builder)
+    is_bidx_y0 = is_bidx_y.__eq__(0, _builder=_builder)
+    is_bidx_z0 = is_bidx_z.__eq__(0, _builder=_builder)
+    is_tidx_x0 = is_tidx_x.__eq__(thread_id, _builder=_builder)
+
+    is_thread0 = is_bidx_x0.__and__(is_bidx_y0, _builder=_builder)
+    is_thread0 = is_thread0.__and__(is_bidx_z0, _builder=_builder)
+    is_thread0 = is_thread0.__and__(is_tidx_x0, _builder=_builder)
+    return is_thread0
+
+@builtin
 def warp_id(_builder=None):
     return semantic.warp_id(_builder)
 
@@ -91,8 +110,16 @@ def mbar_expect(mbar: tl.tensor, size_in_bytes: int, pred: tl.tensor=None, _buil
 
 @builtin
 def mbar_wait(mbar: tl.tensor, phase: tl.tensor, _builder=None) -> tl.tensor:
-    # pred is Value not const expr
+    # phase is Value not const expr
     return semantic.mbar_wait(mbar, phase, _builder)
+
+@builtin
+def mbar_arrive(mbar: tl.tensor, pred: tl.tensor=None,
+        track_async_op:bool=False, tx_cnt:int =0, _builder=None) -> tl.tensor:
+    # pred is Value not const expr
+    if pred is None:
+        pred = tl.full((), True, dtype=tl.int1, _builder=_builder)
+    return semantic.mbar_arrive(mbar, pred, track_async_op, tx_cnt, _builder)
 
 @builtin
 def dot_wait(pendings: int, _builder=None) -> tl.tensor:

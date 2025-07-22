@@ -1829,6 +1829,11 @@ void init_triton_ir(py::module &&m) {
                Value mbar, Value phase) -> void {
                self.create<mlir::triton::MbarWaitOp>(mbar, phase);
            })
+      .def("create_mbar_arrive",
+           [](TritonOpBuilder &self,
+               Value mbar, Value pred, bool trackAsyncOp, int txCnt) -> void {
+               self.create<mlir::triton::MbarArriveOp>(mbar, pred, nullptr, trackAsyncOp, txCnt);
+           })
       .def("create_tma_load",
            [](TritonOpBuilder &self, Value src, Value desc, std::vector<Value> &indices, Value mbar,
               CacheModifierX cacheModifier,

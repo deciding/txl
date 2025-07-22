@@ -52,6 +52,9 @@ def TXLGPUPipeline : Pass<"txlgpu-pipeline", "mlir::ModuleOp"> {
                            "mlir::arith::ArithDialect"];
 
   let options = [
+    Option<"numWarpgroups", "num-warpgroups",
+           "int32_t", /*default*/"1",
+           "number of warpgroups">,
     Option<"numStages", "num-stages",
            "int32_t", /*default*/"3",
            "number of pipeline stages">,

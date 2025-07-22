@@ -105,6 +105,38 @@ def TXL_MbarWaitOp : TXL_Op<"mbar_wait", [MemoryEffects<[MemRead<SmemMemory>, Me
   let assemblyFormat = "$mbar `,` $phase attr-dict `:` type($mbar) `,` type($phase)";
 }
 
+def TXL_MbarArriveOp : TXL_Op<"mbar_arrive", [AttrSizedOperandSegments, MemoryEffects<[MemWrite<SmemMemory>]>]> {
+  let summary = "mbarrier.arrive";
+
+  let description = [{
+    This operation defining the arriving action for a mbarrier.
+    txCount:
+        An optional attribute that set tx-count. This Op will be lowered into
+        mbarrier.arrive.expect_tx if the optional attribute exist.
+    trackAsyncOp:
+        If true, this op will be lowered into cp.async.mbarrier.arrive.noinc.
+    pred:
+        Only perform arrive action when pred is true.
+    remoteCtaId:
+        if set, perform an remote arrive action.
+
+    Example:
+
+    txl.mbar_arrive %0 {trackAsyncOp = false} : !tt.ptr<i64>
+
+  }];
+
+  let arguments = (ins TT_Tensor:$mbar,
+                       Optional<I1>:$pred,
+                       Optional<I32>:$remoteCtaId,
+                       I1Attr: $trackAsyncOp,
+                       DefaultValuedAttr<I32Attr, "0">: $txCount
+                  );
+
+  let assemblyFormat = "operands attr-dict `:` type(operands)";
+}
+
+
 def TXL_WGDotWaitOp : TXL_Op<"dot_wait", [MemoryEffects<[MemWrite]>]> {
   let summary = "dot wait, specially for wg dot";
   let description = [{

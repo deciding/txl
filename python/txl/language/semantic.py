@@ -116,3 +116,7 @@ def mbar_expect(mbar: tl.tensor, size_in_bytes:int, pred: tl.tensor, builder: ir
 def mbar_wait(mbar: tl.tensor, phase:tl.tensor, builder: ir.builder) -> tl.tensor:
     x = builder.create_mbar_wait(mbar.handle, phase.handle)
     return tl.tensor(x, tl.void)
+
+def mbar_arrive(mbar: tl.tensor, pred:tl.tensor, track_async_op:bool, tx_cnt:int, builder: ir.builder) -> tl.tensor:
+    x = builder.create_mbar_arrive(mbar.handle, pred.handle, track_async_op, tx_cnt)
+    return tl.tensor(x, tl.void)

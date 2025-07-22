@@ -286,9 +286,10 @@ class Config:
     """
 
     def __init__(self, kwargs, num_warps=4, num_stages=3, num_ctas=1, num_buffers_warp_spec=0, num_consumer_groups=0,
-                 reg_dec_producer=0, reg_inc_consumer=0, maxnreg=None, pre_hook=None):
+                 reg_dec_producer=0, reg_inc_consumer=0, maxnreg=None, pre_hook=None, num_warpgroups=1):
         self.kwargs = kwargs
         self.num_warps = num_warps
+        self.num_warpgroups = num_warpgroups
         self.num_ctas = num_ctas
         self.num_stages = num_stages
         self.num_buffers_warp_spec = num_buffers_warp_spec
@@ -304,6 +305,7 @@ class Config:
                 k: v
                 for (k, v) in (
                     ("num_warps", self.num_warps),
+                    ("num_warpgroups", self.num_warpgroups),
                     ("num_ctas", self.num_ctas),
                     ("num_stages", self.num_stages),
                     ("num_buffers_warp_spec", self.num_buffers_warp_spec),
@@ -320,6 +322,7 @@ class Config:
         for k, v in self.kwargs.items():
             res.append(f"{k}: {v}")
         res.append(f"num_warps: {self.num_warps}")
+        res.append(f"num_warpgroups: {self.num_warpgroups}")
         res.append(f"num_ctas: {self.num_ctas}")
         res.append(f"num_stages: {self.num_stages}")
         res.append(f"num_buffers_warp_spec: {self.num_buffers_warp_spec}")
@@ -328,6 +331,7 @@ class Config:
         res.append(f"reg_inc_consumer: {self.reg_inc_consumer}")
         res.append(f"maxnreg: {self.maxnreg}")
         return ", ".join(res)
+
 
 
 def autotune(configs, key, prune_configs_by=None, reset_to_zero=None, restore_value=None, pre_hook=None, post_hook=None,

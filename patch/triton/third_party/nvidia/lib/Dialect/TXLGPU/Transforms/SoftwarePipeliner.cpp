@@ -269,7 +269,7 @@ void replaceMbarBufferUses(Operation* oldViewOp, Value newView) {
       //oldViewOp->erase();
 }
 
-void lowerMbarOps(Value& mbar) {
+void lowerMbarOps(Value& mbar, bool usedByTmaLoadOp) {
     auto mbarOp = mbar.getDefiningOp();
     OpBuilder builder(mbarOp);
     for (auto user : mbarOp->getUsers()){
@@ -287,6 +287,19 @@ void lowerMbarOps(Value& mbar) {
             builder.create<ttng::WaitBarrierOp>(user->getLoc(), mbar,
                                                     mbarWaitOp.getPhase());
             mbarWaitOp->erase();
+        }
+        else if (isa<tt::MbarArriveOp>(user)){
+            auto mbarArriveOp = dyn_cast<tt::MbarArriveOp>(user);
+            builder.setInsertionPoint(user);
+            builder.create<ttng::MBarrierArriveOp>(
+                    user->getLoc(),
+                    mbar,
+                    mbarArriveOp.getPred(),
+                    /*remoteCTAId*/ nullptr,
+                    mbarArriveOp.getTrackAsyncOp(), // TODO: auto by tmaload/asyncload
+                    mbarArriveOp.getTxCount()
+                    );
+            mbarArriveOp->erase();
         }
     }
 
@@ -321,6 +334,14 @@ void lowerSmemAlloc(tt::SmemAllocOp op){
         
 }
 
+bool hasTMALoadUsers(Operation* op){
+    for (auto user : op->getUsers()){
+        if (isa<tt::TmaLoadOp>(user)){
+            return true;
+        }
+    }
+    return false;
+}
 
 void lowerMbar(tt::MbarAllocOp& op) {
     // For each group calculate the size and insert the barrier after the last
@@ -335,11 +356,13 @@ void lowerMbar(tt::MbarAllocOp& op) {
     auto getBufferOps = getSmemAllocUsers<tt::GetBufferOp>(op);
 
     Value buffer;
+    bool usedByTmaLoadOp = false;
     for (auto getBufferOp : getBufferOps){
+        usedByTmaLoadOp = hasTMALoadUsers(getBufferOp);
         buffer = lowerGetBufferOp(getBufferOp, barrierAlloc);
         replaceMbarBufferUses(getBufferOp, buffer);
         getBufferOp->erase();
-        lowerMbarOps(buffer); // removed
+        lowerMbarOps(buffer, usedByTmaLoadOp); // removed
     }
 
     replaceMbarBufferUses(op, barrierAlloc);
@@ -433,6 +456,11 @@ public:
   void runOnOperation() override {
     MLIRContext *context = &getContext();
     ModuleOp m = getOperation();
+    OpBuilder builder(context);
+
+    int numWarps = cast<IntegerAttr>(m->getAttr("ttg.num-warps")).getInt();
+    int totalNumWarps = numWarps * numWarpgroups;
+    m->setAttr("ttg.total-num-warps", builder.getI32IntegerAttr(totalNumWarps));
 
     lowerSmemAllocs(m);
     lowerMbars(m);

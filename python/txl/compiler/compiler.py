@@ -228,7 +228,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
 
     def add_pipeline(i):
         if use_txl:
-            passes.ttgpuir.add_pipeline_txl(i, opt.num_stages, dump_enabled)
+            passes.ttgpuir.add_pipeline_txl(pm, metadata['num_warpgroups'], opt.num_stages, dump_enabled)
         else:
             passes.ttgpuir.add_pipeline(i, opt.num_stages, dump_enabled)
 
@@ -481,7 +481,7 @@ def add_dbg_stages(backend, stages, options, diff_mode='ttgir', log_dir=None, us
         stages["llir"] = lambda src, metadata: make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=log_dir)
 
 
-def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_txl=True):
+def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_txl=True, txl_options=None):
     if target is None:
         target = driver.active.get_current_target()
     assert isinstance(target, GPUTarget), "target must be of GPUTarget type"
@@ -537,6 +537,7 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_tx
         **env_vars,
     }
     metadata["triton_version"] = __version__
+    metadata.update(txl_options)
     # run compilation pipeline  and populate metadata
     stages = dict()
     if diff_mode:

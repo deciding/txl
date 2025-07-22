@@ -279,7 +279,7 @@ class CUDABackend(BaseBackend):
             passes.ttgpuir.add_ws_code_partition(pm, opt.num_buffers_warp_spec, opt.num_consumer_groups,
                                                  opt.reg_dec_producer, opt.reg_inc_consumer)
             #passes.ttgpuir.add_pipeline(pm, opt.num_stages, dump_enabled)
-            passes.ttgpuir.add_pipeline_txl(pm, opt.num_stages, dump_enabled)
+            passes.ttgpuir.add_pipeline_txl(pm, metadata['num_warpgroups'], opt.num_stages, dump_enabled)
             passes.ttgpuir.add_ping_pong_sync(pm, opt.num_consumer_groups)
             passes.ttgpuir.add_ws_lowering(pm, opt.num_consumer_groups)
         elif capability // 10 >= 10:

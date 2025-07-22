@@ -33,6 +33,11 @@ class ZLJITFunction(JITFunction):
     # then run is to call CompiledKernel.launch_metada and CompiledKernel.run
     def run(self, *args, grid, warmup, **kwargs):
         kwargs["debug"] = kwargs.get("debug", self.debug) or os.environ.get("TRITON_DEBUG", "0") == "1"
+        txl_options = {'num_warpgroups': 1}
+        for key in txl_options:
+            if key in kwargs:
+                txl_options[key] = kwargs[key]
+                del kwargs[key]
 
         # parse options
         device = driver.active.get_current_device()
@@ -79,7 +84,7 @@ class ZLJITFunction(JITFunction):
             else:
                 src = self.ASTSource(self, signature, constexprs, attrs)
             kernel = self.compile(src, target=target, options=options.__dict__,
-                    diff_mode=self.diff_mode, log_dir=self.log_dir, use_txl=self.use_txl)
+                    diff_mode=self.diff_mode, log_dir=self.log_dir, use_txl=self.use_txl, txl_options=txl_options)
             if self.diff_mode:
                 exit()
             kernel_cache[key] = kernel

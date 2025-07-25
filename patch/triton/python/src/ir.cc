@@ -1872,6 +1872,10 @@ void init_triton_ir(py::module &&m) {
                //return self.create<mlir::triton::nvidia_gpu::GetCanonicalWarpIdOp>();
                return self.create<mlir::triton::nvgpu::CanonicalWarpIdOp>(self.getBuilder().getI32Type());
            })
+      .def("create_is_warpgroup",
+           [](TritonOpBuilder &self, std::vector<int32_t> &wgids) -> Value {
+             return self.create<IsWarpgroupOp>(wgids);
+           })
       .def("create_get_canonical_wrapgroup_id",
            [](TritonOpBuilder& self) -> Value{
                return self.create<mlir::triton::txlgpu::CanonicalWarpgroupIdOp>(self.getBuilder().getI32Type());

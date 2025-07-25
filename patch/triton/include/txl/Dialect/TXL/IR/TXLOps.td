@@ -195,4 +195,17 @@ def TXL_NamedBarrierWaitOp : TXL_Op<"barrier_wait", [MemoryEffects<[MemWrite]>]>
   let assemblyFormat = "$bar `,` $numThreads attr-dict `:` type(operands)";
 }
 
+def TXL_IsWarpgroupOp : TXL_Op<"is_warpgroup", []> {
+  let summary = "Check if is warpgroup id";
+  let description = [{
+    check whether the warpgroup id is as specified
+  }];
+  let arguments = (ins
+    DenseI32ArrayAttr:$ids
+  );
+  let results = (outs I1:$result);
+
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
 #endif // TXL_OPS

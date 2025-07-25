@@ -25,6 +25,9 @@ CUDA_COREDUMP_SHOW_PROGRESS=1 CUDA_ENABLE_COREDUMP_ON_EXCEPTION=1 CUDA_LAUNCH_BL
 cuda-gdb
 ```
 
+## Milestones
+- [x] when running ws persistent on 8192x8192x512 (default in triton) get 411 vs. 424 TFLOPS on H100 PCIe. better than 403 of fully ws triton (2%). reached 97% of cublas.
+
 ## Changelog
 ```
 patch folder

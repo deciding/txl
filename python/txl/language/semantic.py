@@ -60,6 +60,9 @@ def warp_id(builder: ir.builder) -> tl.tensor:
 def warpgroup_id(builder: ir.builder) -> tl.tensor:
     return tl.tensor(builder.create_get_canonical_wrapgroup_id(), tl.int32)
 
+def is_warpgroup(ids, builder: ir.builder) -> tl.tensor:
+    return tl.tensor(builder.create_is_warpgroup(ids), tl.int1)
+
 def reg_alloc(count:int, builder: ir.builder):
     builder.create_reg_alloc(count)
 

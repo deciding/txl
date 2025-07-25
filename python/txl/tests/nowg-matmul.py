@@ -297,42 +297,42 @@ def matmul_persistent_tma_txl(a, b):
     return c
 
 
-#@txl.autotune(
-#    configs=[
-#        triton.Config(
-#            {
-#                "BLOCK_SIZE_M": 128,
-#                "BLOCK_SIZE_N": 256,
-#                "BLOCK_SIZE_K": 64,
-#                "GROUP_SIZE_M": 8,
-#                "NUM_CONSUMER_GROUPS": 2,
-#            },
-#            num_stages=2,
-#            num_warps=4,
-#            num_consumer_groups=2,
-#            num_buffers_warp_spec=3,
-#        ),
-#    ],
-#    key=["M", "N", "K"],
-#    use_cuda_graph=True,
-#)
 @txl.autotune(
     configs=[
         triton.Config(
             {
                 "BLOCK_SIZE_M": 128,
-                "BLOCK_SIZE_N": 128,
+                "BLOCK_SIZE_N": 256,
                 "BLOCK_SIZE_K": 64,
                 "GROUP_SIZE_M": 8,
-                "NUM_CONSUMER_GROUPS": 1,
+                "NUM_CONSUMER_GROUPS": 2,
             },
-            num_stages=3,
+            num_stages=2,
             num_warps=4,
+            num_consumer_groups=2,
+            num_buffers_warp_spec=3,
         ),
     ],
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
+#@txl.autotune(
+#    configs=[
+#        triton.Config(
+#            {
+#                "BLOCK_SIZE_M": 128,
+#                "BLOCK_SIZE_N": 128,
+#                "BLOCK_SIZE_K": 64,
+#                "GROUP_SIZE_M": 8,
+#                "NUM_CONSUMER_GROUPS": 1,
+#            },
+#            num_stages=3,
+#            num_warps=4,
+#        ),
+#    ],
+#    key=["M", "N", "K"],
+#    use_cuda_graph=True,
+#)
 #@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir', use_txl=False)
 @txl.jit(launch_metadata=_matmul_launch_metadata, use_txl=False)
 def matmul_persistent_tma_ws_cooperative_kernel(

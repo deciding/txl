@@ -64,6 +64,10 @@ def warpgroup_id(_builder=None):
     return semantic.warpgroup_id(_builder)
 
 @builtin
+def is_warpgroup(ids, _builder=None):
+    return semantic.is_warpgroup(ids, _builder)
+
+@builtin
 def reg_alloc(count, _builder=None):
     return semantic.reg_alloc(count, _builder)
 

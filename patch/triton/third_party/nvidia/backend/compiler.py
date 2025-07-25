@@ -231,6 +231,7 @@ class CUDABackend(BaseBackend):
         pm.enable_debug()
         passes.common.add_inliner(pm)
         passes.ttir.add_rewrite_tensor_pointer(pm)
+        passes.ttir.add_ws_code_partition_txl(pm, metadata['num_warpgroups'])
         passes.common.add_canonicalizer(pm)
         passes.ttir.add_combine(pm)
         passes.ttir.add_reorder_broadcast(pm)
@@ -329,6 +330,7 @@ class CUDABackend(BaseBackend):
         nvidia.passes.ttnvgpuir.add_lower_mma(pm)
         passes.ttgpuir.add_combine_tensor_select_and_if(pm)
         passes.ttgpuir.add_allocate_warp_groups(pm)
+        nvidia.passes.txlgpuir.add_txlgpu_inherit_wg_id(pm) # must before scf_to_cf
         passes.convert.add_scf_to_cf(pm)
         passes.ttgpuir.add_allocate_shared_memory(pm)
         nvidia.passes.ttnvgpuir.add_allocate_tensor_memory(pm)

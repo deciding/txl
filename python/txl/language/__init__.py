@@ -6,7 +6,7 @@ from .core import (
     thread0,
     wg_thread0,
     warp_id,
-    warpgroup_id,
+    is_warpgroup,
     reg_alloc,
     reg_dealloc,
     smem_alloc,

@@ -1,4 +1,6 @@
 add_triton_library(TXLGPUTransforms
+  WSCodePartition.cpp
+
   AccelerateMatmul.cpp
   OptimizeDotOperands.cpp
   SoftwarePipeliner.cpp

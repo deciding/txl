@@ -17,6 +17,7 @@
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/LinearLayoutConversions.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
+#include "triton/Analysis/TXLUtility.h"
 
 #include "triton/Tools/Sys/GetEnv.hpp"
 #include <cassert>
@@ -1220,8 +1221,12 @@ struct AsyncTMACopyGlobalToLocalOpConversion
     if (rank > 1)
       numCopies = ceil<int>(contigDimSizeInByte, 128);
 
-    auto asyncTaskIds = getAsyncTaskIds(op);
+    int wgId = getOpAttrWgId(op);
     int firstThreadId = 0;
+    if (wgId != -1) {
+      firstThreadId = wgId * numWarps * warpSize;
+    }
+    auto asyncTaskIds = getAsyncTaskIds(op);
     if (!asyncTaskIds.empty()) {
       assert(asyncTaskIds.size() == 1 && "only support single async task");
       firstThreadId = asyncTaskIds[0] * numWarps * warpSize;
@@ -1279,9 +1284,13 @@ struct AsyncTMACopyGlobalToLocalOpConversion
 };
 
 int getWarpOffset(Operation *op) {
+  int wgId = getOpAttrWgId(op);
+  if (wgId != -1) {
+    return 4 * wgId; // each WG has 4 warps
+  }
   auto asyncTaskIds = getAsyncTaskIds(op);
   if (asyncTaskIds.size() > 0) {
-    return 4 * *std::min_element(asyncTaskIds.begin(), asyncTaskIds.end());
+      return 4 * *std::min_element(asyncTaskIds.begin(), asyncTaskIds.end());
   }
   return 0;
 }

@@ -1,36 +1,60 @@
-cp thirdparty/triton/bin/RegisterTritonDialects.h patch/triton/bin
+FROM_DIR=thirdparty/triton
+TO_DIR=patch/triton
 
-cp thirdparty/triton/include/CMakeLists.txt patch/triton/include/
-cp thirdparty/triton/lib/Dialect/CMakeLists.txt patch/triton/lib/Dialect/
+cp ${FROM_DIR}/bin/RegisterTritonDialects.h ${TO_DIR}/bin
 
-cp thirdparty/triton/lib/Dialect/TritonGPU/Transforms/TaskIdPropagate.cpp patch/triton/lib/Dialect/TritonGPU/Transforms/
-cp thirdparty/triton/lib/Dialect/TritonGPU/Transforms/Utility.cpp patch/triton/lib/Dialect/TritonGPU/Transforms/
-cp thirdparty/triton/lib/Dialect/TritonGPU/Transforms/WSCodePartition.cpp patch/triton/lib/Dialect/TritonGPU/Transforms/
-cp thirdparty/triton/lib/Dialect/TritonGPU/Transforms/WSDataPartition.cpp patch/triton/lib/Dialect/TritonGPU/Transforms/
+cp ${FROM_DIR}/include/CMakeLists.txt ${TO_DIR}/include/
 
-cp thirdparty/triton/python/src/ir.cc patch/triton/python/src/
-cp thirdparty/triton/python/src/passes.cc patch/triton/python/src/
+cp ${FROM_DIR}/include/triton/Analysis/TXLUtility.h ${TO_DIR}/include/triton/Analysis/
 
-cp thirdparty/triton/third_party/nvidia/backend/compiler.py patch/triton/third_party/nvidia/backend/
+#include/txl
 
-cp thirdparty/triton/third_party/nvidia/include/CMakeLists.txt patch/triton/third_party/nvidia/include/
-cp thirdparty/triton/third_party/nvidia/include/Dialect/CMakeLists.txt patch/triton/third_party/nvidia/include/Dialect/
-cp thirdparty/triton/third_party/nvidia/lib/CMakeLists.txt patch/triton/third_party/nvidia/lib/
-cp thirdparty/triton/third_party/nvidia/lib/Dialect/CMakeLists.txt patch/triton/third_party/nvidia/lib/Dialect/
-cp thirdparty/triton/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/LoadStoreOpToLLVM.cpp patch/triton/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
+cp ${FROM_DIR}/lib/Analysis/Allocation.cpp ${TO_DIR}/lib/Analysis/
+cp ${FROM_DIR}/lib/Analysis/CMakeLists.txt ${TO_DIR}/lib/Analysis/
+cp ${FROM_DIR}/lib/Analysis/Membar.cpp ${TO_DIR}/lib/Analysis/
+cp ${FROM_DIR}/lib/Analysis/TXLUtility.cpp ${TO_DIR}/lib/Analysis/
 
-cp thirdparty/triton/third_party/nvidia/triton_nvidia.cc patch/triton/third_party/nvidia/
+cp ${FROM_DIR}/lib/Dialect/CMakeLists.txt ${TO_DIR}/lib/Dialect/
+
+#lib/Dialect/TXL
+
+cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/TaskIdPropagate.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
+cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Utility.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
+cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/WSCodePartition.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
+cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/WSDataPartition.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
+
+cp ${FROM_DIR}/python/src/ir.cc ${TO_DIR}/python/src/
+cp ${FROM_DIR}/python/src/passes.cc ${TO_DIR}/python/src/
+
+cp ${FROM_DIR}/third_party/nvidia/backend/compiler.py ${TO_DIR}/third_party/nvidia/backend/
+
+cp ${FROM_DIR}/third_party/nvidia/include/CMakeLists.txt ${TO_DIR}/third_party/nvidia/include/
+cp ${FROM_DIR}/third_party/nvidia/include/Dialect/CMakeLists.txt ${TO_DIR}/third_party/nvidia/include/Dialect/
+
+#third_party/nvidia/include/Dialect/TXLGPU
+#third_party/nvidia/include/TXLGPUToLLVM
+
+cp ${FROM_DIR}/third_party/nvidia/lib/CMakeLists.txt ${TO_DIR}/third_party/nvidia/lib/
+cp ${FROM_DIR}/third_party/nvidia/lib/Dialect/CMakeLists.txt ${TO_DIR}/third_party/nvidia/lib/Dialect/
+
+#third_party/nvidia/lib/Dialect/TXLGPU
+#third_party/nvidia/lib/TXLGPUToLLVM
+
+cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/BarrierOpToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
+cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/LoadStoreOpToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
+
+cp ${FROM_DIR}/third_party/nvidia/triton_nvidia.cc ${TO_DIR}/third_party/nvidia/
 
 # make sure folder no exist
-#rm -rf patch/triton/include/txl
-#rm -rf patch/triton/lib/Dialect/TXL/
-#rm -rf patch/triton/third_party/nvidia/include/Dialect/TXLGPU/
-#rm -rf patch/triton/third_party/nvidia/include/TXLGPUToLLVM/
-#rm -rf patch/triton/third_party/nvidia/lib/Dialect/TXLGPU/
-#rm -rf patch/triton/third_party/nvidia/lib/TXLGPUToLLVM/
-cp -r thirdparty/triton/include/txl/ patch/triton/include/
-cp -r thirdparty/triton/lib/Dialect/TXL/ patch/triton/lib/Dialect/
-cp -r thirdparty/triton/third_party/nvidia/include/Dialect/TXLGPU/ patch/triton/third_party/nvidia/include/Dialect/
-cp -r thirdparty/triton/third_party/nvidia/include/TXLGPUToLLVM/ patch/triton/third_party/nvidia/include/
-cp -r thirdparty/triton/third_party/nvidia/lib/Dialect/TXLGPU/ patch/triton/third_party/nvidia/lib/Dialect/
-cp -r thirdparty/triton/third_party/nvidia/lib/TXLGPUToLLVM/ patch/triton/third_party/nvidia/lib/
+rm -rf ${TO_DIR}/include/txl
+rm -rf ${TO_DIR}/lib/Dialect/TXL/
+rm -rf ${TO_DIR}/third_party/nvidia/include/Dialect/TXLGPU/
+rm -rf ${TO_DIR}/third_party/nvidia/include/TXLGPUToLLVM/
+rm -rf ${TO_DIR}/third_party/nvidia/lib/Dialect/TXLGPU/
+rm -rf ${TO_DIR}/third_party/nvidia/lib/TXLGPUToLLVM/
+cp -r ${FROM_DIR}/include/txl/ ${TO_DIR}/include/
+cp -r ${FROM_DIR}/lib/Dialect/TXL/ ${TO_DIR}/lib/Dialect/
+cp -r ${FROM_DIR}/third_party/nvidia/include/Dialect/TXLGPU/ ${TO_DIR}/third_party/nvidia/include/Dialect/
+cp -r ${FROM_DIR}/third_party/nvidia/include/TXLGPUToLLVM/ ${TO_DIR}/third_party/nvidia/include/
+cp -r ${FROM_DIR}/third_party/nvidia/lib/Dialect/TXLGPU/ ${TO_DIR}/third_party/nvidia/lib/Dialect/
+cp -r ${FROM_DIR}/third_party/nvidia/lib/TXLGPUToLLVM/ ${TO_DIR}/third_party/nvidia/lib/

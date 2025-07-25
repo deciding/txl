@@ -184,6 +184,7 @@ static Value createAlloc(Operation* loadOp, int numStages,
 
 // Create an allocation and init the mbarriers.
 Value createBarrierAlloc(tt::MbarAllocOp& mbarAllocOp) {
+  int arrCount = mbarAllocOp.getArrCount();
   int numBarriers = mbarAllocOp.getNumStages();
   MLIRContext *ctx = mbarAllocOp->getContext();
   IRRewriter rewriter(ctx); // OpBuilder is also okay I suppose
@@ -204,7 +205,7 @@ Value createBarrierAlloc(tt::MbarAllocOp& mbarAllocOp) {
       rewriter.create<ttg::LocalAllocOp>(loc, barrierMemDescType, Value());
   for (unsigned i = 0; i < numBarriers; i++) {
     Value barrierView = triton::createSingleBufferView(rewriter, barrierAlloc, i);
-    rewriter.create<ttng::InitBarrierOp>(loc, barrierView, 1);
+    rewriter.create<ttng::InitBarrierOp>(loc, barrierView, arrCount);
   }
   return barrierAlloc;
 }

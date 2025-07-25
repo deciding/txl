@@ -20,6 +20,8 @@ namespace triton {
 
 std::unique_ptr<OperationPass<ModuleOp>> createConvertTXLGPUToLLVMPass();
 
+std::unique_ptr<OperationPass<ModuleOp>> createInheritWGIdPass();
+
 } // namespace triton
 
 } // namespace mlir

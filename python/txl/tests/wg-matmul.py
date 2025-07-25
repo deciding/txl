@@ -327,16 +327,16 @@ def matmul_persistent_nows_tma_txl_kernel(
 # Test 2: WS + TMA
 ##########################################
 
-filename = "dump/X3YVT6YUNNTGCOMBCZE3ABBJGWLYZBJFT3F3OFJPOMOTCZTNZBWA/matmul_persistent_ws_tma_txl_kernel.ptx"
+filename = "dump/MJBLVPRR77CXCR77BN22SGNZENXRMSLQKRL3A2BXLJL2G64KO7LA/matmul_persistent_ws_tma_txl_kernel.ptx"
 @txl.autotune(
     configs=[
         txl.Config(
             {
-                "BLOCK_SIZE_M": 256,
-                "BLOCK_SIZE_N": 128,
+                "BLOCK_SIZE_M": 128,
+                "BLOCK_SIZE_N": 256,
                 "BLOCK_SIZE_K": 64,
                 "GROUP_SIZE_M": 8,
-                "NUM_CONSUMER_GROUPS": 1,
+                "NUM_CONSUMER_GROUPS": 2,
                 "NUM_STAGES": 3,
             },
             num_stages=3,
@@ -347,9 +347,9 @@ filename = "dump/X3YVT6YUNNTGCOMBCZE3ABBJGWLYZBJFT3F3OFJPOMOTCZTNZBWA/matmul_per
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
-@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='llir')
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='llir')
 #@txl.jit(launch_metadata=_matmul_launch_metadata, src_file=filename)
-#@txl.jit(launch_metadata=_matmul_launch_metadata)
+@txl.jit(launch_metadata=_matmul_launch_metadata)
 def matmul_persistent_ws_tma_txl_kernel(
     a_desc_ptr,
     b_desc_ptr,
@@ -382,17 +382,18 @@ def matmul_persistent_ws_tma_txl_kernel(
     mbar_consumer2 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
 
 
-    if txl.warpgroup_id() == 0:
-        txl.reg_dealloc(40) #TODO: tobe auto
+    if txl.is_warpgroup([0]):
+
         phase = 1
         bufIdx = 0
-
         for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
-            group_id = pid // num_pid_in_group
-            first_pid_m = group_id * GROUP_SIZE_M
-            group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-            pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
-            pid_n = (pid % num_pid_in_group) // group_size_m
+            #group_id = pid // num_pid_in_group
+            #first_pid_m = group_id * GROUP_SIZE_M
+            #group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+            #pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+            #pid_n = (pid % num_pid_in_group) // group_size_m
+            pid_m = pid % num_pid_m
+            pid_n = pid // num_pid_m
 
             offs_am = pid_m * BLOCK_SIZE_M
             offs_bn = pid_n * BLOCK_SIZE_N
@@ -417,8 +418,6 @@ def matmul_persistent_ws_tma_txl_kernel(
                 txl.mbar_wait(mbar_c2, phase)
                 txl.mbar_expect(mbar_p_b0, BLOCK_SIZE_N*BLOCK_SIZE_K*2)
                 txl.tma_load(b0_buf, b_desc_ptr, [offs_bn, offs_k], mbar_p_b0)
-                if txl.wg_thread0(0):
-                    txl.print('wg0 tma_load2')
 
 
                 txl.mbar_expect(mbar_p_a1, BLOCK_SIZE_M//2*BLOCK_SIZE_K*2)
@@ -429,16 +428,17 @@ def matmul_persistent_ws_tma_txl_kernel(
                 if bufIdx == 0:
                     phase = phase^1
 
-    if txl.warpgroup_id() > 0: # TODO: specify we have 2 consumers
-        txl.reg_alloc(232) #TODO: tobe auto
+    if txl.is_warpgroup([1, 2]): # TODO: else
         phase = 0
         bufIdx = 0
         for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
-            group_id = pid // num_pid_in_group
-            first_pid_m = group_id * GROUP_SIZE_M
-            group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-            pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
-            pid_n = (pid % num_pid_in_group) // group_size_m
+            #group_id = pid // num_pid_in_group
+            #first_pid_m = group_id * GROUP_SIZE_M
+            #group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+            #pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+            #pid_n = (pid % num_pid_in_group) // group_size_m
+            pid_m = pid % num_pid_m
+            pid_n = pid // num_pid_m
 
             offs_am = pid_m * BLOCK_SIZE_M
             offs_bn = pid_n * BLOCK_SIZE_N
@@ -446,22 +446,22 @@ def matmul_persistent_ws_tma_txl_kernel(
             accumulator = tl.zeros((BLOCK_SIZE_M//2, BLOCK_SIZE_N), dtype=tl.float32)
 
             for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
-
                 mbar_p_b0 = txl.get_buffer(mbar_producer_b0, bufIdx)
 
                 b0_buf = txl.get_buffer(b0, bufIdx)
 
                 txl.mbar_wait(mbar_p_b0, phase)
 
-                if txl.warpgroup_id() == 1:
+
+                if txl.is_warpgroup([1]):
                     mbar_p_a0 = txl.get_buffer(mbar_producer_a0, bufIdx)
                     mbar_c1 = txl.get_buffer(mbar_consumer1, bufIdx)
                     a0_buf = txl.get_buffer(a0, bufIdx)
                     txl.mbar_wait(mbar_p_a0, phase)
-                    accumulator = tl.dot(a0_buf, b0_buf.T, accumulator)
+                    accumulator = tl.dot(a0_buf, b0_buf.T, accumulator) # accumulator is reg, no contention among buffers
                     txl.dot_wait(1)
                     txl.mbar_arrive(mbar_c1)
-                elif txl.warpgroup_id() == 2:
+                if txl.is_warpgroup([2]): # TODO: else test
                     mbar_p_a1 = txl.get_buffer(mbar_producer_a1, bufIdx)
                     mbar_c2 = txl.get_buffer(mbar_consumer2, bufIdx)
                     a1_buf = txl.get_buffer(a1, bufIdx)
@@ -472,13 +472,13 @@ def matmul_persistent_ws_tma_txl_kernel(
 
                 offs_k += BLOCK_SIZE_K
                 bufIdx = (bufIdx + 1) % NUM_STAGES
-                if bufIdx == 0:
+                if bufIdx == 0: # TODO: pipelinestate
                     phase = phase^1
 
             c = accumulator.to(dtype)
-            if txl.warpgroup_id() == 1:
+            if txl.is_warpgroup([1]):
                 tl._experimental_descriptor_store(c_desc_ptr, c, [offs_am, offs_bn])
-            if txl.warpgroup_id() == 2:
+            if txl.is_warpgroup([2]):
                 tl._experimental_descriptor_store(c_desc_ptr, c, [offs_am+BLOCK_SIZE_M//2, offs_bn])
 
 
@@ -591,6 +591,8 @@ def bench_fn(reps, warmup_reps, fn, *args):
 
 M = 8192
 N = 8192
+M=8192
+N=8192
 def bench(K, dtype, reps=1000, warmup_reps=10000):
     a = torch.randn((M, K), device="cuda", dtype=torch.float16).to(dtype)
     b = torch.randn((K, N), device="cuda", dtype=torch.float16).to(dtype)
@@ -622,6 +624,47 @@ def validate0(M, N, K, dtype):
 
     print(matmul_persistent_tma_ws_cooperative_result)
     print(cublas_result)
+
+    if False:
+        import matplotlib.pyplot as plt
+
+        # Create a sample tensor
+        tensor = matmul_persistent_tma_ws_cooperative_result - cublas_result
+
+        # Define block sizes
+        block_size1 = 128  # Row block size
+        block_size2 = 128  # Column block size
+
+        # Calculate number of blocks
+        num_row_blocks = tensor.size(0) // block_size1  # 256/128 = 2
+        num_col_blocks = tensor.size(1) // block_size2  # 16384/128 = 128
+
+        # Reshape to (2, 128, 128, 128)
+        reshaped = tensor.view(num_row_blocks, block_size1,
+                                       num_col_blocks, block_size2)
+
+        # Permute dimensions to group block rows and columns together
+        reshaped = reshaped.permute(0, 2, 1, 3)  # Now (2, 128, 128, 128)
+
+        # Calculate mean over the block dimensions
+        block_averages = reshaped.mean(dim=(2, 3))
+
+        # Convert to numpy array
+        array = block_averages.cpu().numpy()
+        print(array)
+
+
+        # Create figure
+        plt.figure(figsize=(8, 3))
+
+        # Plot heatmap
+        plt.imshow(array, cmap='viridis')
+        plt.colorbar()
+
+        # Save as PDF
+        plt.savefig('tensor_heatmap.pdf', bbox_inches='tight', dpi=300)
+        plt.close()  # Close the figure to free memory
+
     naive_vs_matmul_persistent_tma_ws_cooperative = "✅" if torch.allclose(
         cublas_result.to(torch.float16), matmul_persistent_tma_ws_cooperative_result.to(torch.float16),
         atol=1.0) else "❌"

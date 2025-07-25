@@ -3,6 +3,26 @@
 
 include "mlir/Pass/PassBase.td"
 
+def TXLGPUWSCodePartition : Pass<"txlgpu-ws-code-partition", "mlir::ModuleOp"> {
+  let summary = "ws code partition";
+
+  let description = [{
+    ws code partition
+  }];
+
+  let options = [
+    Option<"numWarpgroups", "num-warpgroups",
+           "int32_t", /*default*/"1",
+           "number of warpgroups">
+  ];
+
+  let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect",
+                           "mlir::triton::txlgpu::TXLGPUDialect",
+                           "mlir::triton::nvidia_gpu::TritonNvidiaGPUDialect",
+                           "mlir::triton::TritonDialect"];
+}
+
+
 def TXLGPUAccelerateMatmul : Pass<"txlgpu-accelerate-matmul", "mlir::ModuleOp"> {
   let summary = "accelerate matmul";
 

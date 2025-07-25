@@ -46,9 +46,12 @@ void init_triton_nvidia_passes_ttnvgpuir(py::module &&m) {
   ADD_PASS_WRAPPER_0("add_lower_mma",
                      mlir::createTritonNvidiaGPUMMALoweringPass);
 }
+
 void init_triton_nvidia_passes_txlgpuir(py::module &&m) {
   ADD_PASS_WRAPPER_0("add_txlgpu_to_llvm",
                      mlir::triton::createConvertTXLGPUToLLVMPass);
+  ADD_PASS_WRAPPER_0("add_txlgpu_inherit_wg_id",
+                     mlir::triton::createInheritWGIdPass);
 }
 
 void init_triton_nvidia(py::module &&m) {

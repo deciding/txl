@@ -163,9 +163,13 @@ def make_nv_dbg_ttir(mod, metadata, opt, log_dir=None):
     pm1.enable_debug()
     pm2.enable_debug()
 
+    def add_ws_code_partition_txl(i):
+        passes.ttir.add_ws_code_partition_txl(pm, metadata['num_warpgroups'])
+
     pass_funcs = [
         passes.common.add_inliner,
         passes.ttir.add_rewrite_tensor_pointer,
+        add_ws_code_partition_txl,
         passes.common.add_canonicalizer,
         passes.ttir.add_combine,
         passes.ttir.add_reorder_broadcast,
@@ -214,6 +218,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
 
     def add_convert_to_ttgpuir(i):
         passes.ttir.add_convert_to_ttgpuir(i, f"cuda:{capability}", opt.num_warps, 32, opt.num_ctas)
+
     def add_plan_cta(i):
         nvidia.passes.ttnvgpuir.add_plan_cta(i, cluster_info)
 
@@ -226,7 +231,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
     def add_optimize_dot_operands_txl(i):
         passes.ttgpuir.add_optimize_dot_operands_txl(i, capability >= 80)
 
-    def add_pipeline(i):
+    def add_pipeline_txl(i):
         if use_txl:
             passes.ttgpuir.add_pipeline_txl(pm, metadata['num_warpgroups'], opt.num_stages, dump_enabled)
         else:
@@ -291,7 +296,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
             add_taskid_propagate,
             add_ws_data_partition,
             add_ws_code_partition,
-            add_pipeline,
+            add_pipeline_txl,
             add_ping_pong_sync,
             add_ws_lowering,
         ]
@@ -386,6 +391,7 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
         nvidia.passes.ttnvgpuir.add_lower_mma,
         passes.ttgpuir.add_combine_tensor_select_and_if,
         passes.ttgpuir.add_allocate_warp_groups,
+        nvidia.passes.txlgpuir.add_txlgpu_inherit_wg_id,
         passes.convert.add_scf_to_cf,
         passes.ttgpuir.add_allocate_shared_memory,
         nvidia.passes.ttnvgpuir.add_allocate_tensor_memory,

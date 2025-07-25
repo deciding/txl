@@ -37,11 +37,13 @@ void init_triton_passes_common(py::module &&m) {
 
 void init_triton_passes_ttir(py::module &&m) {
   using namespace mlir::triton;
+  using namespace mlir::triton::txlgpu;
   ADD_PASS_WRAPPER_0("add_combine", createCombineOpsPass);
   ADD_PASS_WRAPPER_0("add_reorder_broadcast", createReorderBroadcastPass);
   ADD_PASS_WRAPPER_0("add_rewrite_tensor_pointer",
                      createRewriteTensorPointerPass);
   ADD_PASS_WRAPPER_0("add_loop_unroll", createLoopUnrollPass);
+  ADD_PASS_OPTION_WRAPPER_1("add_ws_code_partition_txl", createTXLGPUWSCodePartition, int);
   ADD_PASS_WRAPPER_4("add_convert_to_ttgpuir",
                      createConvertTritonToTritonGPUPass, const std::string &,
                      int, int, int);

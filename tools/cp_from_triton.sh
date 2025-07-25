@@ -58,3 +58,5 @@ cp -r ${FROM_DIR}/third_party/nvidia/include/Dialect/TXLGPU/ ${TO_DIR}/third_par
 cp -r ${FROM_DIR}/third_party/nvidia/include/TXLGPUToLLVM/ ${TO_DIR}/third_party/nvidia/include/
 cp -r ${FROM_DIR}/third_party/nvidia/lib/Dialect/TXLGPU/ ${TO_DIR}/third_party/nvidia/lib/Dialect/
 cp -r ${FROM_DIR}/third_party/nvidia/lib/TXLGPUToLLVM/ ${TO_DIR}/third_party/nvidia/lib/
+
+find patch/triton -type f | wc -l

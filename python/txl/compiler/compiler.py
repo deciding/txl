@@ -549,7 +549,7 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_tx
     if diff_mode:
         add_dbg_stages(backend, stages, options, diff_mode=diff_mode, log_dir=log_dir, use_txl=use_txl)
     else:
-        backend.add_stages(stages, options)
+        backend.add_stages(stages, options, use_txl=use_txl) #TODO: make this available for AMD
     first_stage = list(stages.keys()).index(src.ext)
     # when the source is an IR file, don't apply the passes related to this stage. This makes it easier to write IR level tests.
     if ir_source:

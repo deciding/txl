@@ -945,7 +945,7 @@ except BaseException:
     HAS_FLASH = False
 
 TORCH_HAS_FP8 = hasattr(torch, 'float8_e5m2')
-BATCH, N_HEADS, HEAD_DIM = 4, 32, 64
+BATCH, N_HEADS, HEAD_DIM = 16, 32, 64
 # vary seq length for fixed head and batch=4
 configs = []
 for mode in ["fwd", "bwd"]:
@@ -975,7 +975,7 @@ for mode in ["fwd", "bwd"]:
 
 configs0 = []
 for mode in ["fwd"]:
-    for causal in [True]:
+    for causal in [False]:
         if mode == "bwd" and not causal:
             continue
         configs0.append(

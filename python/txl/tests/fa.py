@@ -20,14 +20,27 @@ import triton.tools.experimental_descriptor
 import triton
 import triton.language as tl
 
-import txl
+try:
+    import txl
+    Has_TXL = True
+    print("TXL")
+except:
+    class txl:
+        @staticmethod
+        def jit(use_txl):
+            def decorator(func):
+                return func
+            return decorator
+    Has_TXL = False
+    print("No txl")
 
 # ENABLE_LHS_TO_TMEM is an experimental environment variable for Blackwell.
 # If it is set to 1 it can improve performance of Blackwell attention. However,
 # it defaults to 0 as it is known to cause correctness issues outside of the
 # _attn_fwd_tma kernel below.
 
-DEVICE = triton.runtime.driver.active.get_active_torch_device()
+#DEVICE = triton.runtime.driver.active.get_active_torch_device()
+DEVICE = torch.device(type='cuda', index=0)
 
 
 def is_hip():
@@ -166,6 +179,7 @@ def _attn_fwd_inner(acc, l_i, m_i, q,  #
     return acc, l_i, m_i
 
 
+#@triton.jit
 @txl.jit(use_txl=False)
 def _attn_fwd_inner_tma(acc, l_i, m_i, q,  #
                         desc_k, desc_v,  #
@@ -349,6 +363,7 @@ def keep_tma(conf):
 
 #no_tune
 #@triton.autotune(configs=list(filter(keep_tma, configs_tma)), key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT"])
+#@triton.jit
 @txl.jit(use_txl=False)
 def _attn_fwd_tma(sm_scale, M,  #
                   Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #
@@ -517,8 +532,16 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, no_tune=False):
     k = (torch.randn((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE))
     v = (torch.randn((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE))
     sm_scale = 0.5
-    tri_out = attention(q, k, v, causal, sm_scale, HAS_TMA_DESC, no_tune).half()
-    print(tri_out)
+    q1 = q.permute(0,2,1,3).contiguous()
+    k1 = k.permute(0,2,1,3).contiguous()
+    v1 = v.permute(0,2,1,3).contiguous()
+
+    # txl
+    if Has_TXL:
+        tri_out = attention(q, k, v, causal, sm_scale, HAS_TMA_DESC, no_tune).half()
+    elif HAS_FLASH:
+        tri_out = flash_attn_func(q1, k1, v1, softmax_scale=sm_scale, causal=causal).half()
+        tri_out = tri_out.permute(0,2,1,3).contiguous()
 
     REF = True
     if REF:
@@ -531,6 +554,10 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, no_tune=False):
         p = torch.softmax(p.float(), dim=-1).half()
         # p = torch.exp(p)
         ref_out = torch.matmul(p, v)
+
+        print(ref_out.shape)
+    print(tri_out.shape)
+
     # compare
     #NOTE:
     # TMA will produce 0s if not having other kernels executed (like torch.matmul)
@@ -561,7 +588,7 @@ except BaseException:
 ###################################################
 
 TORCH_HAS_FP8 = hasattr(torch, 'float8_e5m2')
-BATCH, N_HEADS, HEAD_DIM = 4, 32, 64
+BATCH, N_HEADS, HEAD_DIM = 16, 32, 64
 # vary seq length for fixed head and batch=4
 configs = []
 for mode in ["fwd", "bwd"]:
@@ -595,23 +622,30 @@ for mode in ["fwd", "bwd"]:
 ### Forward centric config
 ###################################################
 
+line_vals = []
+line_names = []
+if Has_TXL:
+    line_vals.append("triton-fp16")
+    line_names.append("Triton [FP16]")
+if HAS_FLASH:
+    line_vals.append("flash")
+    line_names.append("Flash-3")
 configs0 = []
 for mode in ["fwd"]:
-    for causal in [True]:
+    for causal in [False]:
         if mode == "bwd" and not causal:
             continue
         configs0.append(
             triton.testing.Benchmark(
                 x_names=["N_CTX"],
-                x_vals=[2**i for i in range(10, 11)],
+                x_vals=[2**i for i in range(10, 14)],
                 line_arg="provider",
-                line_vals=["triton-fp16"],
-                line_names=["Triton [FP16]"],
-                #line_vals=["triton-fp16", "flash"],
-                #line_names=["Triton [FP16]", "Flash-3"],
+                #txl
+                line_vals=line_vals,
+                line_names=line_vals,
                 styles=[("red", "-"), ("blue", "-"), ("green", "-")],
                 ylabel="TFLOPS",
-                plot_name=f"fused-attention-batch{BATCH}-head{N_HEADS}-d{HEAD_DIM}-{mode}-causal={causal}",
+                plot_name=f"fused-attention-tok16k-head{N_HEADS}-d{HEAD_DIM}-{mode}-causal={causal}",
                 args={
                     "H": N_HEADS,
                     "BATCH": BATCH,
@@ -624,11 +658,13 @@ for mode in ["fwd"]:
 
 @triton.testing.perf_report(configs0)
 def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, device=DEVICE, no_tune=False):
+    # follow fa3 paper
+    BATCH = int(16483 / N_CTX)
     assert mode in ["fwd", "bwd"]
     dtype = torch.float16
-    q = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device, requires_grad=True)
-    k = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device, requires_grad=True)
-    v = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device, requires_grad=True)
+    q = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
+    k = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
+    v = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
     if "triton" in provider:
         if mode == "fwd" and "fp8" in provider:
             q = q.to(torch.float8_e5m2)
@@ -645,8 +681,11 @@ def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, dev
         ms = triton.testing.do_bench(fn, warmup=1000, rep=1000)
 
     if provider == "flash":
-        #qkv = torch.randn((BATCH, N_CTX, 3, H, HEAD_DIM), dtype=dtype, device=device, requires_grad=True)
-        #fn = lambda: flash_attn_func(qkv, causal=causal)
+        # qkv = torch.randn((BATCH, N_CTX, 3, H, HEAD_DIM), dtype=dtype, device=device, requires_grad=True)
+        # fn = lambda: flash_attn_func(qkv, causal=causal)
+        q = q.permute(0,2,1,3).contiguous()
+        k = k.permute(0,2,1,3).contiguous()
+        v = v.permute(0,2,1,3).contiguous()
         fn = lambda: flash_attn_func(q, k, v, causal=causal)
         if mode == "bwd":
             o = fn()
@@ -666,7 +705,8 @@ def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, dev
 # only works on post-Ampere GPUs right now
 if __name__ == "__main__":
 
-    no_tune=True # no best config
+    no_tune=True # has best config
+    #no_tune=False # no best config
 
     print("TEST...")
     test_op(1, 2, 1024, 64, False, dtype=torch.float16, no_tune=no_tune)

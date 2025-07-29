@@ -366,8 +366,10 @@ void lowerMbar(tt::MbarAllocOp& op) {
         lowerMbarOps(buffer, usedByTmaLoadOp); // removed
     }
 
+    usedByTmaLoadOp = hasTMALoadUsers(op);
     replaceMbarBufferUses(op, barrierAlloc);
     op->erase();
+    lowerMbarOps(barrierAlloc, usedByTmaLoadOp);
     // Invalidate and deallocate barrier
     //builder.setInsertionPointAfter(forOp);
     //for (int i = 0; i < numBuffers; i++) {

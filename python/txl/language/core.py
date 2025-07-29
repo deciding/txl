@@ -1,5 +1,6 @@
 import triton.language as tl
 from triton.language.core import builtin, _shape_check_impl, _experimental_reinterpret_tensor_descriptor
+from triton.language.semantic import _convert_elem_to_ir_value
 from . import semantic
 from .utils import _constexpr_to_value, _apply_binary_method
 from typing import Sequence
@@ -103,6 +104,7 @@ def tma_load(value: tl.tensor, desc_pointer, offsets, mbar:tl.tensor, _builder=N
 @builtin
 def get_buffer(src: tl.tensor, index: tl.tensor, _builder=None) -> tl.tensor:
     # index is Value not constexpr
+    index = tl.tensor(_convert_elem_to_ir_value(_builder, index, False), type=tl.int32)
     return semantic.get_buffer(src, index, _builder)
 
 @builtin
@@ -115,6 +117,7 @@ def mbar_expect(mbar: tl.tensor, size_in_bytes: int, pred: tl.tensor=None, _buil
 @builtin
 def mbar_wait(mbar: tl.tensor, phase: tl.tensor, _builder=None) -> tl.tensor:
     # phase is Value not const expr
+    phase = tl.tensor(_convert_elem_to_ir_value(_builder, phase, False), type=tl.int32)
     return semantic.mbar_wait(mbar, phase, _builder)
 
 @builtin

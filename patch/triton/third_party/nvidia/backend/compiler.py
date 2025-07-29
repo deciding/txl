@@ -242,7 +242,7 @@ class CUDABackend(BaseBackend):
         return mod
 
     @staticmethod
-    def make_ttgir(mod, metadata, opt, capability):
+    def make_ttgir(mod, metadata, opt, capability, use_txl):
         cluster_info = nvidia.ClusterInfo()
         if opt.cluster_dims is not None:
             cluster_info.clusterDimX = opt.cluster_dims[0]
@@ -279,8 +279,10 @@ class CUDABackend(BaseBackend):
             passes.ttgpuir.add_ws_data_partition(pm, opt.num_consumer_groups)
             passes.ttgpuir.add_ws_code_partition(pm, opt.num_buffers_warp_spec, opt.num_consumer_groups,
                                                  opt.reg_dec_producer, opt.reg_inc_consumer)
-            #passes.ttgpuir.add_pipeline(pm, opt.num_stages, dump_enabled)
-            passes.ttgpuir.add_pipeline_txl(pm, metadata['num_warpgroups'], opt.num_stages, dump_enabled)
+            if use_txl:
+                passes.ttgpuir.add_pipeline_txl(pm, metadata['num_warpgroups'], opt.num_stages, dump_enabled)
+            else:
+                passes.ttgpuir.add_pipeline(pm, opt.num_stages, dump_enabled)
             passes.ttgpuir.add_ping_pong_sync(pm, opt.num_consumer_groups)
             passes.ttgpuir.add_ws_lowering(pm, opt.num_consumer_groups)
         elif capability // 10 >= 10:
@@ -451,10 +453,10 @@ class CUDABackend(BaseBackend):
                 os.remove(fbin)
         return cubin
 
-    def add_stages(self, stages, options):
+    def add_stages(self, stages, options, use_txl=True):
         capability = self._parse_arch(options.arch)
         stages["ttir"] = lambda src, metadata: self.make_ttir(src, metadata, options)
-        stages["ttgir"] = lambda src, metadata: self.make_ttgir(src, metadata, options, capability)
+        stages["ttgir"] = lambda src, metadata: self.make_ttgir(src, metadata, options, capability, use_txl)
         stages["llir"] = lambda src, metadata: self.make_llir(src, metadata, options, capability)
         stages["ptx"] = lambda src, metadata: self.make_ptx(src, metadata, options, self.target.arch)
         stages["cubin"] = lambda src, metadata: self.make_cubin(src, metadata, options, self.target.arch)

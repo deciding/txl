@@ -25,6 +25,20 @@ CUDA_COREDUMP_SHOW_PROGRESS=1 CUDA_ENABLE_COREDUMP_ON_EXCEPTION=1 CUDA_LAUNCH_BL
 cuda-gdb
 ```
 
+## Flash-Attention-3
+
+seq len 1k 2k 4k 8k, (batch\_size = 16k/seqlen)
+num heads 32, head dim 64, causal=False
+hardware: PCIe
+
+TFLOPS:
+- Triton: 230, 233, 239, 248
+- FA3: 243, 298, 310, 323
+- WS-ours: 257, 257, 263, 267
+
+
+Known that triton optimized with 3 multi-stages with MMAPV overlap with prev buffer's MMAQK, even no warpgroup specialization.
+
 ## Milestones
 - [x] when running ws persistent on 8192x8192x512 (default in triton) get 411 vs. 424 TFLOPS on H100 PCIe. better than 403 of fully ws triton (2%). reached 97% of cublas.
 

@@ -242,267 +242,132 @@ static void threadValuesThroughWait(ttng::WarpGroupDotWaitOp wait,
   wait->erase();
 }
 
-// Determines whether a given MMAv3 dot op, represented as ttng.warp_group_dot,
-// needs a wait immediately after it.
-//
-// In PTX, MMAv3 exists only as an asynchronous op.  In Triton, we can represent
-// MMAv3 ops as either ttng.warp_group_dot {isAsync=True} or ttng.warp_group_dot
-// {isAsync=False}.  But even if we use ttng.warp_group_dot {isAsync=True}, the
-// conservative thing is to make a dot "effectively synchronous" by inserting a
-// `ttng.warp_group_dot_wait {pendings=0}` right after it.
-//
-// We can omit the wait and create a "properly async" dot if all of the
-// following are true.
-//
-//  1. All operands that touch shared memory are multi-buffered, i.e. can't read
-//     an incomplete value while it's being written asynchronously by a load.
-//     1a. If operand A is in registers, these registers cannot be updated
-//     inside
-//         the loop.
-//         **Exception** if the operand is produced by a preceding WGMMA,
-//         then this op can be properly async. Either the f16 shortcut is
-//         possible and the WGMMA's can run back-to-back (see rule 3 below), or
-//         elementwise truncate is needed, in which case the preceding WGMMA is
-//         not async and a WarpGroupDotWait is inserted right after, which
-//         guarantees exclusive access to the operand registers.
-//
-//  2. If the dot is used by any op in the loop, it must be used under an `if`,
-//     and will be synced with a `wait 0` at the beginning of the `if` block.
-//
-//  3. During iteration i, between the start of the loop up until the first
-//     `ttng.warp_group_dot_wait {pendings=0}` op, the result of the dot from
-//     iteration i-1 is consumed only by other MMAv3 dots as the `c` operand.
-//
-//     This is safe because the following pseudo-PTX is valid:
-//
-//        %accum = warp_group_dot %a1, %b1, %c1
-//        %accum = warp_group_dot %a2, %b2, %accum
-//
-//     That is, the second async dot can use the result of the first one without
-//     an intervening wait.  However, the only operation that can legally read
-//     %accum before the wait is another warp_group_dot, and this only works for
-//     the `c` operand, not `a` or `b`.  See
-//     https://docs.nvidia.com/cuda/parallel-thread-execution/#asynchronous-warpgroup-level-matrix-instructions-wgmma-fence
-//     (ttng::WarpGroupDotOp corresponds to wgmma.fence followed by one or more
-//     wgmma.async ops, so our understanding is that the two
-//     ttng::WarpGroupDotOps don't have to correspond to wgmma.async ops with
-//     the same shapes as specified in the docs, because there's an intervening
-//     fence.)
-//
-// If the op can be properly async, this function returns the index of the dot
-// in the loop's iter_args.  (Rule (2) above ensures this is well-defined.)
-//
-static std::optional<int> dotCanBeProperlyAsync(ttng::WarpGroupDotOp dotOp,
-                                                scf::ForOp forOp) {
-  LDBG("Considering whether to make MMAv3 dot properly async: " << dotOp);
+static void lowerDotWaitInner(SmallVector<Operation*> &queue, SmallVector<std::pair<Value, int>> &asyncDotResults) {
+    while(!queue.empty()){
+        Operation * curOp = queue.pop_back_val();
+        if (isa<scf::IfOp>(curOp)){
+            scf::IfOp ifOp = dyn_cast<scf::IfOp>(curOp);
 
-  // Rule 1: All shmem operands are multi-buffered.
-  auto checkOperand = [&](Value operand) {
-    if (!isa<ttg::SharedEncodingTrait>(
-            cast<ttg::TensorOrMemDesc>(operand.getType()).getEncoding())) {
-      // Rule 1a: Register operands must not be modified within the loop.
-      // First, check for chained WGMMA as an exception.
-      if (auto cvt = dyn_cast<ttg::ConvertLayoutOp>(operand.getDefiningOp())) {
-        return isa<ttg::NvidiaMmaEncodingAttr>(
-            cvt.getSrc().getType().getEncoding());
-      }
-      // And then, do a stricter-than-necessary check for now, that the operand
-      // is defined outside the loop.
-      return forOp.isDefinedOutsideOfLoop(operand);
-    }
+            SmallVector<Operation*> thenQueue;
+            for (Operation& op : llvm::reverse(ifOp.thenBlock()->getOperations())){
+                thenQueue.push_back(&op);
+            }
+            SmallVector<std::pair<Value, int>> thenAsyncDotResults(asyncDotResults.begin(), asyncDotResults.end());
+            lowerDotWaitInner(thenQueue, thenAsyncDotResults);
 
-    // If it's a shmem operand, it must either be defined outside the loop, or
-    // come from an MemDescSubview op.  Only ConvertLayout and Trans ops are
-    // allowed in between.
-    Value transitiveOperand = operand;
-    while (isa_and_nonnull<ttg::ConvertLayoutOp, ttg::MemDescTransOp>(
-               transitiveOperand.getDefiningOp()) ||
-           isa<BlockArgument>(transitiveOperand)) {
-      auto blockArg = dyn_cast<BlockArgument>(transitiveOperand);
-      if (blockArg && blockArg.getOwner() == forOp.getBody()) {
-        transitiveOperand =
-            cast<scf::YieldOp>(blockArg.getOwner()->getTerminator())
-                .getOperand(blockArg.getArgNumber() - 1);
-      } else if (Operation *def = transitiveOperand.getDefiningOp()) {
-        transitiveOperand = def->getOperand(0);
-      }
-    }
-    return forOp.isDefinedOutsideOfLoop(transitiveOperand) ||
-           transitiveOperand.getDefiningOp<ttg::MemDescSubviewOp>();
-  };
-
-  // We don't have to call checkOperand on getC() because it's always in
-  // registers, never in shmem.
-  assert(isa<ttg::NvidiaMmaEncodingAttr>(dotOp.getC().getType().getEncoding()));
-  if (!checkOperand(dotOp.getA()) || !checkOperand(dotOp.getB())) {
-    LDBG("Can't make dot async because shmem operands aren't multi-buffered");
-    return std::nullopt;
-  }
-
-  // Rule 2: The dot cannot be unconditionally used by any op in the loop.
-  // Uses under `if` are allowed, as can be explicitly synced with a `wait 0`.
-  int iterArgIdx = -1;
-  Value iterArg = nullptr;
-  SmallVector<std::pair<Operation *, int>> queue;
-  for (auto &use : dotOp->getUses()) {
-    queue.push_back({use.getOwner(), use.getOperandNumber()});
-  }
-  while (!queue.empty()) {
-    auto [user, argIdx] = queue.pop_back_val();
-    if (user->getParentOp() == forOp) {
-      if (isa<scf::YieldOp>(user)) {
-        if (iterArg) {
-          // The dot is used by the loop's yield, but we can't have any other
-          // uses.
-          LDBG("Can't make dot async because dot is used by multiple ops in "
-               "the loop.");
-          return std::nullopt;
+            if (ifOp.elseBlock()){
+                SmallVector<Operation*> elseQueue;
+                for (Operation& op : llvm::reverse(ifOp.elseBlock()->getOperations())){
+                    elseQueue.push_back(&op);
+                }
+                SmallVector<std::pair<Value, int>> elseAsyncDotResults(asyncDotResults.begin(), asyncDotResults.end());
+                lowerDotWaitInner(elseQueue, elseAsyncDotResults);
+            }
         }
-        iterArgIdx = argIdx;
-        iterArg = forOp.getRegionIterArg(argIdx);
-        continue;
-      }
-      LDBG("Can't make dot async because dot is unconditionally used in the "
-           "loop.");
-      return std::nullopt;
-    }
-    if (auto ifOp = dyn_cast<scf::IfOp>(user->getParentOp())) {
-      if (isa<scf::YieldOp>(user)) {
-        // The result is returned by the if, follow it further.
-        auto uses = ifOp.getResult(argIdx).getUses();
-        for (auto &use : uses) {
-          queue.push_back({use.getOwner(), use.getOperandNumber()});
+        else if (isa<ttng::WarpGroupDotOp>(curOp)){
+            ttng::WarpGroupDotOp dotOp = dyn_cast<ttng::WarpGroupDotOp>(curOp);
+            int opNum = -1;
+            for (auto& use : dotOp->getUses()){
+                auto user = use.getOwner();
+                if (isa<scf::YieldOp>(user)){
+                    auto yieldOp = dyn_cast<scf::YieldOp>(user);
+                    opNum = use.getOperandNumber();
+                }
+            }
+
+            asyncDotResults.push_back({curOp->getResult(0), opNum});
         }
-      }
-    } else {
-      return std::nullopt;
-    }
-  }
+        else if (isa<tt::WGDotWaitOp>(curOp)){
+            OpBuilder builder(curOp);
+            tt::WGDotWaitOp waitOp = dyn_cast<tt::WGDotWaitOp>(curOp);
+            uint32_t pendings = waitOp.getPendings();
 
-  // Rule 3a: Are the only users of the dot's result from iteration i-1 other
-  // MMAv3 dots?  If so, we're done, this dot can be properly async.
-  if (llvm::all_of(iterArg.getUses(), [&](OpOperand &use) {
-        return isa<ttng::WarpGroupDotOp>(use.getOwner()) &&
-               use.getOperandNumber() == 2;
-      })) {
-    return iterArgIdx;
-  }
+            builder.setInsertionPoint(waitOp);
+            auto wait = builder.create<ttng::WarpGroupDotWaitOp>(
+                waitOp->getLoc(), ArrayRef<Value>{}, pendings);
 
-  // Rule 3b: Are all users of the dot's result from iteration i-1 after the
-  // first `warp_group_dot_wait {pendings=0}` op?  If so, the dot can be
-  // properly async, but we have to thread its result from iteration i-1 through
-  // the wait.
-  auto waitOps = forOp.getBody()->getOps<ttng::WarpGroupDotWaitOp>();
-  auto firstWaitOpIter = llvm::find_if(
-      waitOps, [&](auto waitOp) { return waitOp.getPendings() == 0; });
-  if (firstWaitOpIter != waitOps.end() &&
-      llvm::all_of(iterArg.getUsers(), [&](Operation *user) {
-        assert(forOp->isAncestor(user));
-        while (user->getParentOp() != forOp) {
-          user = user->getParentOp();
+            auto waitStart = asyncDotResults.begin();
+            int numWaiting = asyncDotResults.size() - pendings;
+            auto waitEnd = waitStart + numWaiting;
+
+            SmallVector<Value> waitDotResults; // originally all will be thread through
+
+            auto tmpWaitEnd = waitEnd;
+            if (waitStart == waitEnd)
+                tmpWaitEnd ++; // TODO: tmp logic, dot_wat must have operands?
+
+            for (auto it = waitStart; it != tmpWaitEnd; ++it){
+                auto [val, opNum] = *it;
+                waitDotResults.push_back(val);
+            }
+
+            threadValuesThroughWait(wait, waitDotResults);
+
+            asyncDotResults.erase(waitStart, waitEnd);
+
+            waitOp->erase();
         }
-        return (*firstWaitOpIter)->isBeforeInBlock(user);
-      })) {
-    LDBG("MMAv3 dot can be properly async because it follows a "
-         "warp_group_dot_wait "
-         "{pendings=0}.\n"
-         << "  wait: " << *firstWaitOpIter << "\n"
-         << "  dot: " << dotOp);
-    threadValuesThroughWait(*firstWaitOpIter, {iterArg});
-    return iterArgIdx;
-  }
-
-  LDBG("Can't make dot async because its result from i-1 is used by "
-       "something other than another MMAv3 dot as the `c` operand.");
-  return std::nullopt;
+    }
 }
 
-// If necessary, insert a dot-wait inside the loop, waiting for the results of
-// the properly-async dots from iteration i-1 to complete.  (We pipeline to
-// depth 2, so there are at most 2 copies of each warp_group_dot in flight at a
-// time.)
+// TXL: 
+// stage1: from all ops in forOp: 1. direct child of forOp, 2. forget about ifOp, do aggressively
+//        encouter asyncDot, add to pendingAccumDotBuffer
+//        encouter WGDotWaitOp 0, clear pendingAccumDotBuffer
+//        if WGDotWaitOp N, clear before last $pendings
+//        at last check whether they have yieldOp in forOp, and record the iterArg
+// stage2: from all ops in forOp: 1. direct child of forOp, 2. any nested uses in ifOp
+//        first prepend the pendingAccum iterArg
+//        encouter asyncDot, add to asyncDotBuffer
+//        encouter WGDotWaitOp 0, add all results from asyncDotBuffer, clear asyncDotBuffer
+//        if WGDotWaitOp N, pick $pendings from asyncDotBuffer (max size), clear them
+//        correctly enqueue and pop for then/else, also enqueu new asyncDotBuffer
+// stage3: for the end outof forOp, add wait<0> on remaining asyncDotBuffer
 //
-// We can skip inserting the wait if we have a `warp_group_dot_wait
-// {pendings=0}` somewhere in the loop.  To see why, consider:
-//
-//   warp_group_dot
-//   warp_group_dot; wait 0  // synchronous dot
-//   warp_group_dot
-//   warp_group_dot
-//
-// In this example, there are three properly-async dots, so we'd normally put
-// `wait 3` at the end of the loop, meaning "wait until there are 3 or fewer
-// pending async dots".  But note that when this iteration of the loop
-// completes, there are only *two* pending async dots from this iteration, so
-// this wait would do nothing.  This is true in general, no matter where the
-// `wait 0` appears.
-// TXL: however, we insert wait op only for TXL_WGWaitOp, and the insertion
-// my happen in between async dots, not just at the end.
-static void insertAsyncWarpGroupDotWaitInLoop(
-    scf::ForOp forOp,
-    const llvm::MapVector<Operation *, int /*iterArgIdx*/> &properlyAsyncDots) {
-  if (properlyAsyncDots.empty())
-    return;
+static SmallVector<std::pair<Value, int>> lowerDotWait(scf::ForOp forOp) {
+  SmallVector<Operation*> pendingAccumDotBuffer;
 
-  //if (llvm::any_of(forOp.getBody()->getOps<ttng::WarpGroupDotWaitOp>(),
-  //                 [](auto wait) { return wait.getPendings() == 0; })) {
-  //  return;
-  //}
-
-  // Insert waits before the users of the properly async dots other than loop
-  // yield.
-  // TXL: this is special case, for dots not for accumulators, we will
-  // give pendings=0 to them. Let's keep this logic. It assumes the 
-  // user is in a block later than wg dot, thus put wait at block begin
-  for (auto [asyncDot, iterArgIdx] : properlyAsyncDots) {
-    SmallVector<OpOperand *> uses;
-    for (auto &use : asyncDot->getUses()) {
-      if (auto yieldOp = dyn_cast<scf::YieldOp>(use.getOwner())) {
-        continue;
+  // Stage 1
+  for (auto& op : forOp.getBody()->getOperations()){
+      if (isa<ttng::WarpGroupDotOp>(op)){
+          pendingAccumDotBuffer.push_back(&op);
       }
-      uses.push_back(&use);
-    }
+      if (isa<tt::WGDotWaitOp>(op)){
+          auto wgDotWaitOp = dyn_cast<tt::WGDotWaitOp>(op);
+          uint32_t pendings = wgDotWaitOp.getPendings();
+          auto erase_start = pendingAccumDotBuffer.begin();
+          if (pendings >= pendingAccumDotBuffer.size())
+              continue;
+          auto erase_end = pendingAccumDotBuffer.begin() + (pendingAccumDotBuffer.size() - pendings);
+          pendingAccumDotBuffer.erase(erase_start, erase_end);
+      }
 
-    DenseMap<Block *, SmallVector<Value>> blockToUsers;
-    for (auto use : uses) {
-      auto block = use->getOwner()->getBlock();
-      blockToUsers[block].push_back(use->get());
-    }
-
-    for (auto [block, users] : blockToUsers) {
-      OpBuilder builder(block, block->begin());
-      auto newWait = builder.create<ttng::WarpGroupDotWaitOp>(
-          asyncDot->getLoc(), ArrayRef<Value>{}, 0);
-
-      threadValuesThroughWait(newWait, users);
-    }
   }
 
-  // Add the wait right after the last properly-async dot.  This only needs to
-  // wait for all properly-async dots from the i-1'th iteration to complete, IOW
-  // we wait until there are most `asyncDots.size()` dots in flight.
-  //
-  // (You might want to put the wait at the end of the loop instead of right
-  // after the last dot, but there could be a load into shmem between the last
-  // async dot and the end of the loop, and that could clobber memory being used
-  // by a dot.)
-  // TXL: here we create wait only for WGWaitOp, but keep properlyAsyncDots as 
-  // original logic
-  IRRewriter builder(forOp.getContext());
+  SmallVector<std::pair<Value, int>> pendingArgBuffer;
+  for (auto op : pendingAccumDotBuffer){
+      for (auto& use : op->getUses()){
+          auto user = use.getOwner();
+          if (isa<scf::YieldOp>(user)){
+              auto yieldOp = dyn_cast<scf::YieldOp>(user);
+              int opNum = use.getOperandNumber();
+              Value iterArg = forOp.getRegionIterArg(opNum);
+              pendingArgBuffer.push_back({iterArg, opNum});
+          }
+      }
+  }
 
-  forOp->walk([&](tt::WGDotWaitOp wgDotWaitOp) {
-    builder.setInsertionPoint(wgDotWaitOp);
-    auto wait = builder.create<ttng::WarpGroupDotWaitOp>(
-        wgDotWaitOp->getLoc(),
-        /*inputs=*/ArrayRef<Value>{}, wgDotWaitOp.getPendings());
+  Block* forBlock = forOp.getBody();
+  SmallVector<Operation*> queue;
+  for (auto it = forBlock->rbegin(), end = forBlock->rend(); it!=end; it++) {
+      queue.push_back(&*it);
+  }
+  SmallVector<std::pair<Value, int>> asyncDotResults = pendingArgBuffer;
 
-    SmallVector<Value> addlWaitOperands;
-    for (auto [asyncDot, iterArgIdx] : properlyAsyncDots) {
-      addlWaitOperands.push_back(asyncDot->getResult(0));
-    }
-    threadValuesThroughWait(wait, addlWaitOperands);
-  });
+  // Stage 2
+  lowerDotWaitInner(queue, asyncDotResults);
 
+  return asyncDotResults;
 }
 
 // Convert MMAv3 ttng::WarpGroupDotOps {isAsync = False} (i.e. Hopper wgmma)
@@ -512,6 +377,9 @@ static void insertAsyncWarpGroupDotWaitInLoop(
 // We assume we have space for each dot to be pipelined to depth 2, i.e. each
 // dot op in the loop can have at most 2 warp_group_dot ops in flight at once.
 // (Each warp_group_dot op usually corresponds to a series of wgmma.async ops.)
+//
+// TXL: this is only for the loop direct child ops, the recursion is done on calling side
+// it also consider the nested ifOps as deep as you want.
 void triton::txlgpu::asyncLaunchDots(scf::ForOp forOp) {
   LDBG("Original loop:\n" << *forOp);
 
@@ -528,42 +396,40 @@ void triton::txlgpu::asyncLaunchDots(scf::ForOp forOp) {
   // is in the loop's `yield` statement; asyncDots maps the op to its index in
   // the yield op.
   IRRewriter builder(forOp.getContext());
-  llvm::MapVector<Operation *, int /*iterArgIdx*/> properlyAsyncDots;
-  for (auto WarpGroupDotOp : forOp.getBody()->getOps<ttng::WarpGroupDotOp>()) {
-    WarpGroupDotOp.setIsAsync(true);
-    if (auto iterArgIdx = dotCanBeProperlyAsync(WarpGroupDotOp, forOp)) {
-      properlyAsyncDots[WarpGroupDotOp] = *iterArgIdx;
-    } else {
-      builder.setInsertionPointAfter(WarpGroupDotOp);
-      auto wait = builder.create<ttng::WarpGroupDotWaitOp>(
-          WarpGroupDotOp.getLoc(), ArrayRef<Value>{},
-          /*pendings=*/0);
-      SmallVector<Value> waitOperands = {WarpGroupDotOp.getResult()};
-      threadValuesThroughWait(wait, waitOperands);
-    }
-  }
 
-  if (properlyAsyncDots.empty()) {
-    LDBG("No properly async dots.");
-    return;
-  }
+  SmallVector<std::pair<Value, int>> remainingDotResults = lowerDotWait(forOp);
 
-  // Next, insert a wait inside the loop.  We pipeline to depth 2, so the third
-  // iteration's set of asynchronous dots (and their corresponding async copies
-  // from global to shmem) can't start until the first iteration's set has
-  // completed.
-  insertAsyncWarpGroupDotWaitInLoop(forOp, properlyAsyncDots);
+  LLVM_DEBUG({
+    LDBG("lowerDotWait\n");
+    forOp->dump();
+    LDBG("DONE\n\n\n");
+  });
+
+  if (remainingDotResults.size() == 0)
+      return;
+
 
   // Finally, insert a wait after the loop, waiting for dots from the final
   // iteration of the loop.
-  // TXL: the final wait<0> after forOp is needed
   SmallVector<Value> waitOperands;
-  for (auto [asyncDot, iterArgIdx] : properlyAsyncDots) {
-    waitOperands.push_back(forOp.getResult(iterArgIdx));
+  DenseSet<int> seenOperands;
+
+  for (auto [res, iterArgIdx] : remainingDotResults){
+      if (seenOperands.insert(iterArgIdx).second && iterArgIdx != -1){
+          waitOperands.push_back(forOp.getResult(iterArgIdx));
+      }
   }
+  // TXL: the final wait<0> after forOp is needed
   // Wait until there are 0 outstanding async dot ops.
   builder.setInsertionPointAfter(forOp);
   auto WarpGroupDotWaitAfterLoop = builder.create<ttng::WarpGroupDotWaitOp>(
       forOp.getLoc(), ArrayRef<Value>{}, 0);
   threadValuesThroughWait(WarpGroupDotWaitAfterLoop, waitOperands);
+
+  LLVM_DEBUG({
+    LDBG("forLoop end wait\n");
+    forOp->dump();
+    LDBG("DONE\n\n\n");
+  });
+
 }

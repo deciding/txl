@@ -333,13 +333,22 @@ filename = "dump/MJBLVPRR77CXCR77BN22SGNZENXRMSLQKRL3A2BXLJL2G64KO7LA/matmul_per
         txl.Config(
             {
                 "BLOCK_SIZE_M": 128,
+
                 "BLOCK_SIZE_N": 256,
+                #"BLOCK_SIZE_N": 128,
+
                 "BLOCK_SIZE_K": 64,
+                #"BLOCK_SIZE_K": 128,
+
                 "GROUP_SIZE_M": 8,
                 "NUM_CONSUMER_GROUPS": 2,
+
                 "NUM_STAGES": 3,
+                #"NUM_STAGES": 2,
             },
             num_stages=3,
+            #num_stages=2,
+
             num_warps=4,
             num_warpgroups=3,
         ),

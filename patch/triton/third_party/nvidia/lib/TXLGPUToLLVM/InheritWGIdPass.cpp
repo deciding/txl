@@ -51,7 +51,11 @@ void addAttrWgIdToOpTree(Operation *op, int wgid){
     } else if (auto reduceOp = dyn_cast<ReduceOp>(op)) {
       setOpAttrWgId(reduceOp, wgid);
       reduceOp->walk(
-          [&](Operation *childOp) { addAttrWgIdToOpTree(childOp, wgid); });
+          [&](Operation *childOp) {
+              if (isa<ReduceOp>(childOp))
+                return;
+              addAttrWgIdToOpTree(childOp, wgid);
+          });
     } else {
       llvm_unreachable("Unexpected Op with regions\n");
     }

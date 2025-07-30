@@ -28,13 +28,15 @@ cuda-gdb
 ## Flash-Attention-3
 
 seq len 1k 2k 4k 8k, (batch\_size = 16k/seqlen)
-num heads 32, head dim 64, causal=False
-hardware: PCIe
+num heads 32, head dim 128, causal=False
+hardware: H100 PCIe
 
 TFLOPS:
-- Triton: 230, 233, 239, 248
-- FA3: 243, 298, 310, 323
-- WS-ours: 257, 257, 263, 267
+- Triton: 251, 265, 275, 279
+- FA3: 372,397, 412, 423
+- MS-ours: 272, 291, 299, 304
+- WS1-ours: 313, 347, 367, 377
+
 
 
 Known that triton optimized with 3 multi-stages with MMAPV overlap with prev buffer's MMAQK, even no warpgroup specialization.

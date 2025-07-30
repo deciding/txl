@@ -113,7 +113,14 @@ def parse(full_name, ext, context):
         return Path(full_name).read_bytes()
 
 import difflib
-def diff_strings_colored(str1, str2):
+def diff_strings_colored(str1, str2, log_dir=None, log_filename='tmp.ir'):
+    if log_dir is not None:
+        log_path = os.path.join(log_dir, log_filename)
+        with open(log_path, 'w') as f:
+            f.write(str2)
+        print(f"log_dir is set, the diff is not printed, instead ir will be saved to {log_path}")
+        return
+
     # Split the strings into lines for comparison
     lines1 = str1.splitlines()
     lines2 = str2.splitlines()
@@ -195,11 +202,9 @@ def make_nv_dbg_ttir(mod, metadata, opt, log_dir=None):
     pm2.run(mod)
 
     ret = mod.str()
-    diff_strings_colored(before, ret);
-    if log_dir is not None:
-        log_path = os.path.join(log_dir, 'tmp.ir')
-        with open(log_path, 'w') as f:
-            f.write(ret)
+
+    diff_strings_colored(before, ret, log_dir=log_dir);
+
     return mod
 
 def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True):
@@ -365,11 +370,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
     pm2.run(mod)
 
     ret = mod.str()
-    diff_strings_colored(before, ret);
-    if log_dir is not None:
-        log_path = os.path.join(log_dir, 'tmp.ir')
-        with open(log_path, 'w') as f:
-            f.write(ret)
+    diff_strings_colored(before, ret, log_dir=log_dir);
 
     #pm.run(mod)
     metadata["cluster_dims"] = (cluster_info.clusterDimX, cluster_info.clusterDimY, cluster_info.clusterDimZ)
@@ -467,11 +468,7 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
         ret = str(mod)
     else:
         ret = mod.str()
-    diff_strings_colored(before, ret);
-    if log_dir is not None:
-        log_path = os.path.join(log_dir, 'tmp.ir')
-        with open(log_path, 'w') as f:
-            f.write(ret)
+    diff_strings_colored(before, ret, log_dir=log_dir);
     return ret
 
 def add_dbg_stages(backend, stages, options, diff_mode='ttgir', log_dir=None, use_txl=True):
@@ -483,7 +480,7 @@ def add_dbg_stages(backend, stages, options, diff_mode='ttgir', log_dir=None, us
         stages["ttgir"] = lambda src, metadata: make_nv_dbg_ttgir(src, metadata, options, capability, log_dir=log_dir, use_txl=use_txl)
     else:
         stages["ttir"] = lambda src, metadata: backend.make_ttir(src, metadata, options)
-        stages["ttgir"] = lambda src, metadata: backend.make_ttgir(src, metadata, options, capability)
+        stages["ttgir"] = lambda src, metadata: backend.make_ttgir(src, metadata, options, capability, use_txl=use_txl)
         stages["llir"] = lambda src, metadata: make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=log_dir)
 
 

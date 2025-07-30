@@ -99,11 +99,11 @@ def dot_wait(pendings:int, builder: ir.builder) -> tl.tensor:
     return tl.tensor(x, tl.void)
 
 def bar_arrive(bar: tl.tensor, num_threads: tl.tensor, builder: ir.builder) -> tl.tensor:
-    x = builder.create_bar_arrive(bar, num_threads)
+    x = builder.create_bar_arrive(bar.handle, num_threads.handle)
     return tl.tensor(x, tl.void)
 
 def bar_wait(bar: tl.tensor, num_threads: tl.tensor, builder: ir.builder) -> tl.tensor:
-    x = builder.create_bar_wait(bar, num_threads)
+    x = builder.create_bar_wait(bar.handle, num_threads.handle)
     return tl.tensor(x, tl.void)
 
 def get_buffer(src: tl.tensor, index: tl.tensor, builder: ir.builder) -> tl.tensor:

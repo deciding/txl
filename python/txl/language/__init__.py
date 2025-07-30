@@ -14,6 +14,8 @@ from .core import (
     mbar_expect,
     mbar_wait,
     mbar_arrive,
+    bar_arrive,
+    bar_wait,
     get_buffer,
     tma_load,
     dot_wait,

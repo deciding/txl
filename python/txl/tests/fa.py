@@ -1393,9 +1393,9 @@ class _attention(torch.autograd.Function):
             ctx.grid = grid
             #_attn_fwd_tma[grid](
             #_attn_fwd_tma_txl[grid](
-            #_attn_fwd_ws_tma_txl1[grid](
+            _attn_fwd_ws_tma_txl1[grid](
             #_attn_fwd_ws_tma_txl2[grid](
-            _attn_fwd_ws_tma_txl3[grid](
+            #_attn_fwd_ws_tma_txl3[grid](
                 sm_scale, M,  #
                 q.shape[0], q.shape[1],  #
                 desc_q, desc_k, desc_v, desc_o,  #
@@ -1456,12 +1456,16 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, no_tune=False):
     v1 = v.permute(0,2,1,3).contiguous()
 
     # txl
-    if Has_TXL:
-        tri_out = attention(q, k, v, causal, 1/math.sqrt(HEAD_DIM), HAS_TMA_DESC, no_tune).half()
-    elif HAS_FLASH:
+    if HAS_FLASH:
         #tri_out = flash_attn_func(q1, k1, v1, softmax_scale=sm_scale, causal=causal).half()
-        tri_out = flash_attn_func(q1, k1, v1, causal=causal).half()
+        if PYFLASH:
+            tri_out, lse = flash_attn_func(q1, k1, v1, causal=causal)
+            tri_out = tri_out.half()
+        else:
+            tri_out = flash_attn_func(q1, k1, v1, causal=causal).half()
         tri_out = tri_out.permute(0,2,1,3).contiguous()
+    elif Has_TXL:
+        tri_out = attention(q, k, v, causal, 1/math.sqrt(HEAD_DIM), HAS_TMA_DESC, no_tune).half()
 
     ## OLD
     #dout = torch.randn_like(q)
@@ -1496,12 +1500,17 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, no_tune=False):
 
 
 try:
-    import sys
-    sys.path.insert(0, '/ssd2/zhangzn/flatn/hopper')  # Insert at beginning
-    from flash_attn_interface import flash_attn_func
-    #from flash_attn.flash_attn_interface import \
-    #    flash_attn_qkvpacked_func as flash_attn_func
+    # use cpp
+    #import sys
+    #sys.path.insert(0, '/ssd2/zhangzn/flatn/hopper')  # Insert at beginning
+    #from flash_attn_interface import flash_attn_func
+
+    # use python
+    from flash_attn.cute.interface import flash_attn_func
+    PYFLASH = True
+
     HAS_FLASH = True
+
     print("Has Flash")
 except BaseException:
     HAS_FLASH = False
@@ -1548,12 +1557,12 @@ for mode in ["fwd", "bwd"]:
 
 line_vals = []
 line_names = []
-if Has_TXL:
-    line_vals.append("triton-fp16")
-    line_names.append("Triton [FP16]")
 if HAS_FLASH:
     line_vals.append("flash")
     line_names.append("Flash-3")
+elif Has_TXL:
+    line_vals.append("triton-fp16")
+    line_names.append("Triton [FP16]")
 configs0 = []
 for mode in ["fwd"]:
     for causal in [False]:

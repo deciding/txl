@@ -1215,12 +1215,15 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
         for start_n in range(lo+BLOCK_N, hi, BLOCK_N):
             start_n = tl.multiple_of(start_n, BLOCK_N)
 
-            # -- compute qk ----
+            # -- load k ----
             cur_mbar_bK = txl.get_buffer(pMbar_bK, bufIdxRK)
             cur_bK = txl.get_buffer(bK, bufIdxRK)
             txl.mbar_wait(cur_mbar_bK, phaseK)
 
-            # sync also after data loaded
+            # Now only consider gemm 0 and softmax(gemm 1)
+            # --- wait to start gemm 1 ---
+            # case 1: wg1 earlys start
+            # case 2: wait the release from last iter gemm 0 ends?
             if txl.is_warpgroup([1]):
                 # WG1 just start
                 txl.bar_wait(WG1_BAR, WG_NUM_THREADS)
@@ -1229,20 +1232,14 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
                 txl.bar_wait(WG2_BAR, WG_NUM_THREADS)
 
             if txl.is_warpgroup([1]):
-                cur_mbar_QK = txl.get_buffer(cMbar_QK1, bufIdxRK) # wait for the same buffer
+                cur_mbar_QK = txl.get_buffer(cMbar_QK1, bufIdxRK)
                 cur_mbar_PV = txl.get_buffer(cMbar_PV1, bufIdxRV)
                 qk = tl.dot(bQ0i, cur_bK.T)
-
-                #txl.bar_arrive(WG2_BAR, WG_NUM_THREADS)
-                #txl.mbar_arrive(cur_mbar_QK)
 
             else: # [2]
                 cur_mbar_QK = txl.get_buffer(cMbar_QK2, bufIdxRK)
                 cur_mbar_PV = txl.get_buffer(cMbar_PV2, bufIdxRV)
                 qk = tl.dot(bQ1i, cur_bK.T)
-
-                #txl.bar_arrive(WG1_BAR, WG_NUM_THREADS)
-                #txl.mbar_arrive(cur_mbar_QK)
 
             # -- compute pv j-1 ----
             # load v
@@ -1259,13 +1256,13 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
             # note that this non transposed v for FP8 is only supported on Blackwell
             acc = tl.dot(p, cur_bV, acc)
 
-            # Downgrade if put before load v
             # TODO: before or after wait? oh previously is also before QK wait
             if txl.is_warpgroup([1]):
                 txl.bar_arrive(WG2_BAR, WG_NUM_THREADS)
             else:
                 txl.bar_arrive(WG1_BAR, WG_NUM_THREADS)
             txl.dot_wait(1)
+            # --- release QK finished ---
             txl.mbar_arrive(cur_mbar_QK)
 
             # -- compute softamx, block arg updates ----
@@ -1282,6 +1279,7 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
 
             # update output accumulator
             txl.dot_wait(0)
+            # --- release PV j-1 finished ---
             txl.mbar_arrive(cur_mbar_PV)
 
             # update acc, NOTE: p position is important
@@ -1305,16 +1303,17 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
         # -- last iter --
         # load v
         cur_mbar_bV = txl.get_buffer(pMbar_bV, bufIdxRV)
-        if txl.is_warpgroup([1]):
-            cur_mbar_PV = txl.get_buffer(cMbar_PV1, bufIdxRV)
-        else:
-            cur_mbar_PV = txl.get_buffer(cMbar_PV2, bufIdxRV)
+        #if txl.is_warpgroup([1]):
+        #    cur_mbar_PV = txl.get_buffer(cMbar_PV1, bufIdxRV)
+        #else:
+        #    cur_mbar_PV = txl.get_buffer(cMbar_PV2, bufIdxRV)
         cur_bV = txl.get_buffer(bV, bufIdxRV)
         txl.mbar_wait(cur_mbar_bV, phaseV)
+
         # note that this non transposed v for FP8 is only supported on Blackwell
         acc = tl.dot(p, cur_bV, acc)
         txl.dot_wait(0)
-        txl.mbar_arrive(cur_mbar_PV)
+        #txl.mbar_arrive(cur_mbar_PV)
 
         # -- epilogue --
         m_i += tl.math.log2(l_i)
@@ -1351,7 +1350,7 @@ class _attention(torch.autograd.Function):
         #tma_best_config = {'BLOCK_M':64, 'BLOCK_N':64, 'num_stages': 3, 'num_warps':4, 'NUM_STAGES': 3, 'NUM_CONSUMERS': 1}
         # for ws
         tma_best_config = {'BLOCK_M':128, 'BLOCK_N':128, 'NUM_CONSUMERS': 2, 'num_stages': 2, 'num_warps':4, 'NUM_STAGES': 2, 'num_warpgroups': 3}
-        load_best_config = {'BLOCK_M':64, 'BLOCK_N':32, 'num_stages': 1, 'num_warps':4}
+        load_best_config = {'BLOCK_M':64, 'BLOCK_N':32, 'num_stages': 3, 'num_warps':4}
 
         M = torch.empty((q.shape[0], q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
 
@@ -1393,9 +1392,9 @@ class _attention(torch.autograd.Function):
             ctx.grid = grid
             #_attn_fwd_tma[grid](
             #_attn_fwd_tma_txl[grid](
-            _attn_fwd_ws_tma_txl1[grid](
+            #_attn_fwd_ws_tma_txl1[grid](
             #_attn_fwd_ws_tma_txl2[grid](
-            #_attn_fwd_ws_tma_txl3[grid](
+            _attn_fwd_ws_tma_txl3[grid](
                 sm_scale, M,  #
                 q.shape[0], q.shape[1],  #
                 desc_q, desc_k, desc_v, desc_o,  #
@@ -1646,4 +1645,4 @@ if __name__ == "__main__":
     test_op(16, 32, 1024, 128, False, dtype=torch.float16, no_tune=no_tune)
 
     print("BENCH...")
-    bench_flash_attention.run(save_path=".", print_data=True, no_tune=no_tune)
+    #bench_flash_attention.run(save_path=".", print_data=True, no_tune=no_tune)

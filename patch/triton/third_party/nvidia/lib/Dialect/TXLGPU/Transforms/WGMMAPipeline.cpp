@@ -330,6 +330,8 @@ static SmallVector<std::pair<Value, int>> lowerDotWait(scf::ForOp forOp) {
   // Stage 1
   for (auto& op : forOp.getBody()->getOperations()){
       if (isa<ttng::WarpGroupDotOp>(op)){
+          auto warpGroupDotOp = dyn_cast<ttng::WarpGroupDotOp>(op);
+          warpGroupDotOp.setIsAsync(true);
           pendingAccumDotBuffer.push_back(&op);
       }
       if (isa<tt::WGDotWaitOp>(op)){

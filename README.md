@@ -32,15 +32,13 @@ num heads 32, head dim 128, causal=False
 hardware: H100 PCIe
 
 TFLOPS:
-- Triton: 251, 265, 275, 279
 - FA3: 372,397, 412, 423
+- FA3py: 317 367 388 406
+- Triton: 251, 265, 275, 279
 - MS-ours: 272, 291, 299, 304
-- WS1-pure: 289, 321, 340, 347
-- WS2-pingpong: 301, 339, 361, 370
-- WS3-pingpong-intra: 285, 322, 341, 350
-
-
-
+- WS1-ours: 289, 321, 340, 347
+- WS2-ours: 301, 339, 361, 370
+- WS3-ours: 296, 335, 359, 370
 
 Known that triton optimized with 3 multi-stages with MMAPV overlap with prev buffer's MMAQK, even no warpgroup specialization.
 

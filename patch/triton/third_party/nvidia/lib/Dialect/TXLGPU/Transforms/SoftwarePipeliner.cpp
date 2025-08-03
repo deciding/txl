@@ -9,6 +9,7 @@
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "nvidia/include/Dialect/TXLGPU/IR/Dialect.h"
 #include "nvidia/include/Dialect/TXLGPU/Transforms/Passes.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/PipelineExpander.h"
@@ -247,8 +248,14 @@ void replaceSmemBufferUses(
       // If there are some uses that were not local_allocs, we need to create a
       // local_load for them.
       for (Operation* user : oldViewOp->getUsers()){
-        if (auto tmaLoadOp = dyn_cast<tt::TmaLoadOp>(user)) {
+        if (auto asyncLoadOp = dyn_cast<tt::AsyncLoadOp>(user)) {
+            asyncLoadOp->setOperand(0, newView);
+        }
+        else if (auto tmaLoadOp = dyn_cast<tt::TmaLoadOp>(user)) {
             tmaLoadOp->setOperand(0, newView);
+        }
+        else if (auto tmaGatherOp = dyn_cast<tt::TmaGatherOp>(user)) {
+            tmaGatherOp->setOperand(0, newView);
         }
         else {
             auto sharedLoad = builder.create<ttg::LocalLoadOp>(
@@ -380,6 +387,187 @@ void lowerMbar(tt::MbarAllocOp& op) {
     //builder.create<ttg::LocalDeallocOp>(loc, barrierAlloc);
 }
 
+#if 0
+void replaceUsesAndPropagateBlockArgType(OpBuilder &builder,
+                                               Value oldVal, Value val) {
+  SmallVector<Operation *> opsToDelete;
+
+  // Save the operand to replace / delete later (avoid iterator invalidation).
+  // TODO: can we use an early_inc iterator?
+  for (OpOperand &use : oldVal.getUses()) {
+
+    Operation *user = use.getOwner();
+    auto opNum = use.getOperandNumber();
+
+    // Non-subview/trans ops will be replaced by `val`.
+    if (isa<triton::gpu::MemDescTransOp, triton::gpu::MemDescSubviewOp>(user)) {
+        // `subview(old_op)` is replaced by a new `subview(val)`.
+        OpBuilder::InsertionGuard g(builder);
+        builder.setInsertionPoint(user);
+        Value newVal;
+        if (auto subview = dyn_cast<triton::gpu::MemDescSubviewOp>(user)) {
+          triton::gpu::MemDescType oldType = subview.getType();
+          bool isMutable =
+              cast<triton::gpu::MemDescType>(val.getType()).getMutableMemory();
+          Type newDstType = triton::gpu::MemDescType::get(
+              oldType.getShape(), oldType.getElementType(), oldType.getEncoding(),
+              oldType.getMemorySpace(), isMutable);
+          newVal = builder.create<triton::gpu::MemDescSubviewOp>(
+              subview.getLoc(), newDstType, val, subview.getOffsets());
+          newVal.getDefiningOp()->setAttrs(user->getAttrs());
+        } else if (auto trans = dyn_cast<triton::gpu::MemDescTransOp>(user)) {
+          newVal = builder.create<triton::gpu::MemDescTransOp>(trans.getLoc(), val,
+                                                               trans.getOrder());
+          newVal.getDefiningOp()->setAttrs(user->getAttrs());
+        }
+        assert(newVal);
+        newVal.getDefiningOp()->setAttrs(user->getAttrs());
+        replaceUsesAndPropagateBlockArgType(builder, user, newVal);
+        opsToDelete.push_back(use.getOwner());
+    }
+    else if (isa<scf::ForOp>(user)) {
+
+        auto forOp = dyn_cast<scf::ForOp>(user);
+        auto initArgs = forOp.getInitArgs();
+
+        auto numInductions = forOp.getNumInductionVars();
+        auto numStepingVars = numInductions * 3;
+        auto numYields = forOp.getYieldedValues().size();
+        auto numOperands = forOp.getNumOperands();
+        assert((numOperands == numYields + numStepingVars) && "Num operands is not correct!\n");
+        auto iterArgNum = opNum - numStepingVars;
+        auto bbArg = forOp.getRegionIterArgs()[iterArgNum];
+
+        auto newArg = forOp.getBody()->insertArgument(iterArgNum+numInductions, val.getType(), forOp->getLoc());
+        replaceUsesAndPropagateBlockArgType(bbArg, newArg);
+
+        forOp.getBody()->eraseArgument(iterArgNum+1+numInductions);
+    }
+    else if (isa<scf::YieldOp>(user)) {
+        auto parentOp = user->getParentOp();
+        if (isa<scf::IfOp>(parentOp)){
+            auto ifOp = dyn_cast<scf::IfOp>(parentOp);
+
+            auto bbArg = forOp.getRegionIterArgs()[iterArgNum];
+            auto newArg = forOp.getBody()->insertArgument(opNum, val.getType(), ifOp->getLoc());
+            replaceUsesAndPropagateBlockArgType(bbArg, newArg);
+
+            forOp.getBody()->eraseArgument(iterArgNum+1+numInductions);
+        }
+    }
+    else {
+        use->set(val);
+        replaceUsesAndPropagateType(builder, user, val);
+    }
+  }
+
+  // Perform late op erasure.
+  for (Operation *op : opsToDelete)
+    op->erase();
+}
+#endif
+
+void replaceUsesForBlockArg(OpBuilder &builder, Operation * oldOp, Value newValue){
+    for (auto& use : oldOp->getUses()){
+        // use is of type OpOperand, need to get() to get Value, but have getOperandNumber()
+        auto user = use.getOwner();
+        auto opNum = use.getOperandNumber();
+        if (isa<scf::ForOp>(user)){
+
+            auto forOp = dyn_cast<scf::ForOp>(user);
+            auto initArgs = forOp.getInitArgs();
+
+            auto numInductions = forOp.getNumInductionVars();
+            auto numStepingVars = numInductions * 3;
+            auto numYields = forOp.getYieldedValues().size();
+            auto numOperands = forOp.getNumOperands();
+            assert((numOperands == numYields + numStepingVars) && "Num operands is not correct!\n");
+            auto iterArgNum = opNum - numStepingVars;
+            auto bbArg = forOp.getRegionIterArgs()[iterArgNum];
+
+            auto newArg = forOp.getBody()->insertArgument(iterArgNum+numInductions, newValue.getType(), forOp->getLoc());
+            bbArg.replaceAllUsesWith(newArg);
+
+            forOp.getBody()->eraseArgument(iterArgNum+1+numInductions);
+
+            //builder.setInsertionPoint(forOp);
+            //auto newForOp = builder.create<scf::ForOp>(
+            //    forOp.getLoc(), forOp.getLowerBound(), forOp.getUpperBound(),
+            //    forOp.getStep(), newLoopArgs);
+            //assert(newForOp.getRegionIterArgs().size() ==
+            //       newForOp.getInitArgs().size());
+            //newForOp->setAttrs(forOp->getAttrs());
+
+            //// Replace forOp with newForOp
+            //newForOp.getRegion().takeBody(forOp.getRegion());
+            //for (unsigned i = 0; i < forOp.getNumResults(); ++i)
+            //  forOp.getResult(i).replaceAllUsesWith(newForOp.getResult(i));
+        }
+    }
+}
+
+// replace oldViewOp uses with newView
+void replaceAsyncLoadUses(Operation* asyncLoadOp, Value tok) {
+
+      OpBuilder builder(asyncLoadOp);
+      Location loc = asyncLoadOp->getLoc();
+      replaceUsesForBlockArg(builder, asyncLoadOp, tok);
+      tt::replaceUsesAndPropagateType(builder, asyncLoadOp, tok);
+      //oldViewOp->erase();
+}
+
+void lowerAsyncLoadOp(tt::AsyncLoadOp &asyncLoad) {
+
+    OpBuilder builder(asyncLoad);
+    Location loc = asyncLoad->getLoc();
+    mlir::triton::CacheModifier cache = mlir::triton::symbolizeCacheModifier(static_cast<uint32_t>(asyncLoad.getCache())).value_or(mlir::triton::CacheModifier::NONE);
+    mlir::triton::EvictionPolicy evict = mlir::triton::symbolizeEvictionPolicy(static_cast<uint32_t>(asyncLoad.getEvict())).value_or(mlir::triton::EvictionPolicy::NORMAL);
+
+    // TODO: asyncLoad.getSrc() not working, should have an intermediate op with MemDescType
+    // workaround: use getOperand instead
+    Operation *copy = builder.create<ttg::AsyncCopyGlobalToLocalOp>(
+        loc, asyncLoad.getPtr(),
+        asyncLoad.getOperand(0), // view
+        asyncLoad.getMask(), asyncLoad.getOther(),
+        cache, evict,
+        asyncLoad.getIsVolatile());
+    Operation *commit =
+        builder.create<ttg::AsyncCommitGroupOp>(loc, copy->getResult(0));
+
+    replaceAsyncLoadUses(asyncLoad, commit->getResult(0));
+
+    asyncLoad->erase();
+}
+void lowerAsyncLoadWaitOp(tt::AsyncLoadWaitOp &asyncLoadWait) {
+
+    OpBuilder builder(asyncLoadWait);
+    Location loc = asyncLoadWait->getLoc();
+
+    // TODO: asyncLoad.getSrc() not working, should have an intermediate op with MemDescType
+    // workaround: use getOperand instead
+    Operation *wait =
+        builder.create<ttg::AsyncWaitOp>(loc, asyncLoadWait->getOperand(0), 0);
+
+    asyncLoadWait->erase();
+}
+void replaceForIfResultType(scf::YieldOp &yieldOp){
+    auto parentOp = yieldOp->getParentOp();
+    if (isa<scf::IfOp, scf::ForOp>(parentOp)){
+        //auto ifOp = dyn_cast<scf::IfOp>(parentOp);
+        assert((yieldOp->getNumOperands() == parentOp->getNumResults()) && "Num of yields not same as num of if/for op results\n");
+        for (int idx = 0; idx < yieldOp.getNumOperands(); idx ++){
+            auto opOperandType = yieldOp->getOpOperand(idx).get().getType();
+            auto resType = parentOp->getResult(idx).getType();
+            if (opOperandType != resType)
+                parentOp->getResult(idx).setType(opOperandType);
+
+        }
+        for (auto res : parentOp->getResults()){
+
+        }
+    }
+}
+
 void lowerTmaLoadOp(tt::TmaLoadOp &tmaLoad) {
 
     Value desc = tmaLoad.getDesc();
@@ -391,13 +579,34 @@ void lowerTmaLoadOp(tt::TmaLoadOp &tmaLoad) {
     auto tmaPtr =
         builder.create<triton::nvidia_gpu::TensorDescToTMAPtrOp>(loc, desc);
 
-    // tmaLoad.getMbar() not working, should have an intermediate op with MemDescType
+    // TODO: tmaLoad.getMbar() not working, should have an intermediate op with MemDescType
     // workaround: use getOperand instead
     builder.create<ttng::AsyncTMACopyGlobalToLocalOp>(
-        tmaLoad.getLoc(), tmaPtr, tmaLoad.getIndices(),
+        loc, tmaPtr, tmaLoad.getIndices(),
         tmaLoad.getOperand(4), tmaLoad.getOperand(0), pred);
 
     tmaLoad->erase();
+}
+
+void lowerTmaGatherOp(tt::TmaGatherOp &tmaGather) {
+
+    Value desc = tmaGather.getDesc();
+
+    OpBuilder builder(tmaGather);
+    Location loc = tmaGather->getLoc();
+
+    auto pred = builder.create<arith::ConstantIntOp>(loc, 1, 1); // TODO: tma load may need pred
+    auto tmaPtr =
+        builder.create<triton::nvidia_gpu::TensorDescToTMAPtrOp>(loc, desc);
+
+    // TODO: tmaGather.getMbar() not working, should have an intermediate op with MemDescType
+    // workaround: use getOperand instead
+    builder.create<ttng::AsyncTMAGatherOp>(
+        loc, tmaPtr,
+        tmaGather.getXOffsets(), tmaGather.getYOffset(),
+        tmaGather.getOperand(4), tmaGather.getOperand(0), pred);
+
+    tmaGather->erase();
 }
 
 // helper
@@ -430,14 +639,24 @@ void lowerMbars(ModuleOp moduleOp) {
   }
 }
 
-void lowerTmaLoads(ModuleOp moduleOp) {
-  SmallVector<tt::TmaLoadOp> tmaLoadOps;
-  moduleOp->walk([&](tt::TmaLoadOp tmaLoadOp) {
-      tmaLoadOps.push_back(tmaLoadOp);
+void lowerLoads(ModuleOp moduleOp) {
+
+  moduleOp->walk([&](tt::AsyncLoadOp asyncLoadOp) {
+      lowerAsyncLoadOp(asyncLoadOp);
   });
-  for (auto tmaLoadOp : tmaLoadOps) {
+  moduleOp->walk([&](tt::AsyncLoadWaitOp asyncLoadWaitOp) {
+      lowerAsyncLoadWaitOp(asyncLoadWaitOp);
+  });
+  moduleOp->walk([&](scf::YieldOp yieldOp) {
+      replaceForIfResultType(yieldOp);
+  });
+  moduleOp->walk([&](tt::TmaLoadOp tmaLoadOp) {
       lowerTmaLoadOp(tmaLoadOp);
-  }
+  });
+  moduleOp->walk([&](tt::TmaGatherOp tmaGatherOp) {
+      lowerTmaGatherOp(tmaGatherOp);
+  });
+
 }
 
 class TXLGPUPipelinePass : public impl::TXLGPUPipelineBase<TXLGPUPipelinePass> {
@@ -465,9 +684,14 @@ public:
     int totalNumWarps = numWarps * numWarpgroups;
     m->setAttr("ttg.total-num-warps", builder.getI32IntegerAttr(totalNumWarps));
 
+    LLVM_DEBUG({
+      LDBG("SoftwarePipeliner Before All\n");
+      m.dump();
+      LDBG("DONE\n\n\n");
+    });
     lowerSmemAllocs(m);
     lowerMbars(m);
-    lowerTmaLoads(m);
+    lowerLoads(m);
 
     pipelineWgmma(m);
 

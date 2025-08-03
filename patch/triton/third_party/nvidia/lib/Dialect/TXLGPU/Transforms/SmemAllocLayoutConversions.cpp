@@ -37,32 +37,101 @@ namespace mlir::triton::txlgpu {
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
-// cvt(smem_alloc(ty1), ty2) -> smem_alloc(ty2)
-// DEPRECATED: convert layout should only affect local load, not global load like smem_alloc
-struct SmemAllocCvtToSmemAlloc
+// cvt(get_buffer(ty1), ty2) -> get_buffer(ty2)
+struct CvtGetBufferToGetBuffer
     : public OpRewritePattern<ConvertLayoutOp> {
   using OpRewritePattern::OpRewritePattern;
 
   mlir::LogicalResult
   matchAndRewrite(ConvertLayoutOp op,
                   PatternRewriter &rewriter) const override {
+    bool hasAsyncLoadOpUsers = false;
+    for (auto user : op->getUsers()){
+        if (isa<AsyncLoadOp>(user)){
+            hasAsyncLoadOpUsers = true;
+        }
+    }
+    if (!hasAsyncLoadOpUsers)
+        return failure();
+
     Operation *arg = op.getSrc().getDefiningOp();
     if (!arg)
       return failure();
 
-    if (auto smem_alloc = dyn_cast<SmemAllocOp>(arg)) {
+    if (auto getBufferOp = dyn_cast<GetBufferOp>(arg)) {
+      Operation* allocOp = getBufferOp.getSrc().getDefiningOp();
+
+      if (isa<SmemAllocOp>(allocOp)){
+          auto smemAllocOp = dyn_cast<SmemAllocOp>(allocOp);
+          rewriter.setInsertionPoint(smemAllocOp);
+          rewriter.replaceOpWithNewOp<SmemAllocOp>(smemAllocOp,
+                  op->getResult(0).getType(),
+                  smemAllocOp.getNumStages(),
+                  smemAllocOp.getIsMutable()
+              );
+      }
+      else if (isa<MbarAllocOp>(allocOp)){
+          auto mbarAllocOp = dyn_cast<MbarAllocOp>(allocOp);
+          rewriter.setInsertionPoint(mbarAllocOp);
+          rewriter.replaceOpWithNewOp<MbarAllocOp>(mbarAllocOp,
+                  op->getResult(0).getType(),
+                  mbarAllocOp.getArrCount(),
+                  mbarAllocOp.getNumStages()
+              );
+      }
+      else {
+          arg->emitError("get_buffer_op must precede with smem_alloc or mbar_alloc!\n");
+      }
+
       rewriter.setInsertionPoint(arg);
-      auto new_smem_alloc = rewriter.replaceOpWithNewOp<SmemAllocOp>(op, op->getResult(0).getType(),
-                                               smem_alloc.getNumStages(),
-                                               smem_alloc.getIsMutable());
-      rewriter.replaceAllOpUsesWith(smem_alloc, new_smem_alloc);
-      rewriter.eraseOp(smem_alloc);
+      auto newGetBuffer = rewriter.replaceOpWithNewOp<GetBufferOp>(op, op->getResult(0).getType(),
+                                               getBufferOp.getSrc(),
+                                               getBufferOp.getIndex());
+
+      getBufferOp->replaceAllUsesWith(newGetBuffer->getResults());
+      //getBufferOp->erase();
+
 
       return success();
     }
     return failure();
   }
 };
+
+// async_load_wait(cvt(ty1), ty2) -> async_load_wait(ty1)
+struct AsyncLoadWaitCvtToAsyncLoadWait
+    : public OpRewritePattern<AsyncLoadWaitOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(AsyncLoadWaitOp op,
+                  PatternRewriter &rewriter) const override {
+
+    bool converted = false;
+    for (auto val : op.getAsyncToken()){
+        Operation *arg = val.getDefiningOp();
+        if (!arg)
+          return failure();
+        if (auto cvtOp = dyn_cast<ConvertLayoutOp>(arg)) {
+            cvtOp.replaceAllUsesWith(cvtOp.getSrc());
+            converted = true;
+        }
+    }
+    if (converted)
+        return success();
+    return failure();
+  }
+};
+
+void canonicalizeGetBufferOp(GetBufferOp getBufferOp){
+    if (getBufferOp.getSrc().getType() !=  getBufferOp->getResult(0).getType()){
+        OpBuilder builder(getBufferOp);
+        auto newGetBuffer = builder.create<GetBufferOp>(getBufferOp->getLoc(), getBufferOp.getSrc().getType(), 
+                getBufferOp.getSrc(), getBufferOp.getIndex());
+        getBufferOp.replaceAllUsesWith(newGetBuffer->getResult(0));
+        getBufferOp->erase();
+    }
+}
 
 class TXLGPUSmemAllocLayoutConversionsPass
     : public impl::TXLGPUSmemAllocLayoutConversionsBase<
@@ -74,11 +143,16 @@ public:
     ModuleOp m = getOperation();
     RewritePatternSet smemAllocPatterns(context);
 
-    smemAllocPatterns.add<SmemAllocCvtToSmemAlloc>(context);
+    smemAllocPatterns.add<CvtGetBufferToGetBuffer>(context);
+    smemAllocPatterns.add<AsyncLoadWaitCvtToAsyncLoadWait>(context);
 
     if (applyPatternsGreedily(m, std::move(smemAllocPatterns)).failed()) {
       signalPassFailure();
     }
+
+    m->walk([&](GetBufferOp getBufferOp){
+        canonicalizeGetBufferOp(getBufferOp);
+    });
 
     LLVM_DEBUG({
       DBGS() << "Module after smem_alloc lowering:\n";

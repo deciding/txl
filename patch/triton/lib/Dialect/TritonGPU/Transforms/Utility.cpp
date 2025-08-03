@@ -10,6 +10,7 @@
 #include "triton/Analysis/AxisInfo.h"
 #include "triton/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/LinearLayoutConversions.h"
@@ -100,6 +101,8 @@ SmallVector<unsigned, 4> argSort(const SmallVector<int64_t> &arr) {
 
 Value getMemAccessPtr(Operation *op) {
   if (auto ld = dyn_cast<triton::LoadOp>(op))
+    return ld.getPtr();
+  if (auto ld = dyn_cast<triton::AsyncLoadOp>(op))
     return ld.getPtr();
   if (auto atomic = dyn_cast<triton::AtomicRMWOp>(op))
     return atomic.getPtr();
@@ -568,17 +571,20 @@ Attribute inferDstEncoding(Operation *op, Attribute encoding) {
 }
 
 bool isExpensiveLoadOrStore(Operation *op) {
+  int ptrIdx = 0;
+  if (isa<AsyncLoadOp>(op))
+      ptrIdx = 1;
   // Case 1: Pointer of tensor is always expensive
-  auto operandType = op->getOperand(0).getType();
+  auto operandType = op->getOperand(ptrIdx).getType();
   if (triton::isTensorPointerType(operandType))
     return true;
   // Case 2a: A size 1 tensor is not expensive since all threads will load the
   // same
-  if (isSingleValue(op->getOperand(0)))
+  if (isSingleValue(op->getOperand(ptrIdx)))
     return false;
   // Case 2b: Tensor of pointers has more threads than elements
   // we can presume a high hit-rate that makes it cheap to load
-  auto ptrType = cast<RankedTensorType>(op->getOperand(0).getType());
+  auto ptrType = cast<RankedTensorType>(op->getOperand(ptrIdx).getType());
   auto mod = op->getParentOfType<ModuleOp>();
   int numWarps = triton::gpu::lookupNumWarps(op);
   int threadsPerWarp = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);

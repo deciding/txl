@@ -171,7 +171,7 @@ def make_nv_dbg_ttir(mod, metadata, opt, log_dir=None):
     pm2.enable_debug()
 
     def add_ws_code_partition_txl(i):
-        passes.ttir.add_ws_code_partition_txl(pm, metadata['num_warpgroups'])
+        passes.ttir.add_ws_code_partition_txl(i, metadata['num_warpgroups'])
 
     pass_funcs = [
         passes.common.add_inliner,
@@ -238,7 +238,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
 
     def add_pipeline_txl(i):
         if use_txl:
-            passes.ttgpuir.add_pipeline_txl(pm, metadata['num_warpgroups'], opt.num_stages, dump_enabled)
+            passes.ttgpuir.add_pipeline_txl(i, metadata['num_warpgroups'], opt.num_stages, dump_enabled)
         else:
             passes.ttgpuir.add_pipeline(i, opt.num_stages, dump_enabled)
 
@@ -279,7 +279,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
         add_smem_alloc_legalize_txl,
         passes.ttgpuir.add_named_barrier_lower_txl,
         passes.ttgpuir.add_remove_layout_conversions,
-        #passes.ttgpuir.add_smem_alloc_layout_conversions_txl,
+        passes.ttgpuir.add_smem_alloc_layout_conversions_txl,
         passes.ttgpuir.add_optimize_thread_locality,
         #passes.ttgpuir.add_accelerate_matmul,
         passes.ttgpuir.add_accelerate_matmul_txl,

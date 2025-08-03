@@ -1256,12 +1256,12 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
             # note that this non transposed v for FP8 is only supported on Blackwell
             acc = tl.dot(p, cur_bV, acc)
 
+            txl.dot_wait(1)
             # TODO: before or after wait? oh previously is also before QK wait
             if txl.is_warpgroup([1]):
                 txl.bar_arrive(WG2_BAR, WG_NUM_THREADS)
             else:
                 txl.bar_arrive(WG1_BAR, WG_NUM_THREADS)
-            txl.dot_wait(1)
             # --- release QK finished ---
             txl.mbar_arrive(cur_mbar_QK)
 
@@ -1277,13 +1277,13 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
             l_i = l_i * alpha + l_ij
             m_i = m_ij
 
+            # update acc, NOTE: p position is important
+            p = p.to(dtype)
+
             # update output accumulator
             txl.dot_wait(0)
             # --- release PV j-1 finished ---
             txl.mbar_arrive(cur_mbar_PV)
-
-            # update acc, NOTE: p position is important
-            p = p.to(dtype)
 
             acc = acc * alpha[:, None]
 
@@ -1591,7 +1591,7 @@ for mode in ["fwd"]:
 @triton.testing.perf_report(configs0)
 def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, device=DEVICE, no_tune=False):
     # follow fa3 paper
-    BATCH = int(16483 / N_CTX)
+    BATCH = int(16384 / N_CTX)
     assert mode in ["fwd", "bwd"]
     dtype = torch.float16
     q = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
@@ -1645,4 +1645,4 @@ if __name__ == "__main__":
     test_op(16, 32, 1024, 128, False, dtype=torch.float16, no_tune=no_tune)
 
     print("BENCH...")
-    #bench_flash_attention.run(save_path=".", print_data=True, no_tune=no_tune)
+    bench_flash_attention.run(save_path=".", print_data=True, no_tune=no_tune)

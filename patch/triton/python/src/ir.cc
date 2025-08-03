@@ -253,6 +253,11 @@ void init_triton_ir(py::module &&m) {
       .value("EVICT_LAST", EvictionPolicyX::EVICT_LAST)
       .export_values();
 
+  py::enum_<PaddingOptionX>(m, "PADDING_OPTIONX", py::module_local())
+      .value("PAD_ZERO", PaddingOptionX::PAD_ZERO)
+      .value("PAD_NAN", PaddingOptionX::PAD_NAN)
+      .export_values();
+
   py::enum_<PaddingOption>(m, "PADDING_OPTION", py::module_local())
       .value("PAD_ZERO", PaddingOption::PAD_ZERO)
       .value("PAD_NAN", PaddingOption::PAD_NAN)
@@ -1834,6 +1839,61 @@ void init_triton_ir(py::module &&m) {
                Value mbar, Value pred, bool trackAsyncOp, int txCnt) -> void {
                self.create<mlir::triton::MbarArriveOp>(mbar, pred, nullptr, trackAsyncOp, txCnt);
            })
+      .def("create_async_load",
+           [](TritonOpBuilder &self, Value mem, Value &ptrs, CacheModifierX cacheModifier,
+              EvictionPolicyX evictionPolicy, bool isVolatile) -> Value {
+               // TODO: get rank from input mem
+               auto retType = RankedTensorType::get(
+                 {1, 1}, self.getBuilder().getI32Type());
+               // return asyncToken
+               return self.create<mlir::triton::AsyncLoadOp>(retType, mem, ptrs,
+                            Value(), Value(),
+                            /*boundaryCheck=*/self.getBuilder().getDenseI32ArrayAttr(ArrayRef<int32_t>{}),
+                            /*padding=*/PaddingOptionXAttr(),
+                            cacheModifier, evictionPolicy,
+                            isVolatile);
+           })
+      .def("create_tensor_pointer_async_load",
+           [](TritonOpBuilder &self, Value mem, Value &ptrs,
+              std::vector<int32_t> &boundaryCheck,
+              std::optional<PaddingOptionX> padding,
+              CacheModifierX cacheModifier, EvictionPolicyX evictionPolicy,
+              bool isVolatile) -> Value {
+               auto retType = RankedTensorType::get(
+                 {1, 1}, self.getBuilder().getI32Type());
+               // return asyncToken
+               auto paddingAttr =
+                   padding.has_value()
+                       ? PaddingOptionXAttr::get(self.getBuilder().getContext(), padding.value())
+                       : PaddingOptionXAttr();
+               auto boundaryCheckAttr = self.getBuilder().getDenseI32ArrayAttr(boundaryCheck);
+               return self.create<mlir::triton::AsyncLoadOp>(retType, mem, ptrs,
+                            Value(), Value(),
+                            boundaryCheckAttr, paddingAttr,
+                            cacheModifier, evictionPolicy,
+                            isVolatile);
+           })
+      .def("create_masked_async_load",
+           [](TritonOpBuilder &self, Value mem, Value &ptrs, Value &mask,
+              std::optional<Value> &other, CacheModifierX cacheModifier,
+              EvictionPolicyX evictionPolicy, bool isVolatile) -> Value {
+               auto retType = RankedTensorType::get(
+                 {1, 1}, self.getBuilder().getI32Type());
+               // return asyncToken
+               return self.create<mlir::triton::AsyncLoadOp>(retType, mem, ptrs,
+                            mask, other.value_or(Value()),
+                            /*boundaryCheck=*/self.getBuilder().getDenseI32ArrayAttr(ArrayRef<int32_t>{}),
+                            /*padding=*/PaddingOptionXAttr(),
+                            cacheModifier, evictionPolicy,
+                            isVolatile);
+           })
+      .def("create_async_load_wait",
+           [](TritonOpBuilder &self,
+               Value asyncToken, int num) -> void {
+               auto retType = RankedTensorType::get(
+                 {1}, self.getBuilder().getI32Type());
+               self.create<mlir::triton::AsyncLoadWaitOp>(retType, asyncToken, num);
+           })
       .def("create_tma_load",
            [](TritonOpBuilder &self, Value src, Value desc, std::vector<Value> &indices, Value mbar,
               CacheModifierX cacheModifier,
@@ -1843,6 +1903,12 @@ void init_triton_ir(py::module &&m) {
              // TODO: check the type of desc and src
              self.create<TmaLoadOp>(
                  src, desc, indices, mbar, cacheModifier, evictionPolicy);
+           })
+      .def("create_tma_gather",
+           [](TritonOpBuilder &self, Value src, Value desc, Value x_indices, Value y_index,
+              Type type) -> void {
+             self.create<TmaGatherOp>(
+                 type, src, desc, x_indices, y_index);
            })
       .def("create_dot_wait",
            [](TritonOpBuilder &self, int32_t pendings) -> void {

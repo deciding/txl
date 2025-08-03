@@ -44,6 +44,8 @@ Known that triton optimized with 3 multi-stages with MMAPV overlap with prev buf
 
 ## Milestones
 - [x] when running ws persistent on 8192x8192x512 (default in triton) get 411 vs. 424 TFLOPS on H100 PCIe. better than 403 of fully ws triton (2%). reached 97% of cublas.
+- [x] FA3 90%
+- [x] 421 vs. 340 vs. 318 (cublas vs. triton vs. txl) for multi-stage MM without TMA. need to find the reason of downgrade
 
 ## Changelog
 ```

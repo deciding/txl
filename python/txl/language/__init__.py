@@ -18,7 +18,10 @@ from .core import (
     bar_wait,
     get_buffer,
     tma_load,
+    tma_gather,
     dot_wait,
+    async_load,
+    async_load_wait,
     print,
 )
 

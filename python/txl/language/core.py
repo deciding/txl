@@ -102,6 +102,15 @@ def tma_load(value: tl.tensor, desc_pointer, offsets, mbar:tl.tensor, _builder=N
     return semantic.tma_load(value, desc, offsets, mbar, "", "", _builder)
 
 @builtin
+def tma_gather(value: tl.tensor, desc_pointer, *args, _builder=None) -> tl.tensor:
+    """Gather multiple descriptors worth of data"""
+    assert len(args) == 2, f"descriptor gather only supports 2D indexing, but got {len(args)}"
+    x_offsets = args[0]
+    y_offset = args[1]
+    desc = _experimental_reinterpret_tensor_descriptor(desc_pointer, value.shape, value.dtype, _builder=_builder)
+    return semantic.tma_gather(value, desc, x_offsets, y_offset, "", "", _builder)
+
+@builtin
 def get_buffer(src: tl.tensor, index: tl.tensor, _builder=None) -> tl.tensor:
     # index is Value not constexpr
     index = tl.tensor(_convert_elem_to_ir_value(_builder, index, False), type=tl.int32)
@@ -163,8 +172,9 @@ def print(prefix_or_data, data=None, _builder=None):
         data = 0
     return semantic.device_print(prefix, [semantic.to_tensor(data, _builder)], False, _builder)
 
+# TODO: block_pointer, mask
 @builtin
-def load0(pointer, space='auto', swizzle=(1, 1, 1), row_major=False, mask=None, other=None, boundary_check=(), padding_option="", cache_modifier="", eviction_policy="",
+def async_load(mem, pointer, mask=None, other=None, boundary_check=(), padding_option="", cache_modifier="", eviction_policy="",
          volatile=False, _builder=None):
     """
     Return a tensor of data whose values are loaded from memory at location defined by `pointer`:
@@ -191,8 +201,6 @@ def load0(pointer, space='auto', swizzle=(1, 1, 1), row_major=False, mask=None, 
 
     :param pointer: Pointer to the data to be loaded
     :type pointer: `triton.PointerType`, or block of `dtype=triton.PointerType`
-    :param space: The space of loaded tensor, either 'auto' or 'smem'
-    :type space: `str`, 'auto' or 'smem'
     :param mask: if `mask[idx]` is false, do not load the data at address `pointer[idx]`
         (must be `None` with block pointers)
     :type mask: Block of `triton.int1`, optional
@@ -202,9 +210,8 @@ def load0(pointer, space='auto', swizzle=(1, 1, 1), row_major=False, mask=None, 
     :type boundary_check: tuple of ints, optional
     :param padding_option: should be one of {"", "zero", "nan"}, the padding value to use while out of bounds. "" means an undefined value.
     :param cache_modifier: changes cache option in NVIDIA PTX
-    :type cache_modifier: str, optional, should be one of {"", ".ca", ".cg", ".cv"}, where ".ca" stands for
-        cache at all levels, ".cg" stands for cache at global level (cache in L2 and below, not L1),
-        and ".cv" means don’t cache and fetch again. see
+    :type cache_modifier: str, optional, should be one of {"", "ca", "cg"}, where "ca" stands for
+        cache at all levels and "cg" stands for cache at global level (cache in L2 and below, not L1), see
         `cache operator <https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#cache-operators>`_ for more details.
     :param eviction_policy: changes eviction policy in NVIDIA PTX
     :type eviction_policy: str, optional
@@ -222,14 +229,10 @@ def load0(pointer, space='auto', swizzle=(1, 1, 1), row_major=False, mask=None, 
     cache_modifier = _constexpr_to_value(cache_modifier)
     eviction_policy = _constexpr_to_value(eviction_policy)
     volatile = _constexpr_to_value(volatile)
-
-    space = _constexpr_to_value(space)
-    swizzle = _constexpr_to_value(swizzle)
-    row_major = _constexpr_to_value(row_major)
-
-    new_ptr = semantic.load(pointer, mask, other, boundary_check, padding_option, cache_modifier, eviction_policy,
+    return semantic.async_load(mem, pointer, mask, other, boundary_check, padding_option, cache_modifier, eviction_policy,
                          volatile, _builder)
-    if space != 'auto':
-        return semantic.local_alloc(_builder, new_ptr, space=space, swizzle=swizzle, row_major=row_major)
-    else:
-        return new_ptr
+
+@builtin
+def async_load_wait(async_token: tl.tensor, num: int, _builder=None) -> tl.tensor:
+    # pred is Value not const expr
+    return semantic.async_load_wait(async_token, num, _builder)

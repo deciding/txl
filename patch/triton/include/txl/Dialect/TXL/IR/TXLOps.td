@@ -5,6 +5,7 @@ include "txl/Dialect/TXL/IR/TXLDialect.td"
 include "triton/Dialect/Triton/IR/TritonDialect.td"
 include "triton/Dialect/Triton/IR/TritonTypes.td"
 include "txl/Dialect/TXL/IR/TXLAttrDefs.td"
+include "triton/Dialect/Triton/IR/TritonAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td" // SymbolUserOpInterface
@@ -206,6 +207,100 @@ def TXL_IsWarpgroupOp : TXL_Op<"is_warpgroup", []> {
   let results = (outs I1:$result);
 
   let assemblyFormat = "attr-dict `:` type($result)";
+}
+
+def TXL_AsyncLoadOp : TXL_Op<"async_load", [
+  AttrSizedOperandSegments,
+  MemoryEffects<[MemWrite]>,
+  TypesMatchWith<"src matches ptr type", "ptr", "src", "getPointeeType($_self)">,
+  TypesMatchWith<"infer mask type from src type",
+                 "src", "mask", "getI1SameShape($_self)",
+                 "($_op.getOperands().size() <= 3) || std::equal_to<>()">,
+  TypesMatchWith<"infer other type from src type",
+                 "src", "other", "getPointeeType($_self)",
+                 "($_op.getOperands().size() <= 4) || std::equal_to<>()">
+]> {
+  let summary = "copy data from global memory to local memory asynchronously";
+
+  let description = [{
+    This operation copies data from global memory to local memory asynchronously.
+    This is analogue to tt.load except the data are copied to local memory pointed
+    by by the memory descriptor instead of a distributed tensor. The rest of the
+    operands are the same as tt.load.
+  }];
+
+  let arguments = (
+    ins
+    TT_Tensor:$src,
+    AnyTypeOf<[TT_PtrLike, TT_TensorPtr]>:$ptr,
+    Optional<I1Tensor>:$mask,
+    Optional<TT_Type>:$other,
+
+    DefaultValuedAttr<DenseI32ArrayAttr, "::llvm::ArrayRef<int32_t>{}">:$boundaryCheck,
+    OptionalAttr<TT_PaddingOptionXAttr>:$padding,
+    DefaultValuedAttr<TXL_CacheModifierXAttr, "triton::CacheModifierX::NONE">:$cache,
+    DefaultValuedAttr<TXL_EvictionPolicyXAttr, "triton::EvictionPolicyX::NORMAL">:$evict,
+    DefaultValuedAttr<BoolAttr, "false">:$isVolatile
+  );
+
+  let results = (outs TT_Tensor:$token);
+
+  let assemblyFormat = [{
+    $src `,` $ptr (`mask` $mask^)? (`other` $other^)?
+    oilist(`cacheModifier` `=` $cache | `evictionPolicy` `=` $evict)
+    attr-dict `:` functional-type(operands, results)
+  }];
+
+  let hasCanonicalizer = 1;
+}
+
+def TXL_AsyncLoadWaitOp : TXL_Op<"async_load_wait", [MemoryEffects<[MemWrite]>]> {
+  let summary = "async wait";
+
+  let arguments = (ins Variadic<TT_Tensor>:$asyncToken, I32Attr:$num);
+
+  let results = (outs TT_Tensor:$retToken);
+
+  let assemblyFormat = "$asyncToken attr-dict `:` functional-type(operands, results)";
+
+  let extraClassDeclaration = [{
+    static bool isSupported(int computeCapability) {
+      return computeCapability >= 80;
+    }
+  }];
+}
+
+def TXL_TmaGatherOp : TXL_Op<"tma_gather", [MemoryEffects<[MemRead]>]> {
+  let summary = "gather multiple rows from a descriptor into a single tensor";
+  let description = [{
+    The `tt.experimental_desciptor_gather` op will be lowered to NVIDIA TMA
+    load operations on targets that support it.
+
+    `desc_ptr` is a pointer to the TMA descriptor allocated in global memory.
+    The descriptor block must have 1 row and the indices must be a 1D tensor.
+    Accordingly, the result is a 2D tensor multiple rows.
+
+    This is an escape hatch and is only there for testing/experimenting. This
+    op will be removed in the future.
+  }];
+
+  let arguments = (ins
+    TT_Tensor:$src,
+    TT_TensorDescType:$desc,
+    RankedTensorOf<[I32]>:$x_offsets,
+    I32:$y_offset
+  );
+
+  let assemblyFormat = [{
+    $src `,` $desc `[` $x_offsets `,` $y_offset `]`
+    attr-dict `:` functional-type(operands, results)
+  }];
+
+  let extraClassDeclaration = [{
+    // TMA gathers have resstrictions on the minimum size of the gather result.
+    // This function verifies the result type.
+    static LogicalResult verifyResultType(Operation *op, mlir::ShapedType type);
+  }];
 }
 
 #endif // TXL_OPS

@@ -238,8 +238,8 @@ def matmul_persistent_tma_txl_kernel(
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
-#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
-@txl.jit(launch_metadata=_matmul_launch_metadata)
+@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+#@txl.jit(launch_metadata=_matmul_launch_metadata)
 def matmul_persistent_nows_tma_txl_kernel(
     a_desc_ptr,
     b_desc_ptr,
@@ -555,8 +555,8 @@ def matmul_persistent_tma_txl(a, b):
     desc_c = desc_helper.get_tma_descriptor_kernel_param("c")
 
     #matmul_persistent_tma_txl_kernel[grid](
-    #matmul_persistent_nows_tma_txl_kernel[grid](
-    matmul_persistent_ws_tma_txl_kernel[grid](
+    matmul_persistent_nows_tma_txl_kernel[grid](
+    #matmul_persistent_ws_tma_txl_kernel[grid](
         desc_a, desc_b, desc_c,  #
         M, N, K,  #
         FP8_OUTPUT=dtype == torch.float8_e4m3fn,  #

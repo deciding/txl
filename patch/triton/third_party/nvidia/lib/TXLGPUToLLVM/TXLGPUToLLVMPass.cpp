@@ -43,6 +43,12 @@ const std::string Canonical_Warpgroup_Id_Op =
     "shfl.sync.idx.b32         $0, a0, %tmp2, %tmp1, %tmp0;           \n"
     "}";
 
+const std::string Reg_Alloc_Op = "setmaxnreg.inc.sync.aligned.u32 #regCount;";
+const std::string Reg_Dealloc_Op = "setmaxnreg.dec.sync.aligned.u32 #regCount;";
+
+const std::string Named_Barrier_Arrive_Op = "bar.arrive $0, $1;";
+const std::string Named_Barrier_Wait_Op = "bar.sync $0, $1;";
+
 template <typename SourceOp>
 class TXLGPUOpGenericPattern : public OpRewritePattern<SourceOp> {
 public:
@@ -82,6 +88,15 @@ public:
 
     patterns.add<TXLGPUOpGenericPattern<ttx::CanonicalWarpgroupIdOp>>(
         context, Canonical_Warpgroup_Id_Op, Constraints({"=r"}), Constraints());
+    patterns.add<TXLGPUOpGenericPattern<ttx::RegAllocOp>>(context, Reg_Alloc_Op, Constraints(),
+                                              Constraints());
+    patterns.add<TXLGPUOpGenericPattern<ttx::RegDeallocOp>>(context, Reg_Dealloc_Op, Constraints(),
+                                              Constraints());
+    patterns.add<TXLGPUOpGenericPattern<ttx::NamedBarrierArriveOp>>(
+        context, Named_Barrier_Arrive_Op, Constraints(),
+        Constraints({"r", "r"}));
+    patterns.add<TXLGPUOpGenericPattern<ttx::NamedBarrierWaitOp>>(
+        context, Named_Barrier_Wait_Op, Constraints(), Constraints({"r", "r"}));
 
     if (applyPatternsGreedily(mod, std::move(patterns)).failed())
       signalPassFailure();

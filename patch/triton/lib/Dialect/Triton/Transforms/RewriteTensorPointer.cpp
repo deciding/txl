@@ -1,4 +1,3 @@
-#include <memory>
 #include <stack>
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -6,14 +5,14 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
-#include "triton/Analysis/Utility.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/Triton/IR/Utility.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/Triton/Transforms/Passes.h"
 
-using namespace mlir;
+namespace mlir::triton {
 
-#define GEN_PASS_CLASSES
+#define GEN_PASS_DEF_TRITONREWRITETENSORPOINTER
 #include "triton/Dialect/Triton/Transforms/Passes.h.inc"
 
 namespace {
@@ -197,7 +196,7 @@ public:
 // very fragile and to solve we should expose convert Ptr of tensor to a
 // structure containins all values and not only offsets.
 class RewriteTensorPointerPass
-    : public TritonRewriteTensorPointerBase<RewriteTensorPointerPass> {
+    : public impl::TritonRewriteTensorPointerBase<RewriteTensorPointerPass> {
 private:
   DenseMap<Value, RewritedInfo> rewritedInfo;
 
@@ -325,8 +324,6 @@ public:
           loadOp.getLoc(), newPtr, newMask, newOther, loadOp.getCache(),
           loadOp.getEvict(), loadOp.getIsVolatile());
       op->getResult(0).replaceAllUsesWith(newResult);
-      if (op->getAttr("async_task_id"))
-        newResult->setAttr("async_task_id", op->getAttr("async_task_id"));
     } else if (auto loadOp = dyn_cast<triton::AsyncLoadOp>(op)) {
       auto newResult = builder.create<triton::AsyncLoadOp>(
           loadOp.getLoc(),
@@ -336,14 +333,10 @@ public:
           loadOp.getCache(),
           loadOp.getEvict(), loadOp.getIsVolatile());
       op->getResult(0).replaceAllUsesWith(newResult);
-      if (op->getAttr("async_task_id"))
-        newResult->setAttr("async_task_id", op->getAttr("async_task_id"));
     } else if (auto storeOp = dyn_cast<triton::StoreOp>(op)) {
-      auto newOp = builder.create<triton::StoreOp>(
-          storeOp.getLoc(), newPtr, storeOp.getValue(), newMask,
-          storeOp.getCache(), storeOp.getEvict());
-      if (op->getAttr("async_task_id"))
-        newOp->setAttr("async_task_id", op->getAttr("async_task_id"));
+      builder.create<triton::StoreOp>(storeOp.getLoc(), newPtr,
+                                      storeOp.getValue(), newMask,
+                                      storeOp.getCache(), storeOp.getEvict());
     }
 
     // Erase the original operation
@@ -366,7 +359,7 @@ public:
         continue;
       }
       needRewrite = true;
-      auto makeTensorPtrOp = getMakeTensorPtrOp(results[i]);
+      auto makeTensorPtrOp = triton::getMakeTensorPtrOp(results[i]);
       assert(rewritedInfo.count(makeTensorPtrOp.getResult()));
       const auto &info = rewritedInfo[makeTensorPtrOp.getResult()];
       for (unsigned j = 0; j < info.length(); ++j) {
@@ -404,7 +397,7 @@ public:
         oldResIdx++;
         newResIdx++;
       } else {
-        auto makeTensorPtrOp = getMakeTensorPtrOp(results[oldResIdx]);
+        auto makeTensorPtrOp = triton::getMakeTensorPtrOp(results[oldResIdx]);
         assert(rewritedInfo.count(makeTensorPtrOp.getResult()));
         auto info = rewritedInfo[makeTensorPtrOp.getResult()];
         for (unsigned j = 0; j < info.length(); ++j) {
@@ -586,6 +579,4 @@ public:
   }
 };
 
-std::unique_ptr<Pass> triton::createRewriteTensorPointerPass() {
-  return std::make_unique<RewriteTensorPointerPass>();
-}
+} // namespace mlir::triton

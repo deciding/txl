@@ -9,8 +9,8 @@
 #include "mlir/Transforms/Passes.h"
 #include "triton/Analysis/Utility.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
-#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 
@@ -100,16 +100,14 @@ static RankedTensorType replaceEncoding(RankedTensorType oldType,
 
 // This function considers a gather op in isolation and attempts to determine
 // whether an optimized layout can be applied to the source and index tensors.
-static void setOptimizedGatherLayout(GatherOp op, RewriterBase &b) {
+static LogicalResult setOptimizedGatherLayout(GatherOp op, RewriterBase &b) {
   RankedTensorType srcType = op.getSrc().getType();
   RankedTensorType idxType = op.getIndices().getType();
 
   // Determine a warp-local gather layout that minimizes the number of emitted
   // warp shuffles.
-  unsigned numThreadsPerWarp =
-      product<unsigned>(triton::gpu::getThreadsPerWarp(srcType.getEncoding()));
-  unsigned numWarps =
-      product<unsigned>(triton::gpu::getWarpsPerCTA(srcType.getEncoding()));
+  unsigned numThreadsPerWarp = lookupThreadsPerWarp(b);
+  unsigned numWarps = lookupNumWarps(op);
 
   // If in a gather column, each thread owns `srcSizePerThread[axis]` elements
   // in the source tensor and `idxSizePerThread[axis]` elements in the index
@@ -140,6 +138,8 @@ static void setOptimizedGatherLayout(GatherOp op, RewriterBase &b) {
   // for `sizePerThread[axis]`.
   unsigned axis = op.getAxis();
   unsigned rank = srcType.getRank();
+  if (rank == 1)
+    return failure();
   SmallVector<unsigned> threadsPerWarp(rank);
   SmallVector<unsigned> warpsPerCTA(rank);
   SmallVector<unsigned> order;
@@ -226,6 +226,8 @@ static void setOptimizedGatherLayout(GatherOp op, RewriterBase &b) {
 
   // Make sure we did this right.
   assert(GatherLoweringHelper(op).isWarpLocal());
+
+  return success();
 }
 
 namespace {
@@ -236,8 +238,7 @@ struct OptimizeGatherLayoutPattern : public mlir::OpRewritePattern<GatherOp> {
                                 PatternRewriter &rewriter) const override {
     if (op.getEfficientLayout())
       return failure();
-    setOptimizedGatherLayout(op, rewriter);
-    return success();
+    return setOptimizedGatherLayout(op, rewriter);
   }
 };
 } // namespace

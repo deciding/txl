@@ -106,32 +106,21 @@ def TXL_MbarWaitOp : TXL_Op<"mbar_wait", [MemoryEffects<[MemRead<SmemMemory>, Me
   let assemblyFormat = "$mbar `,` $phase attr-dict `:` type($mbar) `,` type($phase)";
 }
 
-def TXL_MbarArriveOp : TXL_Op<"mbar_arrive", [AttrSizedOperandSegments, MemoryEffects<[MemWrite<SmemMemory>]>]> {
+def TXL_MbarArriveOp : TXL_Op<"mbar_arrive", [MemoryEffects<[MemWrite<SmemMemory>]>]> {
   let summary = "mbarrier.arrive";
 
   let description = [{
     This operation defining the arriving action for a mbarrier.
-    txCount:
-        An optional attribute that set tx-count. This Op will be lowered into
-        mbarrier.arrive.expect_tx if the optional attribute exist.
-    trackAsyncOp:
-        If true, this op will be lowered into cp.async.mbarrier.arrive.noinc.
+    count:
+        arrive count
     pred:
         Only perform arrive action when pred is true.
-    remoteCtaId:
-        if set, perform an remote arrive action.
-
-    Example:
-
-    txl.mbar_arrive %0 {trackAsyncOp = false} : !tt.ptr<i64>
 
   }];
 
   let arguments = (ins TT_Tensor:$mbar,
-                       Optional<I1>:$pred,
-                       Optional<I32>:$remoteCtaId,
-                       I1Attr: $trackAsyncOp,
-                       DefaultValuedAttr<I32Attr, "0">: $txCount
+                    I32Attr:$count,
+                    Optional<I1>:$pred
                   );
 
   let assemblyFormat = "operands attr-dict `:` type(operands)";
@@ -162,20 +151,20 @@ def TXL_TmaLoadOp : TXL_Op<"tma_load", [MemoryEffects<[MemWrite<SmemMemory>]>]> 
   }];
   let arguments = (ins
     TT_Tensor:$src,
+    TT_Tensor:$mbar,
     TT_TensorDescType:$desc,
     Variadic<I32>:$indices,
-    TT_Tensor:$mbar,
     DefaultValuedAttr<TXL_CacheModifierXAttr, "::mlir::triton::CacheModifierX::NONE">:$cache,
     DefaultValuedAttr<TXL_EvictionPolicyXAttr, "::mlir::triton::EvictionPolicyX::NORMAL">:$evict
   );
 
   let assemblyFormat = [{
-    $src `,` $desc `[` $indices `]` `,` $mbar
+    $src `,` $mbar `,` $desc `[` $indices `]`
     oilist(
       `cacheModifier` `=` $cache |
       `evictionPolicy` `=` $evict
     )
-    attr-dict `:` type($src) `,` qualified(type($desc)) `,` type($mbar)
+    attr-dict `:` type($src) `,` type($mbar) `,` qualified(type($desc))
   }];
 
 }
@@ -286,13 +275,14 @@ def TXL_TmaGatherOp : TXL_Op<"tma_gather", [MemoryEffects<[MemRead]>]> {
 
   let arguments = (ins
     TT_Tensor:$src,
+    TT_Tensor:$mbar,
     TT_TensorDescType:$desc,
     RankedTensorOf<[I32]>:$x_offsets,
     I32:$y_offset
   );
 
   let assemblyFormat = [{
-    $src `,` $desc `[` $x_offsets `,` $y_offset `]`
+    $src `,` $mbar `,` $desc `[` $x_offsets `,` $y_offset `]`
     attr-dict `:` functional-type(operands, results)
   }];
 

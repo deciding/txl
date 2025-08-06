@@ -1,12 +1,9 @@
 #include "triton/Analysis/Membar.h"
-#include "triton/Analysis/Alias.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
-#include "triton/Conversion/TritonGPUToLLVM/Utility.h"
 #include <deque>
 
 namespace mlir {
@@ -188,20 +185,6 @@ static inline void insertBarrierTXL(OpBuilder &builder, Operation *op) {
     barrierOp->setAttr("bar_id", builder.getI64IntegerAttr(barId));
     barrierOp->setAttr("num_threads", builder.getI64IntegerAttr(numThreads));
   }
-
-  auto asyncTaskIds = getAsyncTaskIds(op);
-  assert(asyncTaskIds.size() <= 1);
-  if (asyncTaskIds.size() == 1) {
-    int asyncTaskId1 = asyncTaskIds[0];
-    int barId1 = asyncTaskId1 + nameBarrierIdBegin;
-    assert(barId1 < nameBarrierIdEnd);
-    auto mod1 = op->getParentOfType<ModuleOp>();
-    int numWarps1 = mlir::triton::gpu::lookupNumWarps(op);
-    int warpSize1 = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod1);
-    int numThreads1 = numWarps1 * warpSize1;
-    barrierOp->setAttr("bar_id", builder.getI64IntegerAttr(barId1));
-    barrierOp->setAttr("num_threads", builder.getI64IntegerAttr(numThreads1));
-  }
 }
 
 void MembarAnalysis::insertBarrier(Operation *op, OpBuilder *builder) {
@@ -218,7 +201,7 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
     return;
   }
 
-  if (isa<triton::gpu::AsyncWaitOp>(op) &&
+  if (isa<triton::gpu::AsyncWaitOp, triton::nvidia_gpu::TMAStoreWaitOp>(op) &&
       !isa<gpu::BarrierOp>(op->getNextNode())) {
     // If the current op is an async wait and the next op is not a barrier we
     // insert a barrier op and sync
@@ -261,6 +244,13 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
           }
         }
       }
+    }
+    // If this op is may be signalling other threads asynchronously, make sure
+    // all shared memory transactions are complete beforehand.
+    if (isa<triton::nvidia_gpu::ArriveBarrierOp>(op)) {
+      Interval<size_t> allIntervals(0, std::numeric_limits<size_t>::max());
+      curBlockInfo.syncWriteIntervals[allIntervals].insert(op);
+      curBlockInfo.syncReadIntervals[allIntervals].insert(op);
     }
     scratchBufferId = allocation->getBufferId(op);
   }

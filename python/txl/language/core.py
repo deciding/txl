@@ -1,160 +1,151 @@
 import triton.language as tl
-from triton.language.core import builtin, _shape_check_impl, _experimental_reinterpret_tensor_descriptor
-from triton.language.semantic import _convert_elem_to_ir_value
-from . import semantic
-from .utils import _constexpr_to_value, _apply_binary_method
+from triton.language.core import builtin, _shape_check_impl, _unwrap_if_constexpr
 from typing import Sequence
 
 @builtin
-def tid(axis, _builder=None):
-    return semantic.threadIdx(axis, _builder)
+def tid(axis, _semantic=None):
+    axis = _unwrap_if_constexpr(axis)
+    return _semantic.threadIdx(axis)
 
 @builtin
-def tdim(axis, _builder=None):
-    return semantic.blockDim(axis, _builder)
+def tdim(axis, _semantic=None):
+    axis = _unwrap_if_constexpr(axis)
+    return _semantic.blockDim(axis)
 
 @builtin
-def bid(axis, _builder=None):
-    return semantic.blockIdx(axis, _builder)
+def bid(axis, _semantic=None):
+    axis = _unwrap_if_constexpr(axis)
+    return _semantic.blockIdx(axis)
 
 @builtin
-def bdim(axis, _builder=None):
-    return semantic.gridDim(axis, _builder)
+def bdim(axis, _semantic=None):
+    axis = _unwrap_if_constexpr(axis)
+    return _semantic.gridDim(axis)
 
 @builtin
-def thread0(_builder=None):
-    is_bidx_x = bid(0, _builder=_builder)
-    is_bidx_y = bid(1, _builder=_builder)
-    is_bidx_z = bid(2, _builder=_builder)
-    is_tidx_x = tid(0, _builder=_builder)
-    is_bidx_x0 = is_bidx_x.__eq__(0, _builder=_builder)
-    is_bidx_y0 = is_bidx_y.__eq__(0, _builder=_builder)
-    is_bidx_z0 = is_bidx_z.__eq__(0, _builder=_builder)
-    is_tidx_x0 = is_tidx_x.__eq__(0, _builder=_builder)
+def thread0(_semantic=None):
+    is_bidx_x = bid(0, _semantic=_semantic)
+    is_bidx_y = bid(1, _semantic=_semantic)
+    is_bidx_z = bid(2, _semantic=_semantic)
+    is_tidx_x = tid(0, _semantic=_semantic)
+    is_bidx_x0 = is_bidx_x.__eq__(0, _semantic=_semantic)
+    is_bidx_y0 = is_bidx_y.__eq__(0, _semantic=_semantic)
+    is_bidx_z0 = is_bidx_z.__eq__(0, _semantic=_semantic)
+    is_tidx_x0 = is_tidx_x.__eq__(0, _semantic=_semantic)
 
-    is_thread0 = is_bidx_x0.__and__(is_bidx_y0, _builder=_builder)
-    is_thread0 = is_thread0.__and__(is_bidx_z0, _builder=_builder)
-    is_thread0 = is_thread0.__and__(is_tidx_x0, _builder=_builder)
+    is_thread0 = is_bidx_x0.__and__(is_bidx_y0, _semantic=_semantic)
+    is_thread0 = is_thread0.__and__(is_bidx_z0, _semantic=_semantic)
+    is_thread0 = is_thread0.__and__(is_tidx_x0, _semantic=_semantic)
     return is_thread0
 
 @builtin
-def wg_thread0(wgid, _builder=None):
-    is_bidx_x = bid(0, _builder=_builder)
-    is_bidx_y = bid(1, _builder=_builder)
-    is_bidx_z = bid(2, _builder=_builder)
-    is_tidx_x = tid(0, _builder=_builder)
+def wg_thread0(wgid, _semantic=None):
+    is_bidx_x = bid(0, _semantic=_semantic)
+    is_bidx_y = bid(1, _semantic=_semantic)
+    is_bidx_z = bid(2, _semantic=_semantic)
+    is_tidx_x = tid(0, _semantic=_semantic)
 
-    thread_id = _constexpr_to_value(wgid * 128)
+    thread_id = _unwrap_if_constexpr(wgid * 128)
 
-    is_bidx_x0 = is_bidx_x.__eq__(0, _builder=_builder)
-    is_bidx_y0 = is_bidx_y.__eq__(0, _builder=_builder)
-    is_bidx_z0 = is_bidx_z.__eq__(0, _builder=_builder)
-    is_tidx_x0 = is_tidx_x.__eq__(thread_id, _builder=_builder)
+    is_bidx_x0 = is_bidx_x.__eq__(0, _semantic=_semantic)
+    is_bidx_y0 = is_bidx_y.__eq__(0, _semantic=_semantic)
+    is_bidx_z0 = is_bidx_z.__eq__(0, _semantic=_semantic)
+    is_tidx_x0 = is_tidx_x.__eq__(thread_id, _semantic=_semantic)
 
-    is_thread0 = is_bidx_x0.__and__(is_bidx_y0, _builder=_builder)
-    is_thread0 = is_thread0.__and__(is_bidx_z0, _builder=_builder)
-    is_thread0 = is_thread0.__and__(is_tidx_x0, _builder=_builder)
+    is_thread0 = is_bidx_x0.__and__(is_bidx_y0, _semantic=_semantic)
+    is_thread0 = is_thread0.__and__(is_bidx_z0, _semantic=_semantic)
+    is_thread0 = is_thread0.__and__(is_tidx_x0, _semantic=_semantic)
     return is_thread0
 
 @builtin
-def warp_id(_builder=None):
-    return semantic.warp_id(_builder)
+def warp_id(_semantic=None):
+    return _semantic.warp_id()
 
 @builtin
-def warpgroup_id(_builder=None):
-    return semantic.warpgroup_id(_builder)
+def warpgroup_id(_semantic=None):
+    return _semantic.warpgroup_id()
 
 @builtin
-def is_warpgroup(ids, _builder=None):
-    return semantic.is_warpgroup(ids, _builder)
+def is_warpgroup(ids, _semantic=None):
+    return _semantic.is_warpgroup(ids)
 
 @builtin
-def reg_alloc(count, _builder=None):
-    return semantic.reg_alloc(count, _builder)
+def reg_alloc(count, _semantic=None):
+    return _semantic.reg_alloc(count)
 
 @builtin
-def reg_dealloc(count, _builder=None):
-    return semantic.reg_dealloc(count, _builder)
+def reg_dealloc(count, _semantic=None):
+    return _semantic.reg_dealloc(count)
 
 @builtin
-def smem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, _builder=None) -> tl.tensor:
+def smem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, _semantic=None) -> tl.tensor:
     shape = _shape_check_impl(shape)
-    dtype = _constexpr_to_value(dtype)
-    num_stages = _constexpr_to_value(num_stages)
-    mutable = _constexpr_to_value(mutable)
-    return semantic.smem_alloc(shape, dtype, _builder, num_stages, mutable)
+    dtype = _unwrap_if_constexpr(dtype)
+    num_stages = _unwrap_if_constexpr(num_stages)
+    mutable = _unwrap_if_constexpr(mutable)
+    return _semantic.smem_alloc(shape, dtype, num_stages, mutable)
 
 @builtin
-def mbar_alloc(arr_count: int, num_stages:int=1, _builder=None) -> tl.tensor:
-    arr_count = _constexpr_to_value(arr_count)
-    num_stages = _constexpr_to_value(num_stages)
-    return semantic.mbar_alloc(arr_count, _builder, num_stages)
+def mbar_alloc(arr_count: int, num_stages:int=1, _semantic=None) -> tl.tensor:
+    arr_count = _unwrap_if_constexpr(arr_count)
+    num_stages = _unwrap_if_constexpr(num_stages)
+    return _semantic.mbar_alloc(arr_count, num_stages)
 
 @builtin
-def tma_load(value: tl.tensor, desc_pointer, offsets, mbar:tl.tensor, _builder=None) -> tl.tensor:
-    """Store a block from the descriptor starting at the given element offsets.
-
-    Values outside of the tensor bounds will be ignored.
-
-    :note: Offset must be a multiple of 16-bytes
-    """
-    desc = _experimental_reinterpret_tensor_descriptor(desc_pointer, value.shape, value.dtype, _builder=_builder)
-    return semantic.tma_load(value, desc, offsets, mbar, "", "", _builder)
+def tma_load(value: tl.tensor, desc, offsets, mbar:tl.tensor, _semantic=None) -> tl.tensor:
+    return _semantic.tma_load(value, desc, offsets, mbar, "", "")
 
 @builtin
-def tma_gather(value: tl.tensor, desc_pointer, *args, _builder=None) -> tl.tensor:
+def tma_gather(value: tl.tensor, desc, mbar: tl.tensor, *args, _semantic=None) -> tl.tensor:
     """Gather multiple descriptors worth of data"""
     assert len(args) == 2, f"descriptor gather only supports 2D indexing, but got {len(args)}"
     x_offsets = args[0]
     y_offset = args[1]
-    desc = _experimental_reinterpret_tensor_descriptor(desc_pointer, value.shape, value.dtype, _builder=_builder)
-    return semantic.tma_gather(value, desc, x_offsets, y_offset, "", "", _builder)
+    return _semantic.tma_gather(value, desc, x_offsets, y_offset, mbar, "", "")
 
 @builtin
-def get_buffer(src: tl.tensor, index: tl.tensor, _builder=None) -> tl.tensor:
-    # index is Value not constexpr
-    index = tl.tensor(_convert_elem_to_ir_value(_builder, index, False), type=tl.int32)
-    return semantic.get_buffer(src, index, _builder)
+def get_buffer(src: tl.tensor, index, _semantic=None) -> tl.tensor:
+    return _semantic.get_buffer(src, index)
 
 @builtin
-def mbar_expect(mbar: tl.tensor, size_in_bytes: int, pred: tl.tensor=None, _builder=None) -> tl.tensor:
+def mbar_expect(mbar: tl.tensor, size_in_bytes: int, pred: tl.tensor=None, _semantic=None) -> tl.tensor:
+    size_in_bytes = _unwrap_if_constexpr(size_in_bytes)
+    if pred is None:
+        pred = tl.full((), True, dtype=tl.int1, _semantic=_semantic)
+    return _semantic.mbar_expect(mbar, size_in_bytes, pred)
+
+@builtin
+def mbar_wait(mbar: tl.tensor, phase, _semantic=None) -> tl.tensor:
+    return _semantic.mbar_wait(mbar, phase)
+
+@builtin
+def mbar_arrive(mbar: tl.tensor, pred: tl.tensor=None, cnt: int,
+         _semantic=None) -> tl.tensor:
+    cnt = _unwrap_if_constexpr(cnt)
     # pred is Value not const expr
     if pred is None:
-        pred = tl.full((), True, dtype=tl.int1, _builder=_builder)
-    return semantic.mbar_expect(mbar, size_in_bytes, pred, _builder)
+        pred = tl.full((), True, dtype=tl.int1, _semantic=_semantic)
+    return _semantic.mbar_arrive(mbar, cnt, pred)
 
 @builtin
-def mbar_wait(mbar: tl.tensor, phase: tl.tensor, _builder=None) -> tl.tensor:
-    # phase is Value not const expr
-    phase = tl.tensor(_convert_elem_to_ir_value(_builder, phase, False), type=tl.int32)
-    return semantic.mbar_wait(mbar, phase, _builder)
+def dot_wait(pendings: int, _semantic=None) -> tl.tensor:
+    pendings = _unwrap_if_constexpr(pendings)
+    return _semantic.dot_wait(pendings)
 
 @builtin
-def mbar_arrive(mbar: tl.tensor, pred: tl.tensor=None,
-        track_async_op:bool=False, tx_cnt:int =0, _builder=None) -> tl.tensor:
-    # pred is Value not const expr
-    if pred is None:
-        pred = tl.full((), True, dtype=tl.int1, _builder=_builder)
-    return semantic.mbar_arrive(mbar, pred, track_async_op, tx_cnt, _builder)
+def bar_arrive(bar: tl.tensor, num_threads: tl.tensor, _semantic=None) -> tl.tensor:
+    # TODO num_threads to be int
+    return _semantic.bar_arrive(bar, num_threads)
 
 @builtin
-def dot_wait(pendings: int, _builder=None) -> tl.tensor:
-    return semantic.dot_wait(pendings, _builder)
+def bar_wait(bar: tl.tensor, num_threads: tl.tensor, _semantic=None) -> tl.tensor:
+    # TODO num_threads to be int
+    return _semantic.bar_wait(bar, num_threads)
 
 @builtin
-def bar_arrive(bar: tl.tensor, num_threads: tl.tensor, _builder=None) -> tl.tensor:
-    # pred is Value not const expr
-    return semantic.bar_arrive(bar, num_threads, _builder)
-
-@builtin
-def bar_wait(bar: tl.tensor, num_threads: tl.tensor, _builder=None) -> tl.tensor:
-    # pred is Value not const expr
-    return semantic.bar_wait(bar, num_threads, _builder)
-
-@builtin
-def print(prefix_or_data, data=None, _builder=None):
+def print(prefix_or_data, data=None, _semantic=None):
     import string
-    prefix_or_data = _constexpr_to_value(prefix_or_data)
+    prefix_or_data = _unwrap_if_constexpr(prefix_or_data)
     if isinstance(prefix_or_data, str):
         prefix = prefix_or_data
     else:
@@ -170,12 +161,11 @@ def print(prefix_or_data, data=None, _builder=None):
 
     if data is None:
         data = 0
-    return semantic.device_print(prefix, [semantic.to_tensor(data, _builder)], False, _builder)
+    return _semantic.device_print(prefix, [_semantic.to_tensor(data)], False)
 
-# TODO: block_pointer, mask
 @builtin
 def async_load(mem, pointer, mask=None, other=None, boundary_check=(), padding_option="", cache_modifier="", eviction_policy="",
-         volatile=False, _builder=None):
+         volatile=False, _semantic=None):
     """
     Return a tensor of data whose values are loaded from memory at location defined by `pointer`:
 
@@ -219,20 +209,20 @@ def async_load(mem, pointer, mask=None, other=None, boundary_check=(), padding_o
     :type volatile: bool, optional
     """
     # `mask` and `other` can be constexpr
-    mask = _constexpr_to_value(mask)
-    other = _constexpr_to_value(other)
+    mask = _unwrap_if_constexpr(mask)
+    other = _unwrap_if_constexpr(other)
     if mask is not None:
-        mask = semantic.to_tensor(mask, _builder)
+        mask = _semantic.to_tensor(mask)
     if other is not None:
-        other = semantic.to_tensor(other, _builder)
-    padding_option = _constexpr_to_value(padding_option)
-    cache_modifier = _constexpr_to_value(cache_modifier)
-    eviction_policy = _constexpr_to_value(eviction_policy)
-    volatile = _constexpr_to_value(volatile)
-    return semantic.async_load(mem, pointer, mask, other, boundary_check, padding_option, cache_modifier, eviction_policy,
-                         volatile, _builder)
+        other = _semantic.to_tensor(other)
+    padding_option = _unwrap_if_constexpr(padding_option)
+    cache_modifier = _unwrap_if_constexpr(cache_modifier)
+    eviction_policy = _unwrap_if_constexpr(eviction_policy)
+    volatile = _unwrap_if_constexpr(volatile)
+    return _semantic.async_load(mem, pointer, mask, other, boundary_check, padding_option, cache_modifier, eviction_policy,
+                         volatile)
 
 @builtin
-def async_load_wait(async_token: tl.tensor, num: int, _builder=None) -> tl.tensor:
-    # pred is Value not const expr
-    return semantic.async_load_wait(async_token, num, _builder)
+def async_load_wait(async_token: tl.tensor, num: int, _semantic=None) -> tl.tensor:
+    num = _unwrap_if_constexpr(num)
+    return _semantic.async_load_wait(async_token, num)

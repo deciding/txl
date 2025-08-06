@@ -31,123 +31,6 @@ namespace tt = mlir::triton;
 namespace ttg = mlir::triton::gpu;
 namespace ttng = mlir::triton::nvidia_gpu;
 
-/// Find the minimum number of async_commit_group ops between the wait
-/// and the associated async_commit_group. This can be safely used as the wait
-/// number.
-static int minNumInterleavedCommitOps(Operation *waitOp) {
-  auto countCommitsBetween = [](Operation *op1, Operation *op2) {
-    int count = 0;
-    for (auto op = op1; op != op2; op = op->getNextNode()) {
-      if (isa<ttg::AsyncCommitGroupOp>(op))
-        count++;
-      // Intentionally skip block ops' children. This will give us
-      // convervatively low number of insert ops.
-    }
-    return count;
-  };
-
-  int minCommitNumber = INT_MAX;
-
-  // DFS the def chain of the extract op to find the insert op. On each path
-  // we calculate the number of async_commit. Then we select the minimum number
-  // of async_commit ops among all the paths.
-  std::function<int(Value, Operation *, int)> minOverHistories =
-      [&](Value val, Operation *sinkOp, int thisHistorySum) -> int {
-    if (Operation *defOp = val.getDefiningOp()) {
-      thisHistorySum += countCommitsBetween(defOp->getNextNode(), sinkOp);
-      minCommitNumber = std::min(minCommitNumber, thisHistorySum);
-      return minCommitNumber;
-    }
-    if (auto arg = mlir::dyn_cast<BlockArgument>(val)) {
-      Block *block = arg.getOwner();
-      auto forOp = dyn_cast<scf::ForOp>(block->getParentOp());
-
-      // Failed to track, return 0 conservatively.
-      if (!forOp)
-        return 0;
-
-      Operation *firstForInst = &*forOp.getBody()->begin();
-      int insertsBetween = countCommitsBetween(firstForInst, sinkOp);
-      thisHistorySum += insertsBetween;
-      if (thisHistorySum >= minCommitNumber)
-        return minCommitNumber;
-
-      // get the value assigned to the argument coming from outside the loop
-      Value incomingVal = forOp.getInitArgs()[arg.getArgNumber() - 1];
-      int min1 = minOverHistories(incomingVal, forOp, thisHistorySum);
-
-      // get the value assigned to the argument coming from the previous
-      // iteration
-      Operation *yieldOp = block->getTerminator();
-      Value prevVal = yieldOp->getOperand(arg.getArgNumber() - 1);
-      int min2 = minOverHistories(prevVal, yieldOp, thisHistorySum);
-      return std::min(std::min(min1, min2), minCommitNumber);
-    }
-    // Failed to track, return 0 conservatively.
-    return 0;
-  };
-
-  if (waitOp->getNumOperands() != 1)
-    return 0;
-  Value val = waitOp->getOperand(0);
-  // If the value resides in a region other than the region of the wait op, then
-  // the wait op must be in some nested region. Measure the number of commits
-  // between the definition value and the parent op.
-  // TODO: We could measure commits in nested regions along the path if
-  // necessary.
-  while (waitOp->getParentRegion() != val.getParentRegion())
-    waitOp = waitOp->getParentOp();
-  int minCommits = minOverHistories(val, waitOp, 0);
-  return minCommits;
-}
-
-// Look for consecutive wait ops and combine them into a single wait op.
-static void
-combineRedundantWaitOps(llvm::SmallSetVector<ttg::AsyncWaitOp, 8> &waitOps) {
-  llvm::MapVector<ttg::AsyncWaitOp, ttg::AsyncWaitOp> toDelete;
-  for (auto waitOp : waitOps) {
-    if (toDelete.count(waitOp))
-      continue;
-    SmallVector<ttg::AsyncWaitOp> waitGroup = {waitOp};
-    SmallVector<Value> depTokens;
-    unsigned minWaitNumber = waitOp.getNum();
-    Operation *next = waitOp->getNextNode();
-    while (next && !isa<ttg::AsyncCommitGroupOp>(next)) {
-      if (auto nextWait = dyn_cast<ttg::AsyncWaitOp>(next)) {
-        waitGroup.push_back(nextWait);
-        minWaitNumber = std::min(minWaitNumber, nextWait.getNum());
-        depTokens.append(nextWait.getOperands().begin(),
-                         nextWait.getOperands().end());
-      }
-      next = next->getNextNode();
-    }
-    if (waitGroup.size() == 1)
-      continue;
-    OpBuilder builder(waitGroup.front());
-    auto newWaitOp = builder.create<ttg::AsyncWaitOp>(waitOp.getLoc(),
-                                                      depTokens, minWaitNumber);
-    for (auto waitOp : waitGroup) {
-      toDelete[waitOp] = newWaitOp;
-    }
-  }
-  for (auto waitOp : toDelete) {
-    waitOp.first->replaceAllUsesWith(waitOp.second);
-    waitOp.first->erase();
-  }
-}
-
-/// Update wait op number by analyzing the number of async_commit_group ops
-/// along all paths.
-void mlir::triton::txlgpu::updateWaits(ModuleOp module) {
-  llvm::SmallSetVector<ttg::AsyncWaitOp, 8> waitOps;
-  module.walk([&](ttg::AsyncWaitOp waitOp) {
-    int minNumCommits = minNumInterleavedCommitOps(waitOp);
-    waitOp.setNum(minNumCommits);
-    waitOps.insert(waitOp);
-  });
-  combineRedundantWaitOps(waitOps);
-}
-
 // Add the given values as operands of the given wait, and replace all uses of
 // the values with the wait.  Also adds related MemDesc's to the wait.
 //
@@ -208,7 +91,7 @@ static void threadValuesThroughWait(ttng::WarpGroupDotWaitOp wait,
       return op->getBlock() == wait->getBlock();
     };
     SetVector<Operation *> slice;
-    getBackwardSlice(v, &slice, options);
+    (void)getBackwardSlice(v, &slice, options);
   }
 
   for (ttng::WarpGroupDotOp dot : asyncDots) {

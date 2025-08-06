@@ -1,18 +1,57 @@
+import functools
+import triton
+import os
+import pathlib
+
+from triton import knobs
 from triton._C.libproton import proton as libproton
+from triton.profiler.hook import register_triton_hook, unregister_triton_hook
 from .hook import register_txl_hook, unregister_txl_hook
 from triton.profiler.flags import set_profiling_off, set_profiling_on, is_command_line
-from triton.profiler.profile import _select_backend, _check_env, _get_backend_default_path, \
-        activate, deactivate
-from typing import Optional, Union
+from typing import Optional
 
-DEFAULT_PROFILE_NAME = "proton"
+DEFAULT_PROFILE_NAME = "txl"
+
+
+def _select_backend() -> str:
+    backend = triton.runtime.driver.active.get_current_target().backend
+    if backend == "cuda":
+        return "cupti"
+    elif backend == "hip":
+        return "roctracer"
+    else:
+        raise ValueError("No backend is available for the current target.")
+
+
+def _get_backend_default_path(backend: str) -> str:
+    lib_path = ""
+    if backend == "cupti":
+        # First try to get the path from the environment variable that overrides the default path
+        lib_path = knobs.proton.cupti_dir
+        if lib_path is None:
+            # Get the default path for the cupti backend,
+            # which is the most compatible with the current CUPTI header file triton is compiled with
+            lib_path = str(pathlib.Path(__file__).parent.parent.absolute() / "backends" / "nvidia" / "lib" / "cupti")
+    return lib_path
+
+
+def _check_env(backend: str) -> None:
+    if backend == "roctracer":
+        hip_device_envs = ["HIP_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES"]
+        for env in hip_device_envs:
+            if os.getenv(env, None) is not None:
+                raise ValueError(
+                    f"Proton does not work when the environment variable {env} is set on AMD GPUs. Please unset it and use `ROCR_VISIBLE_DEVICES` instead"
+                )
+
+
 def start(
     name: Optional[str] = None,
     *,
     context: Optional[str] = "shadow",
     data: Optional[str] = "tree",
     backend: Optional[str] = None,
-    hook: Optional[str] = "txl",
+    hook: Optional[str] = None,
 ):
     """
     Start profiling with the given name and backend.
@@ -58,9 +97,50 @@ def start(
     backend_path = _get_backend_default_path(backend)
 
     set_profiling_on()
+    if hook and hook == "triton":
+        register_triton_hook()
     if hook and hook == "txl":
         register_txl_hook()
     return libproton.start(name, context, data, backend, backend_path)
+
+
+def activate(session: Optional[int] = None) -> None:
+    """
+    Activate the specified session.
+    The profiling session will be active and data will be recorded.
+
+    Args:
+        session (int): The session ID of the profiling session. Defaults to None (all sessions)
+
+    Returns:
+        None
+    """
+    if is_command_line() and session != 0:
+        raise ValueError("Only one session can be activated when running from the command line.")
+    if session is None:
+        libproton.activate_all()
+    else:
+        libproton.activate(session)
+
+
+def deactivate(session: Optional[int] = None) -> None:
+    """
+    Stop the specified session.
+    The profiling session's data will still be in the memory, but no more data will be recorded.
+
+    Args:
+        session (int): The session ID of the profiling session. Defaults to None (all sessions)
+
+    Returns:
+        None
+    """
+    if is_command_line() and session != 0:
+        raise ValueError("Only one session can be deactivated when running from the command line.")
+    if session is None:
+        libproton.deactivate_all()
+    else:
+        libproton.deactivate(session)
+
 
 def finalize(session: Optional[int] = None, output_format: str = "hatchet") -> None:
     """
@@ -78,96 +158,74 @@ def finalize(session: Optional[int] = None, output_format: str = "hatchet") -> N
     if session is None:
         set_profiling_off()
         libproton.finalize_all(output_format)
+        unregister_triton_hook()
         unregister_txl_hook()
     else:
         if is_command_line() and session != 0:
             raise ValueError("Only one session can be finalized when running from the command line.")
         libproton.finalize(session, output_format)
 
-def show_profile(precision, profile_name):
-    import triton.profiler.viewer as proton_viewer
-    if not isinstance(precision, list) and not isinstance(precision, tuple):
-        precision = [precision]
-    metric_names = ["time/ms"]
-    if 'fp8' in precision:
-        metric_names = ["tflop8/s"] + metric_names
-    elif 'fp16' in precision:
-        metric_names = ["tflop16/s"] + metric_names
-    elif 'fp32' in precision:
-        metric_names = ["tflop32/s"] + metric_names
+
+def _profiling(
+    func,
+    name: Optional[str] = None,
+    context: Optional[str] = "shadow",
+    data: Optional[str] = "tree",
+    backend: Optional[str] = None,
+    hook: Optional[str] = None,
+):
+    """
+    Context manager for profiling. Internally use only.
+
+    Args:
+        See start() for the arguments.
+
+    Returns:
+        wrapper (function): The wrapped function.
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        session = start(name, context=context, data=data, backend=backend, hook=hook)
+        ret = func(*args, **kwargs)
+        deactivate(session)
+        return ret
+
+    return wrapper
+
+
+def profile(
+    func=None,
+    *,
+    name: Optional[str] = None,
+    context: Optional[str] = "shadow",
+    data: Optional[str] = "tree",
+    backend: Optional[str] = None,
+    hook: Optional[str] = None,
+):
+    """
+    Decorator for profiling.
+
+    Usage:
+
+    ```python
+    @proton.profile
+    def foo():
+        pass
+    ```
+
+    Args:
+        See start() for the arguments.
+
+    Returns:
+        decorator (function): The decorator function.
+    """
+    if func is None:
+        # It's being used with parentheses, so return a decorator
+        def decorator(f):
+            return _profiling(f, name=name, context=context, data=data, backend=backend, hook=hook)
+
+        return decorator
     else:
-        raise ValueError("the precision must be one of the following: fp8, fp16, fp32")
-    file_name = f"{profile_name}.hatchet"
-    tree, metrics = proton_viewer.parse(metric_names, file_name)
-    proton_viewer.print_tree(tree, metrics)
-
-class profile:
-    """
-    A context manager for entering and exiting a profile session.
-
-    Usage:
-        context manager:
-        ```python
-        with proton.profile("test0"):
-            foo[1,](x, y)
-        ```
-
-    Args:
-        name (str): The name of the profile.
-    """
-
-    def __init__(
-            self,
-            name: str,
-            precision: Optional[Union[str, list, tuple]] = 'fp16',
-            file_name: Optional[str] = None
-        ):
-        self.name = name
-        self.precision = precision
-        if file_name is None:
-            file_name = name
-        self.file_name = file_name
-        self.prof_id = None
-
-    def _enter_scope(self):
-        self.prof_id = start(self.name)
-
-    def _exit_scope(self):
-        finalize()
-        show_profile(self.precision, self.file_name)
-
-    def __enter__(self):
-        self._enter_scope()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self._exit_scope()
-
-class record:
-    """
-    A context manager for entering and exiting a recording of the profile session.
-
-    Usage:
-        context manager:
-        ```python
-        with proton.record(prof_id):
-            foo[1,](x, y)
-        ```
-
-    Args:
-        prof_id (int): The profile id
-    """
-
-    def __init__(
-            self,
-            prof_id: Optional[int] = 0,
-        ):
-        self.prof_id = prof_id
-
-    def __enter__(self):
-        activate(self.prof_id)
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        deactivate(self.prof_id)
-
+        # It's being used without parentheses, so apply the decorator directly
+        return _profiling(func, name=name, context=context, data=data, backend=backend, hook=hook)

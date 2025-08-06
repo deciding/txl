@@ -28,7 +28,6 @@
 #include <memory>
 
 namespace tt = mlir::triton;
-namespace ttng = mlir::triton::nvidia_gpu;
 namespace mlir::triton::txlgpu {
 
 #define GEN_PASS_DEF_TXLGPUNAMEDBARRIERLOWER
@@ -46,7 +45,7 @@ struct NamedBarrierArriveLower
   matchAndRewrite(tt::NamedBarrierArriveOp op,
                   PatternRewriter &rewriter) const override {
       rewriter.setInsertionPoint(op);
-      rewriter.replaceOpWithNewOp<ttng::NamedBarrierArriveOp>(op, op.getBar(), op.getNumThreads());
+      rewriter.replaceOpWithNewOp<NamedBarrierArriveOp>(op, op.getBar(), op.getNumThreads());
       return success();
   }
 };
@@ -58,7 +57,7 @@ struct NamedBarrierWaitLower
   matchAndRewrite(tt::NamedBarrierWaitOp op,
                   PatternRewriter &rewriter) const override {
       rewriter.setInsertionPoint(op);
-      rewriter.replaceOpWithNewOp<ttng::NamedBarrierWaitOp>(op, op.getBar(), op.getNumThreads());
+      rewriter.replaceOpWithNewOp<NamedBarrierWaitOp>(op, op.getBar(), op.getNumThreads());
       return success();
   }
 };

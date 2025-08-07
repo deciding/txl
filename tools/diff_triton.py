@@ -194,3 +194,5 @@ for idx, (triton_fn, txl_fn) in enumerate(files[init:]):
 # CHECK semantic and core, language/__init__.py
 
 # CHECK proton, autotune, code_generator
+
+# align compiler.compiler with nvidia backend

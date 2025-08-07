@@ -1,11 +1,6 @@
 from triton._C.libtriton import ir
 from triton.language import core as tl
-from triton.language.semantic import TritonSemantic
-from triton.language.semantic import (
-    validate_descriptor_block,
-    broadcast_impl_shape,
-    cast,
-)
+from triton.language.semantic import TritonSemantic, TensorTy
 from typing import Optional, Tuple
 
 class TXLSemantic(TritonSemantic):
@@ -146,7 +141,7 @@ class TXLSemantic(TritonSemantic):
 
     def get_buffer(self, src: tl.tensor, index: tl.tensor) -> TensorTy:
         # TODO: check
-        index = tl.tensor(_convert_elem_to_ir_value(_builder, index, False), type=tl.int32)
+        index = tl.tensor(self._convert_elem_to_ir_value(index, False), type=tl.int32)
         x = self.builder.create_get_buffer(src.handle, index.handle)
         return self.tensor(x, src.type)
 

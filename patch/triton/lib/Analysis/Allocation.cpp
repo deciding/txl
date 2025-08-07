@@ -631,7 +631,7 @@ private:
         }
       }
     }
-    dumpBuffers();
+    LLVM_DEBUG(dumpBuffers());
   }
 
   /// Computes the initial shared memory offsets.

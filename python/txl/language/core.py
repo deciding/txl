@@ -119,7 +119,7 @@ def mbar_wait(mbar: tl.tensor, phase, _semantic=None) -> tl.tensor:
     return _semantic.mbar_wait(mbar, phase)
 
 @builtin
-def mbar_arrive(mbar: tl.tensor, pred: tl.tensor=None, cnt: int,
+def mbar_arrive(mbar: tl.tensor, pred: tl.tensor=None, cnt: int=1,
          _semantic=None) -> tl.tensor:
     cnt = _unwrap_if_constexpr(cnt)
     # pred is Value not const expr

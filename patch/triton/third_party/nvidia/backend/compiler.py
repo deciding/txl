@@ -215,7 +215,11 @@ class CUDABackend(BaseBackend):
         pm.enable_debug()
         passes.common.add_inliner(pm)
         passes.ttir.add_rewrite_tensor_pointer(pm)
-        passes.ttir.add_ws_code_partition_txl(pm, metadata['num_warpgroups'])
+        if 'num_warpgroups' in metadata:
+            num_warpgroups = metadata['num_warpgroups']
+        else:
+            num_warpgroups = 1
+        passes.ttir.add_ws_code_partition_txl(pm, num_warpgroups)
         if capability // 10 < 9:
             passes.ttir.add_rewrite_tensor_descriptor_to_pointer(pm)
         passes.common.add_canonicalizer(pm)
@@ -228,7 +232,7 @@ class CUDABackend(BaseBackend):
         return mod
 
     @staticmethod
-    def make_ttgir(mod, metadata, opt, capability, use_txl):
+    def make_ttgir(mod, metadata, opt, capability, use_txl=False):
         # Set maxnreg on all kernels, if it was provided.
         if opt.maxnreg is not None:
             mod.set_attr("ttg.maxnreg", ir.builder(mod.context).get_int32_attr(opt.maxnreg))
@@ -458,7 +462,7 @@ class CUDABackend(BaseBackend):
                 os.remove(fbin)
         return cubin
 
-    def add_stages(self, stages, options, language, use_txl=True):
+    def add_stages(self, stages, options, language, use_txl=False):
         capability = self._parse_arch(options.arch)
         if language == Language.TRITON:
             stages["ttir"] = lambda src, metadata: self.make_ttir(src, metadata, options, capability)

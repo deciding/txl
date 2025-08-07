@@ -8,7 +8,7 @@ import json
 from functools import cached_property
 from typing import Dict, Tuple, List, Optional
 
-from triton.runtime. import knobs
+from triton import knobs
 from triton.runtime.jit import KernelInterface
 from triton.runtime.errors import OutOfResources, PTXASError
 from triton.runtime.driver import driver
@@ -99,7 +99,7 @@ class Autotuner(KernelInterface):
                            "https://github.com/triton-lang/triton/pull/4496 for details."), DeprecationWarning,
                           stacklevel=1)
             if use_cuda_graph:
-                from ..testing import do_bench_cudagraph
+                from triton.testing import do_bench_cudagraph
                 self._do_bench = lambda kernel_call, quantiles: do_bench_cudagraph(
                     kernel_call,
                     rep=rep if rep is not None else 100,

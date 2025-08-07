@@ -133,7 +133,11 @@ class IRSource:
 @functools.lru_cache()
 def triton_key():
     import pkgutil
-    TRITON_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # NOTE: txl
+    PYTHON_TXL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    TXL_PATH = os.path.dirname(os.path.dirname(PYTHON_TXL))
+    TRITON_PATH = os.path.join(TXL_PATH, 'thirdparty', 'triton', 'python', 'triton')
+
     contents = []
     # frontend
     with open(__file__, "rb") as f:
@@ -311,7 +315,7 @@ def load_ptx_func(func_name):
     func = getattr(compiler_module, func_name)
     return func
 
-def make_nv_dbg_ttir(mod, metadata, opt, log_dir=None):
+def make_nv_dbg_ttir(mod, metadata, opt, capability, log_dir=None):
     pm1 = ir.pass_manager(mod.context)
     pm2 = ir.pass_manager(mod.context)
 
@@ -327,6 +331,13 @@ def make_nv_dbg_ttir(mod, metadata, opt, log_dir=None):
         passes.common.add_inliner,
         passes.ttir.add_rewrite_tensor_pointer,
         add_ws_code_partition_txl,
+    ]
+    # 3.4.x
+    if capability // 10 < 9:
+        pass_funcs += [
+            passes.ttir.add_rewrite_tensor_descriptor_to_pointer,
+        ]
+    pass_funcs += [
         passes.common.add_canonicalizer,
         passes.ttir.add_combine,
         passes.ttir.add_reorder_broadcast,
@@ -358,6 +369,10 @@ def make_nv_dbg_ttir(mod, metadata, opt, log_dir=None):
     return mod
 
 def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True):
+    # Set maxnreg on all kernels, if it was provided.
+    if opt.maxnreg is not None:
+        mod.set_attr("ttg.maxnreg", ir.builder(mod.context).get_int32_attr(opt.maxnreg))
+
     cluster_info = nvidia.ClusterInfo()
     if opt.cluster_dims is not None:
         cluster_info.clusterDimX = opt.cluster_dims[0]
@@ -385,6 +400,12 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
 
     def add_optimize_dot_operands_txl(i):
         passes.ttgpuir.add_optimize_dot_operands_txl(i, capability >= 80)
+
+    def add_hopper_warpspec(i):
+        nvidia.passes.hopper.add_hopper_warpspec(i, opt.num_stages, dump_enabled)
+
+    def add_assign_latencies(i):
+        passes.ttgpuir.add_assign_latencies(i, opt.num_stages)
 
     def add_pipeline_txl(i):
         if use_txl:
@@ -436,55 +457,67 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
         passes.ttgpuir.add_remove_layout_conversions,
         #add_optimize_dot_operands,
         add_optimize_dot_operands_txl,
+        nvidia.passes.ttnvgpuir.add_optimize_descriptor_encoding, # 3.4.x
         passes.common.add_cse,
     ]
     if capability // 10 in [8, 9]:
         pass_funcs += [
             passes.ttgpuir.add_fuse_nested_loops,
             passes.common.add_canonicalizer,
-            #passes.ttir.add_triton_licm,
-            passes.common.add_licm, # 3.3.x
-            passes.ttgpuir.add_optimize_accumulator_init, # 3.3.x
+            #passes.common.add_licm, # 3.3.x
+            passes.ttir.add_triton_licm, # 3.4.x
+            #passes.ttgpuir.add_optimize_accumulator_init, # 3.3.x
             passes.common.add_canonicalizer,
             passes.ttgpuir.add_combine_tensor_select_and_if,
-            add_ws_task_partition,
-            add_taskid_propagate,
-            add_ws_data_partition,
-            add_ws_code_partition,
+            add_hopper_warpspec, # 3.4.x
+            # 3.3.x
+            #add_ws_task_partition,
+            #add_taskid_propagate,
+            #add_ws_data_partition,
+            #add_ws_code_partition,
+            add_assign_latencies, # 3.4.x
+            passes.ttgpuir.add_schedule_loops, # 3.4.x
             add_pipeline_txl,
-            add_ping_pong_sync,
-            add_ws_lowering,
+            #add_ping_pong_sync, # 3.3.x
+            #add_ws_lowering, # 3.3.x
         ]
     elif capability // 10 >= 10:
         pass_funcs += [
             passes.ttgpuir.add_fuse_nested_loops,
             passes.common.add_canonicalizer,
-            #passes.ttir.add_triton_licm,
-            passes.common.add_licm,
+            #passes.common.add_licm, # 3.3.x
+            passes.ttir.add_triton_licm, # 3.4.x
             passes.ttgpuir.add_optimize_accumulator_init,
-            #add_warp_specialize,
-            #passes.ttgpuir.add_hoist_tmem_alloc,
-            add_ws_task_partition,
-            add_taskid_propagate,
-            add_ws_data_partition,
-            add_ws_code_partition,
-            passes.ttgpuir.add_pipeline,
+            passes.ttgpuir.add_hoist_tmem_alloc, # 3.4.x
+            nvidia.passes.ttnvgpuir.add_promote_lhs_to_tmem, # 3.4.x
+            add_assign_latencies, # 3.4.x
+            passes.ttgpuir.add_schedule_loops, # 3.4.x
+            add_warp_specialize,
+            # 3.3.x
+            #add_ws_task_partition,
+            #add_taskid_propagate,
+            #add_ws_data_partition,
+            #add_ws_code_partition,
+            add_pipeline_txl, # TODO: for Blackwell
             passes.ttgpuir.add_combine_tensor_select_and_if,
-            nvidia.passes.ttnvgpuir.add_promote_lhs_to_tmem,
-            nvidia.passes.ttnvgpuir.add_keep_acc_in_tmem, # 3.3.x
-            add_ws_lowering,
-            passes.common.add_canonicalizer,
+            #nvidia.passes.ttnvgpuir.add_keep_acc_in_tmem, # 3.3.x
+            #add_ws_lowering, # 3.3.x
+            nvidia.passes.ttnvgpuir.add_remove_tmem_tokens, # 3.4.x
         ]
     else:
         pass_funcs +=[
-            #passes.ttir.add_triton_licm,
-            passes.common.add_licm,
+            #passes.common.add_licm, # 3.3.x
+            passes.ttir.add_triton_licm, # 3.4.x
         ]
     pass_funcs += [
+        passes.common.add_canonicalizer,
+        passes.ttir.add_loop_aware_cse, # 3.4.x
         passes.ttgpuir.add_prefetch,
         add_optimize_dot_operands,
         passes.ttgpuir.add_coalesce_async_copy,
+        nvidia.passes.ttnvgpuir.add_optimize_tmem_layouts, # 3.4.x
         passes.ttgpuir.add_remove_layout_conversions,
+        nvidia.passes.ttnvgpuir.add_interleave_tmem, # 3.4.x
         passes.ttgpuir.add_reduce_data_duplication,
         passes.ttgpuir.add_reorder_instructions,
         passes.common.add_cse,
@@ -492,16 +525,17 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
     ]
     if capability // 10 >= 9:
         pass_funcs += [
-            nvidia.passes.ttnvgpuir.add_fence_insertion,
             nvidia.passes.ttnvgpuir.add_tma_lowering,
+            nvidia.passes.ttnvgpuir.add_fence_insertion,
         ]
     pass_funcs += [
+        passes.common.add_sccp, # 3.4.x
         passes.common.add_canonicalizer,
     ]
-    if capability // 10 >= 9: # 3.3.x
-        pass_funcs += [
-            add_ws_canonicalization,
-        ]
+    #if capability // 10 >= 9: # 3.3.x
+    #    pass_funcs += [
+    #        add_ws_canonicalization,
+    #    ]
 
     for i, p in enumerate(pass_funcs):
         print(f"{i}. {p.__name__}")
@@ -524,6 +558,8 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
 
     #pm.run(mod)
     metadata["cluster_dims"] = (cluster_info.clusterDimX, cluster_info.clusterDimY, cluster_info.clusterDimZ)
+    #tensordesc_meta = mod.get_tensordesc_metadata()
+    #metadata["tensordesc_meta"] = tensordesc_meta
     return mod
 
 def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
@@ -557,11 +593,15 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
         passes.common.add_cse,
         passes.common.add_symbol_dce,
     ]
+    if not knobs.compilation.disable_line_info:
+        pass_funcs += [
+            passes.llvmir.add_di_scope,
+        ]
 
     def opt1(mod):
         llvm.init_targets()
         context = llvm.context()
-        if os.environ.get("TRITON_ENABLE_ASAN", "0") == "1":
+        if knobs.compilation.enable_asan:
             raise RuntimeError(
                 "Address Sanitizer Error: Address sanitizer is currently only supported on the AMD backend")
         llvm_mod = llvm.to_module(mod, context)
@@ -571,14 +611,9 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
         proc = load_ptx_func('sm_arch_from_capability')(capability)
         features = load_ptx_func('get_features')(options, backend.target.arch)
         triple = 'nvptx64-nvidia-cuda'
+        nvidia.set_short_ptr()
         llvm.attach_datalayout(llvm_mod, triple, proc, features)
         nvidia.set_nvvm_reflect_ftz(llvm_mod)
-
-        # Set maxnreg on all kernels, if it was provided.
-        if options.maxnreg is not None:
-            for k in llvm_mod.get_functions():
-                if not k.is_declaration() and k.is_external_linkage():
-                    k.set_nvvm_maxnreg(options.maxnreg)
 
         if options.extern_libs:
             paths = [path for (name, path) in options.extern_libs]
@@ -619,14 +654,23 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
     else:
         ret = mod.str()
     diff_strings_colored(before, ret, log_dir=log_dir);
+    # Get some metadata
+    # warp-specialization mutates num_warps
+    total_num_warps = src.get_int_attr("ttg.total-num-warps")
+    if total_num_warps is not None:
+        metadata["num_warps"] = total_num_warps
+    metadata["shared"] = src.get_int_attr("ttg.shared")
+    metadata["tmem_size"] = src.get_int_attr("ttg.tensor_memory_size")
+    metadata["global_scratch_size"] = src.get_int_attr("ttg.global_scratch_memory_size")
+    metadata["global_scratch_align"] = src.get_int_attr("ttg.global_scratch_memory_alignment")
     return ret
 
 def add_dbg_stages(backend, stages, options, diff_mode='ttgir', log_dir=None, use_txl=True):
     capability = backend._parse_arch(options.arch)
     if diff_mode == 'ttir':
-        stages["ttir"] = lambda src, metadata: make_nv_dbg_ttir(src, metadata, options, log_dir=log_dir)
+        stages["ttir"] = lambda src, metadata: make_nv_dbg_ttir(src, metadata, options, capability, log_dir=log_dir)
     elif diff_mode == 'ttgir':
-        stages["ttir"] = lambda src, metadata: backend.make_ttir(src, metadata, options)
+        stages["ttir"] = lambda src, metadata: backend.make_ttir(src, metadata, options, capability)
         stages["ttgir"] = lambda src, metadata: make_nv_dbg_ttgir(src, metadata, options, capability, log_dir=log_dir, use_txl=use_txl)
     else:
         stages["ttir"] = lambda src, metadata: backend.make_ttir(src, metadata, options)
@@ -777,6 +821,9 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_tx
         module = next_module
         if compilation_listener:
             timer.stage_finished(ext)
+    # NOTE: txl
+    if diff_mode:
+        return None
     # write-back metadata
     metadata_group[metadata_filename] = fn_cache_manager.put(json.dumps(metadata, default=vars), metadata_filename,
                                                              binary=False)
@@ -792,9 +839,6 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_tx
     # multithreading in the MLIR context
     if not knobs.compilation.enable_asan:
         context.disable_multithreading()
-    # NOTE: txl
-    if diff_mode:
-        return None
     if fn_dump_manager is not None:
         fn_dump_manager.put(json.dumps(metadata, default=vars), metadata_filename)
         signature_filename = f"{file_name}_signature.json"

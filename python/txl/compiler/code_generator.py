@@ -289,9 +289,10 @@ class CodeGenerator(ast.NodeVisitor):
             self.builder = gluon_ir.GluonOpBuilder(context)
             self.semantic = GluonSemantic(self.builder)
         else:
-            from triton.language.semantic import TritonSemantic
+            # NOTE: txl
+            from txl.language.semantic import TXLSemantic
             self.builder = ir.builder(context)
-            self.semantic = TritonSemantic(self.builder)
+            self.semantic = TXLSemantic(self.builder)
         self.file_name = file_name
         # node.lineno starts from 1, so we need to subtract 1
         self.begin_line = begin_line - 1
@@ -1473,7 +1474,7 @@ class CodeGenerator(ast.NodeVisitor):
 
         return ret
 
-    from ..experimental.gluon import language as ttgl
+    from triton.experimental.gluon import language as ttgl
     statically_implemented_functions: Dict[object, Callable[[ast.Call], Any]] = {
         language.core.static_assert: execute_static_assert,
         language.core.static_print: static_executor(print),

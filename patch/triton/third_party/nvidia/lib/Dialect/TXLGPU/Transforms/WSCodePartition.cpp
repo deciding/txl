@@ -598,6 +598,12 @@ public:
         assert(isWarpgroupOp->use_empty() && "is_warpgroup not lowered!\n");
         isWarpgroupOp->erase();
     });
+    OpBuilder builder(m);
+    m->setAttr("ttg.total-num-warps", builder.getI32IntegerAttr(numWarpgroups*4));
+    if (numWarpgroups == 1)
+        m->setAttr("ttg.txl-warpgroups-set", builder.getI32IntegerAttr(0));
+    else
+        m->setAttr("ttg.txl-warpgroups-set", builder.getI32IntegerAttr(1));
 
     //lowerGetAsyncTaskIdOp(m, numWarpgroups-1); // assume only 1 producer
 

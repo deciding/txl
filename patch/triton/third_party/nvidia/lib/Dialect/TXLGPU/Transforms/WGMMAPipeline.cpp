@@ -247,6 +247,7 @@ static SmallVector<std::pair<Value, int>> lowerDotWait(scf::ForOp forOp) {
   for (auto it = forBlock->rbegin(), end = forBlock->rend(); it!=end; it++) {
       queue.push_back(&*it);
   }
+  // the args still pending at the end of loop
   SmallVector<std::pair<Value, int>> asyncDotResults = pendingArgBuffer;
 
   // Stage 2

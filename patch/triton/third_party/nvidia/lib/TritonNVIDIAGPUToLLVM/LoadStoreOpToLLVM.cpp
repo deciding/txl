@@ -1495,6 +1495,7 @@ LogicalResult convertTMAStoreLikeOp(Operation *op,
     if (numWarpsToCopy == 1)
       warpID = b.i32_val(warpOffset);
     warpID = b.sub(warpID, b.i32_val(warpOffset));
+    id = b.sub(id, b.i32_val(warpOffset * warpSize));
     Value boxPred =
         b.and_(pred, b.icmp_ult(id, b.i32_val(numWarpsToCopy * warpSize)));
     ::mlir::triton::PTXBuilder ptxBuilderTMA;

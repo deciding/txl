@@ -9,6 +9,7 @@ add_triton_library(TritonAnalysis
   DEPENDS
   TritonTableGen
   TritonGPUTableGen
+  TXLGPUTableGen
   TritonGPUAttrDefsIncGen
   TritonGPUTypeInterfacesIncGen
 
@@ -17,5 +18,6 @@ add_triton_library(TritonAnalysis
   MLIRLLVMDialect
   TritonIR
   TritonGPUIR
+  TXLGPUIR
   TritonNvidiaGPUIR
 )

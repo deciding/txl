@@ -4,6 +4,7 @@
 include "txl/Dialect/TXL/IR/TXLDialect.td"
 include "triton/Dialect/Triton/IR/TritonDialect.td"
 include "triton/Dialect/Triton/IR/TritonTypes.td"
+include "triton/Dialect/TritonGPU/IR/TritonGPUTypeInterfaces.td"
 include "txl/Dialect/TXL/IR/TXLAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
@@ -106,21 +107,33 @@ def TXL_MbarWaitOp : TXL_Op<"mbar_wait", [MemoryEffects<[MemRead<SmemMemory>, Me
   let assemblyFormat = "$mbar `,` $phase attr-dict `:` type($mbar) `,` type($phase)";
 }
 
-def TXL_MbarArriveOp : TXL_Op<"mbar_arrive", [MemoryEffects<[MemWrite<SmemMemory>]>]> {
-  let summary = "mbarrier.arrive";
+def TXL_MbarArriveOp : TXL_Op<"mbar_arrive", [AttrSizedOperandSegments,
+                                                      MemoryEffects<[MemWrite<SmemMemory>]>]> {
+  let summary = "mbarrier arrive";
 
   let description = [{
     This operation defining the arriving action for a mbarrier.
-    count:
-        arrive count
+    txCount:
+        An optional attribute that set tx-count. This Op will be lowered into
+        mbarrier.arrive.expect_tx if the optional attribute exist.
+    trackAsyncOp:
+        If true, this op will be lowered into cp.async.mbarrier.arrive.noinc.
     pred:
         Only perform arrive action when pred is true.
+    remoteCtaId:
+        if set, perform an remote arrive action.
+
+    Example:
+
+    mbar_arrive %0 {trackAsyncOp = false} : !tt.ptr<i64>
 
   }];
 
-  let arguments = (ins TT_Tensor:$mbar,
-                    I32Attr:$count,
-                    Optional<I1>:$pred
+  let arguments = (ins TTG_TensorOrMemDesc:$mbarrier,
+                       Optional<I1>:$pred,
+                       Optional<I32>:$remoteCtaId,
+                       I1Attr: $trackAsyncOp,
+                       DefaultValuedAttr<I32Attr, "0">: $txCount
                   );
 
   let assemblyFormat = "operands attr-dict `:` type(operands)";
@@ -172,17 +185,17 @@ def TXL_TmaLoadOp : TXL_Op<"tma_load", [MemoryEffects<[MemWrite<SmemMemory>]>]> 
 def TXL_NamedBarrierArriveOp : TXL_Op<"barrier_arrive", [MemoryEffects<[MemWrite]>]> {
   let summary = "named barrier arrive";
 
-  let arguments = (ins I32:$bar, I32: $numThreads);
+  let arguments = (ins I32Attr:$bar, I32Attr: $numThreads);
 
-  let assemblyFormat = "$bar `,` $numThreads attr-dict `:` type(operands)";
+  let assemblyFormat = "attr-dict";
 }
 
 def TXL_NamedBarrierWaitOp : TXL_Op<"barrier_wait", [MemoryEffects<[MemWrite]>]> {
   let summary = "named barrier wait";
 
-  let arguments = (ins I32:$bar, I32: $numThreads);
+  let arguments = (ins I32Attr:$bar, I32Attr: $numThreads);
 
-  let assemblyFormat = "$bar `,` $numThreads attr-dict `:` type(operands)";
+  let assemblyFormat = "attr-dict";
 }
 
 def TXL_IsWarpgroupOp : TXL_Op<"is_warpgroup", []> {

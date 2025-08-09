@@ -1572,6 +1572,7 @@ bool comesFromLoadOrBlockArg(Value v) {
       v = cvtOp.getSrc();
       continue;
     }
+    // NOTE: txl
     if (auto getBufferOp = v.getDefiningOp<GetBufferOp>()) {
       v = getBufferOp.getSrc();
       continue;
@@ -1588,6 +1589,7 @@ bool comesFromLoadOrBlockArg(Value v) {
   }
   // We also accept block arguments as they appear in many MLIR tests
   // If this is problematic we can totally drop them
+  // NOTE: txl
   return isa<BlockArgument>(v) ||
          (v.getDefiningOp() &&
           isa<SmemAllocOp, LoadOp, DescriptorLoadOp, DescriptorGatherOp>(v.getDefiningOp()));

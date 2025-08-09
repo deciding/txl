@@ -28,13 +28,45 @@
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
 #include "triton/Analysis/TXLUtility.h"
+#include "txl/Dialect/TXL/IR/Dialect.h"
+#include "nvidia/include/Dialect/TXLGPU/IR/Dialect.h"
 
 #include "Utility.h"
 
 using namespace mlir;
 using namespace mlir::triton;
+namespace tt = mlir::triton;
+namespace ttx = mlir::triton::txlgpu;
 
 namespace {
+
+struct BarrierOpConversion
+    : public ConvertOpToLLVMPattern<mlir::gpu::BarrierOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(mlir::gpu::BarrierOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op->getLoc();
+    if (op->hasAttr("bar_id")) {
+      // llvm.nvvm.barrier0 doesn't support bar_id and num_threads attributes,
+      // so we have to lower it to ptx manually.
+      auto barId = op->getAttrOfType<IntegerAttr>("bar_id").getInt();
+      auto numThreads = op->getAttrOfType<IntegerAttr>("num_threads").getInt();
+      ::mlir::triton::PTXBuilder ptxBuilder;
+      auto &barSyncOp = *ptxBuilder.create<>("bar.sync");
+      barSyncOp(ptxBuilder.newConstantOperand(barId),
+                ptxBuilder.newConstantOperand(numThreads));
+      auto voidTy = void_ty(op->getContext());
+      ptxBuilder.launch(rewriter, op->getLoc(), voidTy);
+      rewriter.eraseOp(op);
+      return success();
+    }
+    // Otherwise we let the default lowering handle it
+    return failure();
+  }
+};
+
 struct FenceAsyncSharedOpConversion
     : public ConvertOpToLLVMPattern<triton::nvidia_gpu::FenceAsyncSharedOp> {
   using ConvertOpToLLVMPattern<
@@ -223,16 +255,8 @@ struct ArriveBarrierOpConversion
                          std::to_string(op.getCount()) + ";";
 
     TritonLLVMOpBuilder b(op.getLoc(), rewriter);
-    int wgId = getOpAttrWgId(op);
-    int executingThreadId = 0;
-    if (wgId != -1) {
-      auto mod = op->getParentOfType<ModuleOp>();
-      int numWarps = triton::gpu::lookupNumWarps(op);
-      int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
-      executingThreadId = wgId * numWarps * warpSize;
-    }
     Value id = getThreadId(rewriter, op.getLoc());
-    Value pred = b.icmp_eq(id, b.i32_val(executingThreadId));
+    Value pred = b.icmp_eq(id, b.i32_val(0));
     if (op.getPred())
       pred = b.and_(pred, adaptor.getPred());
 
@@ -250,11 +274,114 @@ struct ArriveBarrierOpConversion
     return success();
   }
 };
+
+struct MbarArriveOpConversion
+    : public ConvertOpToLLVMPattern<triton::MbarArriveOp> {
+  using ConvertOpToLLVMPattern<
+      triton::MbarArriveOp>::ConvertOpToLLVMPattern;
+
+  std::string getPtxAsm(tt::MbarArriveOp op, ttx::MBarriveType arriveType) const {
+    Value ctaId = op.getRemoteCtaId();
+    uint32_t txCount = op.getTxCount();
+    std::string ptxAsm;
+    switch (arriveType) {
+    case ttx::MBarriveType::normal:
+      ptxAsm = "@$1 mbarrier.arrive.shared.b64 _, [$0];";
+      break;
+    case ttx::MBarriveType::cp_async:
+      ptxAsm = "@$1 cp.async.mbarrier.arrive.noinc.shared.b64 [$0];";
+      break;
+    case ttx::MBarriveType::expect_tx:
+      assert(txCount > 0 && "txCount should be valid");
+      ptxAsm = "@$1 mbarrier.arrive.expect_tx.shared.b64 _, [$0], " +
+               std::to_string(txCount) + ";";
+      break;
+    case ttx::MBarriveType::remote:
+      assert(ctaId && "ctaId should have a valid value");
+      ptxAsm =
+          " { .reg .b32 remAddr32;                                       \n"
+          "  @$2 mapa.shared::cluster.u32  remAddr32, $0, $1;            \n"
+          "  @$2 mbarrier.arrive.shared::cluster.b64  _, [remAddr32]; }  \n";
+      break;
+    default:
+      llvm::errs() << "Unsupported mbarrier arrive type " << arriveType << "\n";
+      llvm_unreachable("");
+      break;
+    }
+    return ptxAsm;
+  }
+
+  LogicalResult
+  matchAndRewrite(triton::MbarArriveOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op->getLoc();
+    auto b = TritonLLVMOpBuilder(loc, rewriter);
+    auto mbarrier = LLVM::getSharedMemoryObjectFromStruct(
+        op.getLoc(), adaptor.getOperands()[0],
+        typeConverter->convertType(
+            cast<mlir::triton::gpu::MemDescType>(op.getOperand(0).getType()).getElementType()
+        ),
+        rewriter);
+
+    ::mlir::triton::PTXBuilder ptxBuilder;
+
+    SmallVector<::mlir::triton::PTXBuilder::Operand*> operands;
+
+    bool trackAsyncOp = op.getTrackAsyncOp();
+    triton::txlgpu::MBarriveType type = triton::txlgpu::MBarriveType::normal;
+    uint32_t txCount = op.getTxCount();
+    auto remoteCtaId = adaptor.getRemoteCtaId();
+    Value pred = adaptor.getPred();
+    if (pred == nullptr) {
+      pred = b.int_val(/*width*/ 1, 1);
+    }
+
+    if (trackAsyncOp) {
+      type = triton::txlgpu::MBarriveType::cp_async;
+    } else if (remoteCtaId) {
+      assert(txCount == 0 &&
+             "remote arrive of transaction mbarrier is not implemented yet");
+      type = triton::txlgpu::MBarriveType::remote;
+    } else if (txCount > 0) {
+      type = triton::txlgpu::MBarriveType::expect_tx;
+    }
+    const std::string ptx = getPtxAsm(op, type);
+    auto &mbarArriveOp = *ptxBuilder.create<>(ptx);
+
+    switch (type) {
+    case ttx::MBarriveType::normal:
+    case ttx::MBarriveType::cp_async:
+    case ttx::MBarriveType::expect_tx:
+      operands.push_back(ptxBuilder.newOperand(mbarrier.getBase(), "r"));
+      operands.push_back(ptxBuilder.newOperand(pred, "b"));
+      break;
+    case ttx::MBarriveType::remote:
+      operands.push_back(ptxBuilder.newOperand(mbarrier.getBase(), "r"));
+      operands.push_back(ptxBuilder.newOperand(remoteCtaId, "r"));
+      operands.push_back(ptxBuilder.newOperand(pred, "b"));
+      break;
+    default:
+      llvm::errs() << "Unsupported mbarrier arrive type " << type << "\n";
+      llvm_unreachable("");
+      break;
+    }
+
+    mbarArriveOp(operands, /*onlyAttachMLIRArgs=*/true);
+    auto voidTy = void_ty(op->getContext());
+    ptxBuilder.launch(rewriter, loc, voidTy);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
 } // namespace
 
 void mlir::triton::NVIDIA::populateBarrierOpToLLVMPatterns(
     LLVMTypeConverter &typeConverter, RewritePatternSet &patterns,
     PatternBenefit benefit) {
+  // NOTE: txl
+  patterns.add<BarrierOpConversion>(typeConverter, benefit);
+  patterns.add<MbarArriveOpConversion>(typeConverter, benefit);
+
   patterns.add<FenceAsyncSharedOpConversion>(typeConverter, benefit);
   patterns.add<InitBarrierOpConversion, InvalBarrierOpConversion>(typeConverter,
                                                                   benefit);

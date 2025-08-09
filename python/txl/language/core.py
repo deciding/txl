@@ -71,10 +71,12 @@ def is_warpgroup(ids, _semantic=None):
 
 @builtin
 def reg_alloc(count, _semantic=None):
+    count = _unwrap_if_constexpr(count)
     return _semantic.reg_alloc(count)
 
 @builtin
 def reg_dealloc(count, _semantic=None):
+    count = _unwrap_if_constexpr(count)
     return _semantic.reg_dealloc(count)
 
 @builtin
@@ -119,13 +121,15 @@ def mbar_wait(mbar: tl.tensor, phase, _semantic=None) -> tl.tensor:
     return _semantic.mbar_wait(mbar, phase)
 
 @builtin
-def mbar_arrive(mbar: tl.tensor, pred: tl.tensor=None, cnt: int=1,
-         _semantic=None) -> tl.tensor:
-    cnt = _unwrap_if_constexpr(cnt)
+def mbar_arrive(mbar: tl.tensor, pred: tl.tensor=None,
+                track_async_op:bool=False, tx_cnt:int =0,
+                _semantic=None) -> tl.tensor:
+    track_async_op = _unwrap_if_constexpr(track_async_op)
+    tx_cnt = _unwrap_if_constexpr(tx_cnt)
     # pred is Value not const expr
     if pred is None:
         pred = tl.full((), True, dtype=tl.int1, _semantic=_semantic)
-    return _semantic.mbar_arrive(mbar, cnt, pred)
+    return _semantic.mbar_arrive(mbar, pred, track_async_op, tx_cnt)
 
 @builtin
 def dot_wait(pendings: int, _semantic=None) -> tl.tensor:
@@ -133,13 +137,15 @@ def dot_wait(pendings: int, _semantic=None) -> tl.tensor:
     return _semantic.dot_wait(pendings)
 
 @builtin
-def bar_arrive(bar: tl.tensor, num_threads: tl.tensor, _semantic=None) -> tl.tensor:
-    # TODO num_threads to be int
+def bar_arrive(bar: int, num_threads: int, _semantic=None) -> tl.tensor:
+    bar = _unwrap_if_constexpr(bar)
+    num_threads = _unwrap_if_constexpr(num_threads)
     return _semantic.bar_arrive(bar, num_threads)
 
 @builtin
-def bar_wait(bar: tl.tensor, num_threads: tl.tensor, _semantic=None) -> tl.tensor:
-    # TODO num_threads to be int
+def bar_wait(bar: int, num_threads: int, _semantic=None) -> tl.tensor:
+    bar = _unwrap_if_constexpr(bar)
+    num_threads = _unwrap_if_constexpr(num_threads)
     return _semantic.bar_wait(bar, num_threads)
 
 @builtin

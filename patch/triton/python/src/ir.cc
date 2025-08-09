@@ -1808,8 +1808,8 @@ void init_triton_ir(py::module &&m) {
            })
       .def("create_mbar_arrive",
            [](TritonOpBuilder &self,
-               Value mbar, int cnt, Value pred) -> void {
-               self.create<mlir::triton::MbarArriveOp>(mbar, cnt, pred);
+               Value mbar, Value pred, bool trackAsyncOp, int txCnt) -> void {
+               self.create<mlir::triton::MbarArriveOp>(mbar, pred, nullptr, trackAsyncOp, txCnt);
            })
       .def("create_async_load",
            [](TritonOpBuilder &self, Value mem, Value &ptrs, CacheModifierX cacheModifier,
@@ -1886,11 +1886,11 @@ void init_triton_ir(py::module &&m) {
                self.create<mlir::triton::WGDotWaitOp>(pendings);
            })
       .def("create_bar_arrive",
-           [](TritonOpBuilder &self, Value bar, Value numThreads) -> void {
+           [](TritonOpBuilder &self, int bar, int numThreads) -> void {
                self.create<mlir::triton::NamedBarrierArriveOp>(bar, numThreads);
            })
       .def("create_bar_wait",
-           [](TritonOpBuilder &self, Value bar, Value numThreads) -> void {
+           [](TritonOpBuilder &self, int bar, int numThreads) -> void {
                self.create<mlir::triton::NamedBarrierWaitOp>(bar, numThreads);
            })
       // dim

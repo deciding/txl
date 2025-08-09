@@ -19,6 +19,7 @@ cp ${FROM_DIR}/lib/Analysis/CMakeLists.txt ${TO_DIR}/lib/Analysis/
 cp ${FROM_DIR}/lib/Analysis/Membar.cpp ${TO_DIR}/lib/Analysis/
 cp ${FROM_DIR}/lib/Analysis/TXLUtility.cpp ${TO_DIR}/lib/Analysis/
 
+cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/AllocateWarpGroups.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/lib/Conversion/TritonToTritonGPU/TritonGPUConversion.cpp ${TO_DIR}/lib/Conversion/TritonToTritonGPU/
 cp ${FROM_DIR}/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp ${TO_DIR}/lib/Conversion/TritonToTritonGPU/
 

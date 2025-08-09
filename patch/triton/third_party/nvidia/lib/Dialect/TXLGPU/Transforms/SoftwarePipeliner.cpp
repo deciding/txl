@@ -300,11 +300,13 @@ void lowerMbarOps(Value& mbar, bool usedByTmaLoadOp) {
         else if (isa<tt::MbarArriveOp>(user)){
             auto mbarArriveOp = dyn_cast<tt::MbarArriveOp>(user);
             builder.setInsertionPoint(user);
-            builder.create<ttng::ArriveBarrierOp>(
+            builder.create<tt::MbarArriveOp>(
                     user->getLoc(),
                     mbar,
-                    mbarArriveOp.getCount(),
-                    mbarArriveOp.getPred()
+                    mbarArriveOp.getPred(),
+                    /*remoteCTAId*/ nullptr,
+                    mbarArriveOp.getTrackAsyncOp(), // TODO: auto by tmaload/asyncload
+                    mbarArriveOp.getTxCount()
                     );
             mbarArriveOp->erase();
         }
@@ -677,10 +679,6 @@ public:
     MLIRContext *context = &getContext();
     ModuleOp m = getOperation();
     OpBuilder builder(context);
-
-    int numWarps = cast<IntegerAttr>(m->getAttr("ttg.num-warps")).getInt();
-    int totalNumWarps = numWarps * numWarpgroups;
-    m->setAttr("ttg.total-num-warps", builder.getI32IntegerAttr(totalNumWarps));
 
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner Before All\n");

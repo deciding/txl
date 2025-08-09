@@ -131,12 +131,12 @@ class TXLSemantic(TritonSemantic):
         x = self.builder.create_dot_wait(pendings)
         return self.tensor(x, tl.void)
 
-    def bar_arrive(self, bar: tl.tensor, num_threads: tl.tensor) -> TensorTy:
-        x = self.builder.create_bar_arrive(bar.handle, num_threads.handle)
+    def bar_arrive(self, bar: int, num_threads: int) -> TensorTy:
+        x = self.builder.create_bar_arrive(bar, num_threads)
         return self.tensor(x, tl.void)
 
-    def bar_wait(self, bar: tl.tensor, num_threads: tl.tensor) -> TensorTy:
-        x = self.builder.create_bar_wait(bar.handle, num_threads.handle)
+    def bar_wait(self, bar: int, num_threads: int) -> TensorTy:
+        x = self.builder.create_bar_wait(bar, num_threads)
         return self.tensor(x, tl.void)
 
     def get_buffer(self, src: tl.tensor, index: tl.tensor) -> TensorTy:
@@ -156,8 +156,8 @@ class TXLSemantic(TritonSemantic):
         x = self.builder.create_mbar_wait(mbar.handle, phase.handle)
         return self.tensor(x, tl.void)
 
-    def mbar_arrive(self, mbar: tl.tensor, cnt: int, pred:tl.tensor) -> TensorTy:
-        x = self.builder.create_mbar_arrive(mbar.handle, cnt, pred.handle)
+    def mbar_arrive(self, mbar: tl.tensor, pred:tl.tensor, track_async_op:bool, tx_cnt:int) -> TensorTy:
+        x = self.builder.create_mbar_arrive(mbar.handle, pred.handle, track_async_op, tx_cnt)
         return self.tensor(x, tl.void)
 
     def _async_load_block_pointer(self, mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile):

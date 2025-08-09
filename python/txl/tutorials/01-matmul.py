@@ -79,10 +79,10 @@ def matmul_get_configs(pre_hook=None):
     return [
         triton.Config({'BLOCK_SIZE_M': BM, 'BLOCK_SIZE_N': BN, "BLOCK_SIZE_K" : BK, "GROUP_SIZE_M" : 8}, num_stages=s, num_warps=w, pre_hook=pre_hook) \
         for BM in [128] \
-        for BN in [128, 256] \
-        for BK in [64,128] \
-        for s in ([3,4]) \
-        for w in [4,8] \
+        for BN in [256] \
+        for BK in [64] \
+        for s in ([3]) \
+        for w in [4] \
     ]
 
 
@@ -169,10 +169,9 @@ def matmul(a, b):
 
 def matmul_tma_set_block_size_hook(nargs):
     EPILOGUE_SUBTILE = nargs.get("EPILOGUE_SUBTILE", False)
-    NUM_CONSUMER_GROUPS = nargs.get("NUM_CONSUMER_GROUPS", False)
+    NUM_CONSUMER_GROUPS = nargs.get("NUM_CONSUMER_GROUPS", 1)
     BLOCK_M = nargs["BLOCK_SIZE_M"]
-    if NUM_CONSUMER_GROUPS:
-        BLOCK_M //= NUM_CONSUMER_GROUPS
+    BLOCK_M //= NUM_CONSUMER_GROUPS
     BLOCK_N = nargs["BLOCK_SIZE_N"]
     BLOCK_K = nargs["BLOCK_SIZE_K"]
     nargs["a_desc"].block_shape = [BLOCK_M, BLOCK_K]
@@ -897,6 +896,7 @@ def matmul_tma_persistent_txl(a, b):
 # Test 2: WS + TMA
 ##########################################
 
+filename = 'dump/3H2OJ5D5CYZY5Q4QRKILSI7DZ5IUKDPDDLUQYE6POPBUMHJUGKNA/matmul_persistent_ws_tma_txl_kernel.ptx'
 @txl.autotune(
     configs=[
         txl.Config(
@@ -918,6 +918,7 @@ def matmul_tma_persistent_txl(a, b):
     use_cuda_graph=True,
 )
 #@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+#@txl.jit(launch_metadata=_matmul_launch_metadata, src_file=filename)
 @txl.jit(launch_metadata=_matmul_launch_metadata)
 def matmul_persistent_ws_tma_txl_kernel(
     a_desc,
@@ -1026,14 +1027,13 @@ def matmul_persistent_ws_tma_txl_kernel(
 
                 txl.mbar_wait(mbar_p_b0, phase)
 
-
                 if txl.is_warpgroup([1]):
                     mbar_p_a0 = txl.get_buffer(mbar_producer_a0, bufIdx)
                     mbar_c1 = txl.get_buffer(mbar_consumer1, bufIdx)
                     a0_buf = txl.get_buffer(a0, bufIdx)
                     txl.mbar_wait(mbar_p_a0, phase)
                     accumulator = tl.dot(a0_buf, b0_buf.T, accumulator) # accumulator is reg, no contention among buffers
-                    txl.dot_wait(1)
+                    txl.dot_wait(0)
                     txl.mbar_arrive(mbar_c1)
                 if txl.is_warpgroup([2]): # TODO: else test
                     mbar_p_a1 = txl.get_buffer(mbar_producer_a1, bufIdx)
@@ -1041,7 +1041,7 @@ def matmul_persistent_ws_tma_txl_kernel(
                     a1_buf = txl.get_buffer(a1, bufIdx)
                     txl.mbar_wait(mbar_p_a1, phase)
                     accumulator = tl.dot(a1_buf, b0_buf.T, accumulator)
-                    txl.dot_wait(1)
+                    txl.dot_wait(0)
                     txl.mbar_arrive(mbar_c2)
 
                 offs_k += BLOCK_SIZE_K
@@ -1156,8 +1156,9 @@ def bench(K, dtype, reps=100, warmup_reps=100):
     #    bench_fn("torch", reps, warmup_reps, torch_matmul, a, b)
     #bench_fn("naive", reps, warmup_reps, matmul, a, b.T)
     #bench_fn("persistent", reps, warmup_reps, matmul_persistent, a, b.T)
-    bench_fn("naive_tma_txl", reps, warmup_reps, matmul_naive_tma_txl, a, b)
-    bench_fn("tma_persistent_txl", reps, warmup_reps, matmul_tma_persistent_txl, a, b)
+
+    #bench_fn("naive_tma_txl", reps, warmup_reps, matmul_naive_tma_txl, a, b)
+    #bench_fn("tma_persistent_txl", reps, warmup_reps, matmul_tma_persistent_txl, a, b)
     bench_fn("tma_ws_persistent_txl", reps, warmup_reps, matmul_tma_ws_persistent_txl, a, b)
     return
     warp_specialize = [False, True] if HAS_WARP_SPECIALIZE else [False]
@@ -1180,6 +1181,7 @@ def run_test(expect, fn, a, b, label, enabled=True, log=False):
             print()
             print(expect)
             print(actual)
+            print((expect-actual).mean(dim=0))
         passed = torch.allclose(expect, actual.to(expect.dtype), atol=1.0)
         icon = "✅" if passed else "❌"
     else:
@@ -1198,9 +1200,12 @@ def validate(M, N, K, dtype, log=False):
     #run_test(naive_result, torch_matmul, a, b, "Torch", enabled=dtype == torch.float16)
     #run_test(naive_result, cublas_matmul, a, b, "cuBLAS", enabled=cublas is not None)
     #run_test(naive_result, matmul_persistent, a, b.T, "Persistent")
-    run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
-    run_test(naive_result, lambda a, b: matmul_tma_persistent_txl(a, b), a, b, "TXL TMA Persistent", log=log)
+    #run_test(naive_result, lambda a, b: matmul_descriptor_persistent(a, b, True), a, b, "TMA WS Persistent", log=log)
+
+    #run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
+    #run_test(naive_result, lambda a, b: matmul_tma_persistent_txl(a, b), a, b, "TXL TMA Persistent", log=log)
     run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=log)
+
     return
 
     kernels = [
@@ -1251,6 +1256,7 @@ if __name__ == "__main__":
         torch.manual_seed(0)
 
         #validate(32, 32, 32, dtype)
+        #validate(128, 128, 512, dtype, log=True)
         validate(8192, 8192, args.K_range[0], dtype)
 
         proton.start("matmul", hook="triton")

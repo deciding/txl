@@ -18,6 +18,7 @@ using namespace mlir::triton;
 #define GEN_PASS_CLASSES
 #include "TXLGPUToLLVM/Passes.h.inc"
 
+namespace tt = mlir::triton;
 namespace ttn = mlir::triton::nvgpu;
 namespace ttx = mlir::triton::txlgpu;
 using ttn::Constraints;
@@ -46,8 +47,8 @@ const std::string Canonical_Warpgroup_Id_Op =
 const std::string Reg_Alloc_Op = "setmaxnreg.inc.sync.aligned.u32 #regCount;";
 const std::string Reg_Dealloc_Op = "setmaxnreg.dec.sync.aligned.u32 #regCount;";
 
-const std::string Named_Barrier_Arrive_Op = "bar.arrive $0, $1;";
-const std::string Named_Barrier_Wait_Op = "bar.sync $0, $1;";
+const std::string Named_Barrier_Arrive_Op = "bar.arrive #bar, #numThreads;";
+const std::string Named_Barrier_Wait_Op = "bar.sync #bar, #numThreads;";
 
 template <typename SourceOp>
 class TXLGPUOpGenericPattern : public OpRewritePattern<SourceOp> {
@@ -94,9 +95,9 @@ public:
                                               Constraints());
     patterns.add<TXLGPUOpGenericPattern<ttx::NamedBarrierArriveOp>>(
         context, Named_Barrier_Arrive_Op, Constraints(),
-        Constraints({"r", "r"}));
+        Constraints());
     patterns.add<TXLGPUOpGenericPattern<ttx::NamedBarrierWaitOp>>(
-        context, Named_Barrier_Wait_Op, Constraints(), Constraints({"r", "r"}));
+        context, Named_Barrier_Wait_Op, Constraints(), Constraints());
 
     if (applyPatternsGreedily(mod, std::move(patterns)).failed())
       signalPassFailure();

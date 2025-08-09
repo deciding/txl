@@ -7,6 +7,8 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Dialect.h"
 #include "nvidia/include/Dialect/TXLGPU/IR/Dialect.h.inc"
+#include "nvidia/include/Dialect/TXLGPU/IR/OpsEnums.h.inc"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
 #define GET_ATTRDEF_CLASSES
 #include "nvidia/include/Dialect/TXLGPU/IR/TXLGPUAttrDefs.h.inc"

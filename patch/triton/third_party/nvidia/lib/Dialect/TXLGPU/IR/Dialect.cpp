@@ -23,3 +23,4 @@ void mlir::triton::txlgpu::TXLGPUDialect::initialize() {
 
 #define GET_OP_CLASSES
 #include "Dialect/TXLGPU/IR/Ops.cpp.inc"
+#include "Dialect/TXLGPU/IR/OpsEnums.cpp.inc"

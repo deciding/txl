@@ -20,6 +20,7 @@
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "triton/Tools/Sys/GetEnv.hpp"
 #include "llvm/Support/Debug.h"
+#include "triton/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.h"
 
 using namespace mlir;
 using namespace mlir::triton::gpu;
@@ -89,8 +90,9 @@ OpTy getSmemAllocRoot(Value &smem){
     return nullptr;
 }
 
+// NOTE: this function is from PipeliningUtility
 // originally op is load ops, now is smem_alloc op
-ttg::SharedEncodingTrait getSharedEncoding(Operation *op) {
+ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
 
   // Try to use local alloc encoding if possible.
   // local_alloc(smem_alloc)
@@ -122,24 +124,23 @@ ttg::SharedEncodingTrait getSharedEncoding(Operation *op) {
   auto order = ttg::getOrder(ty);
 
   SmallVector<tt::TmaLoadOp> tmaLoads = getSmemAllocUsers<tt::TmaLoadOp>(op);
-
   // tma_load overwrites local_alloc enc
   if (tmaLoads.size()) {
     // For TMA, the encoding compatible with it takes precedence over local
     // alloc created for the MMA operand.
-    Operation* userOp = tmaLoads[0];
-    if (localAllocEnc) {
-      auto sharedMMALayout =
-              dyn_cast<ttg::NVMMASharedEncodingAttr>(localAllocEnc);
-      if (sharedMMALayout) {
-        assert(!sharedMMALayout.getFp4Padded() &&
-               "TMA load for mixed precision MMAv5 is not supported yet.");
-      }
-    }
-    auto res = ttg::NVMMASharedEncodingAttr::get(
-        ty.getContext(), ty.getShape(), order, ctaLayout, ty.getElementType(),
-        /*fp4Padded*/ false);
-    return res;
+    TypedValue<tt::TensorDescType> desc;
+    desc = tmaLoads[0].getDesc();
+    return ttng::getEncodingFromDescriptor(op, ty, desc);
+  }
+
+  SmallVector<tt::TmaGatherOp> tmaGathers = getSmemAllocUsers<tt::TmaGatherOp>(op);
+  // tma_load overwrites local_alloc enc
+  if (tmaGathers.size()) {
+    // For TMA, the encoding compatible with it takes precedence over local
+    // alloc created for the MMA operand.
+    TypedValue<tt::TensorDescType> desc;
+    desc = tmaGathers[0].getDesc();
+    return ttng::getEncodingFromDescriptor(op, ty, desc);
   }
 
   if (localAllocEnc)
@@ -299,7 +300,7 @@ void lowerMbarOps(Value& mbar, bool usedByTmaLoadOp) {
         else if (isa<tt::MbarArriveOp>(user)){
             auto mbarArriveOp = dyn_cast<tt::MbarArriveOp>(user);
             builder.setInsertionPoint(user);
-            builder.create<ttng::MBarrierArriveOp>(
+            builder.create<tt::MbarArriveOp>(
                     user->getLoc(),
                     mbar,
                     mbarArriveOp.getPred(),
@@ -316,7 +317,7 @@ void lowerMbarOps(Value& mbar, bool usedByTmaLoadOp) {
 
 
 void lowerSmemAlloc(tt::SmemAllocOp op){
-    auto sharedEnc = getSharedEncoding(op);
+    auto sharedEnc = getSharedEncodingTXL(op);
     // this local_alloc is bind with this smem_alloc
     auto alloc = createAlloc(op, op.getNumStages(), sharedEnc);
     // these loads/tma_loads binds with local_alloc
@@ -576,14 +577,15 @@ void lowerTmaLoadOp(tt::TmaLoadOp &tmaLoad) {
     Location loc = tmaLoad->getLoc();
 
     auto pred = builder.create<arith::ConstantIntOp>(loc, 1, 1); // TODO: tma load may need pred
-    auto tmaPtr =
-        builder.create<triton::nvidia_gpu::TensorDescToTMAPtrOp>(loc, desc);
-
+    auto indices = ttng::translateTMAIndices(
+        builder, tmaLoad.getLoc(),
+        tmaLoad.getDesc().getType().getBlockType().getEncoding(),
+        tmaLoad.getIndices());
     // TODO: tmaLoad.getMbar() not working, should have an intermediate op with MemDescType
     // workaround: use getOperand instead
     builder.create<ttng::AsyncTMACopyGlobalToLocalOp>(
-        loc, tmaPtr, tmaLoad.getIndices(),
-        tmaLoad.getOperand(4), tmaLoad.getOperand(0), pred);
+        tmaLoad.getLoc(), desc, indices, 
+        tmaLoad.getOperand(1), tmaLoad.getOperand(0), pred);
 
     tmaLoad->erase();
 }
@@ -596,15 +598,13 @@ void lowerTmaGatherOp(tt::TmaGatherOp &tmaGather) {
     Location loc = tmaGather->getLoc();
 
     auto pred = builder.create<arith::ConstantIntOp>(loc, 1, 1); // TODO: tma load may need pred
-    auto tmaPtr =
-        builder.create<triton::nvidia_gpu::TensorDescToTMAPtrOp>(loc, desc);
-
+                                                                 //
     // TODO: tmaGather.getMbar() not working, should have an intermediate op with MemDescType
     // workaround: use getOperand instead
     builder.create<ttng::AsyncTMAGatherOp>(
-        loc, tmaPtr,
+        loc, desc,
         tmaGather.getXOffsets(), tmaGather.getYOffset(),
-        tmaGather.getOperand(4), tmaGather.getOperand(0), pred);
+        tmaGather.getOperand(1), tmaGather.getOperand(0), pred);
 
     tmaGather->erase();
 }
@@ -680,10 +680,6 @@ public:
     ModuleOp m = getOperation();
     OpBuilder builder(context);
 
-    int numWarps = cast<IntegerAttr>(m->getAttr("ttg.num-warps")).getInt();
-    int totalNumWarps = numWarps * numWarpgroups;
-    m->setAttr("ttg.total-num-warps", builder.getI32IntegerAttr(totalNumWarps));
-
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner Before All\n");
       m.dump();
@@ -696,7 +692,7 @@ public:
     pipelineWgmma(m);
 
     // schedule the waits
-    mlir::triton::txlgpu::updateWaits(getOperation());
+    mlir::triton::updateWaits(getOperation());
 
     // Clean up arithmetic before applying the next level of pipelining to
     // simplify the IR.
@@ -717,10 +713,6 @@ public:
 
       for (scf::ForOp forOp : loops) {
         mlir::triton::pipelineTMAStores(forOp);
-      }
-
-      for (scf::ForOp forOp : loops) {
-        mlir::triton::pipelineMMAWithScaledAcc(forOp);
       }
     }
 

@@ -2,17 +2,14 @@
 
 #include <algorithm>
 #include <limits>
-#include <numeric>
 
 #include "mlir/Analysis/Liveness.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Support/LLVM.h"
 #include "triton/Analysis/Alias.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
-#include "triton/Dialect/TritonGPU/Transforms/Utility.h"
-#include "triton/Tools/Sys/GetEnv.hpp"
+#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -21,6 +18,8 @@
 #define DEBUG_TYPE "allocation-shared-memory"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
+
+namespace ttng = mlir::triton::nvidia_gpu;
 
 namespace mlir {
 
@@ -124,7 +123,7 @@ ScratchConfig getScratchConfigForCvt(RankedTensorType srcTy,
   Attribute dstLayout = dstTy.getEncoding();
 
   assert(cvtNeedsSharedMemory(srcTy, dstTy));
-  auto outOrd = gpu::toLinearEncoding(dstLayout, dstTy.getShape()).getOrder();
+  auto outOrd = gpu::getOrder(dstTy);
   scratchConfig.order = outOrd;
 
   std::tie(scratchConfig.inVec, scratchConfig.outVec) =
@@ -211,7 +210,7 @@ unsigned defaultAllocationAnalysisScratchSizeFn(Operation *op) {
     assert(!isa<PointerType>(elemTy) && "unexpected pointer type");
     return elems * std::max<int>(8, elemTy.getIntOrFloatBitWidth()) / 8;
   }
-  if (isa<ExperimentalTensormapCreateOp>(op)) {
+  if (isa<ttng::TensormapCreateOp>(op)) {
     constexpr int32_t kTMASize = 128;
     return kTMASize;
   }
@@ -257,19 +256,17 @@ private:
         product<int64_t>(shapePerCTA) * allocType.getElementTypeBitWidth() / 8;
 
     auto alignment = alloc.getAlignmentOrDefault();
-    LLVM_DEBUG({
-      llvm::dbgs() << "check localAlloc in getExplicitValueSize: ";
-      alloc.dump();
-    });
-    int sharingGroup = -1;
+
+	// NOTE: txl
+	int sharingGroup = -1;
     if (alloc->hasAttr("allocation.shareGroup")) {
       sharingGroup =
           mlir::cast<IntegerAttr>(alloc->getAttr("allocation.shareGroup"))
               .getInt();
       LDBG("with shareGroup of " << sharingGroup);
     }
-    allocation->addBuffer<BufferT::BufferKind::Explicit>(
-        alloc, bytes, alignment, 0, sharingGroup);
+    allocation->addBuffer<BufferT::BufferKind::Explicit>(alloc, bytes,
+                                                         alignment, 0, sharingGroup);
   }
 
   template <BufferT::BufferKind T>
@@ -340,20 +337,13 @@ private:
       getExplicitValueSize(op);
       getScratchValueSize(op);
     });
-    LDBG("getValuesAndSizes --");
-    for (auto valueBufferIter : allocation->valueBuffer) {
-      auto *buffer = valueBufferIter.second;
-      LLVM_DEBUG(llvm::dbgs()
-                 << "-- buffer " << buffer->id << " " << buffer->size << " "
-                 << buffer->offset << " " << buffer->sharingGroup << "\n");
-    }
     // Get the alias values
     std::unique_ptr<DataFlowSolver> solver = createDataFlowSolver();
     SharedMemoryAliasAnalysis *aliasAnalysis =
         solver->load<SharedMemoryAliasAnalysis>();
     // Run the analysis rooted at every isolated from above operation, including
     // the top-level function but also any nested regions.
-    operation->walk([&](Operation *op) {
+    operation->walk<mlir::WalkOrder::PreOrder>([&](Operation *op) {
       if (op->hasTrait<OpTrait::IsIsolatedFromAbove>() &&
           failed(solver->initializeAndRun(op))) {
         // TODO: return error instead of bailing out..
@@ -373,8 +363,7 @@ private:
   /// Computes the liveness range of the allocated value.
   /// Each buffer is allocated only once.
   void resolveExplicitBufferLiveness(
-      function_ref<Interval<size_t>(Value value, BufferT *buffer)>
-          getLiveness) {
+      function_ref<Interval<size_t>(Value value, BufferT *buffer)> getLiveness) { // NOTE: txl buffer
     for (auto valueBufferIter : allocation->valueBuffer) {
       auto value = valueBufferIter.first;
       auto *buffer = valueBufferIter.second;
@@ -390,8 +379,7 @@ private:
   /// values because each allocated buffer could be an alias of others, if block
   /// arguments are involved.
   void resolveAliasBufferLiveness(
-      function_ref<Interval<size_t>(Value value, BufferT *buffer)>
-          getLiveness) {
+      function_ref<Interval<size_t>(Value value, BufferT *buffer)> getLiveness) { // NOTE: txl buffer
     for (const auto &[value, buffers] : allocation->aliasBuffer) {
       auto range = getLiveness(value, buffers.front());
       for (auto *buffer : buffers) {
@@ -426,8 +414,9 @@ private:
 
         // Any scratch memory's live range is the current operation's live
         // range.
-        // Extend live range when asyncTaskId is not empty (i.e when we have
-        // warp spec).
+        // NOTE: txl
+        // bufferRange.insert(
+        //     {buffer, Interval(operationId.at(op), operationId.at(op) + 1)});
         int wgId = getOpAttrWgId(op);
         if (wgId == -1) {
           bufferRange.insert(
@@ -441,16 +430,6 @@ private:
           bufferRange.insert({buffer, Interval(operationId.lookup(op),
                                                operationId.lookup(op) + 1)});
         }
-        if (getAsyncTaskIds(op).empty()) {
-          bufferRange.insert(
-              {buffer, Interval(operationId.at(op), operationId.at(op) + 1)});
-        } else {
-          for (auto tId : getAsyncTaskIds(op))
-            buffer->regionIds.insert(tId);
-          bufferRange.insert({buffer, Interval(operationId.lookup(op),
-                                               operationId.lookup(op) + 1)});
-        }
-
         LLVM_DEBUG({
           llvm::dbgs() << "-- buffer " << buffer->id << "; value: ";
           op->dump();
@@ -485,41 +464,38 @@ private:
 
     // Analyze liveness of explicit buffers
     Liveness liveness(operation);
-    auto getValueLivenessRange = [&](Value value, BufferT *buffer) {
+    auto getValueLivenessRange = [&](Value value, BufferT *buffer) { // NOTE: txl buffer
       auto liveOperations = liveness.resolveLiveness(value);
-      // Update regions for buffer.
+      // NOTE: txl
       std::for_each(liveOperations.begin(), liveOperations.end(),
                     [&](Operation *liveOp) {
                       int wgId = getOpAttrWgId(liveOp);
                       if (wgId != -1)
                         buffer->regionIds.insert(wgId);
-                      for (auto rId : getAsyncTaskIds(liveOp)) {
-                        buffer->regionIds.insert(rId);
-                      }
                     });
       auto minId = std::numeric_limits<size_t>::max();
       auto maxId = std::numeric_limits<size_t>::min();
-      std::for_each(
-          liveOperations.begin(), liveOperations.end(), [&](Operation *liveOp) {
-            if (buffer->regionIds.size() > 1 || buffer->sharingGroup >= 0) {
-              // For a buffer that is associated with warp
-              // specialization, due to producer-consumer channel, it
-              // should have at least two regions, and it will be live
-              // throughout. For a buffer that is local to a consumer:
-              // we need to make sure not to overlap with local
-              // buffers from another consumer. This will be handled
-              // when building the interference graph.
-              minId = 0;
-              maxId = operationId.size();
-              return;
-            }
-            if (operationId[liveOp] < minId) {
-              minId = operationId[liveOp];
-            }
-            if ((operationId[liveOp] + 1) > maxId) {
-              maxId = operationId[liveOp] + 1;
-            }
-          });
+      llvm::for_each(liveOperations, [&](Operation *liveOp) {
+        // NOTE: txl
+        if (buffer->regionIds.size() > 1 || buffer->sharingGroup >= 0) {
+          // For a buffer that is associated with warp
+          // specialization, due to producer-consumer channel, it
+          // should have at least two regions, and it will be live
+          // throughout. For a buffer that is local to a consumer:
+          // we need to make sure not to overlap with local
+          // buffers from another consumer. This will be handled
+          // when building the interference graph.
+          minId = 0;
+          maxId = operationId.size();
+          return;
+        }
+        if (operationId[liveOp] < minId) {
+          minId = operationId[liveOp];
+        }
+        if ((operationId[liveOp] + 1) > maxId) {
+          maxId = operationId[liveOp] + 1;
+        }
+      });
       return Interval(minId, maxId);
     };
 
@@ -528,20 +504,19 @@ private:
     resolveScratchBufferLiveness(operationId);
   }
 
-  void dumpBuffers() {
-    LDBG("Dump bufferRange: id size offset sharingGroup ---------");
+  void dumpBuffers() const {
+    LDBG("Dump bufferRange: id size offset ---------");
     for (auto bufferIter : bufferRange) {
-      LLVM_DEBUG({
-        llvm::dbgs() << "-- " << bufferIter.first->id << " "
-                     << bufferIter.first->size << " "
-                     << bufferIter.first->offset << " "
-                     << bufferIter.first->sharingGroup << " regions [";
-        for (auto tId : bufferIter.first->regionIds) {
-          llvm::dbgs() << tId << " ";
-        }
-        llvm::dbgs() << "] interval " << bufferIter.second.start() << " "
-                     << bufferIter.second.end() << "\n";
-      });
+      llvm::dbgs() << "-- " << bufferIter.first->id << " "
+                   << bufferIter.first->size << " " << bufferIter.first->offset;
+      // NOTE: txl
+      llvm::dbgs() << bufferIter.first->sharingGroup << " regions [";
+      for (auto tId : bufferIter.first->regionIds) {
+        llvm::dbgs() << tId << " ";
+      }
+
+      llvm::dbgs() << " interval " << bufferIter.second.start() << " "
+                   << bufferIter.second.end() << "\n";
     }
   }
 
@@ -578,6 +553,10 @@ private:
   /// (https://dl.acm.org/doi/pdf/10.5555/314500.315082)
   void computeOffsets() {
     SmallVector<BufferT *> buffers;
+    // NOTE: txl
+    //for (auto bufferIter : bufferRange) {
+    //  buffers.emplace_back(bufferIter.first);
+    //}
     // Handle sharingGroup here. For allocations with the same sharingGroup
     // get the union of the live range, and union of the regionIds. Put
     // the
@@ -623,7 +602,6 @@ private:
         buffers, [&](BufferT *A, BufferT *B) { return A->size > B->size; });
 
     calculateStarts(buffers);
-    dumpBuffers();
 
     // NOTE: The original paper doesn't consider interference between
     // the bumped ranges. Buffers that previously do not interfere with
@@ -640,6 +618,8 @@ private:
     } while (!interference.empty());
 
     LLVM_DEBUG(dumpAllocationSize());
+
+    // NOTE: txl
     // Update allocation for sharingGroup.
     for (auto &kv : toGroup) {
       auto *rep = sharingIdToRep[kv.first];
@@ -651,7 +631,7 @@ private:
         }
       }
     }
-    dumpBuffers();
+    LLVM_DEBUG(dumpBuffers());
   }
 
   /// Computes the initial shared memory offsets.
@@ -719,7 +699,7 @@ private:
   /// shared memory values that are overlapping.
   void buildInterferenceGraph(const SmallVector<BufferT *> &buffers,
                               GraphT &interference) {
-    // Reset interference graph
+    // NOTE: txl
     auto inDifferentRegion = [&](BufferT *A, BufferT *B) {
       auto tA = A->regionIds;
       auto tB = B->regionIds;
@@ -735,6 +715,8 @@ private:
       }
       return false;
     };
+
+    // Reset interference graph
     interference.clear();
     for (auto x : buffers) {
       for (auto y : buffers) {
@@ -766,6 +748,7 @@ private:
             xSizeRange.intersects(ySizeRange)) {
           interference[x].insert(y);
         }
+        // NOTE: txl
         // if x and y belong to different regions (ignore producer region).
         if (inDifferentRegion(x, y) && xSizeRange.intersects(ySizeRange))
           interference[x].insert(y);

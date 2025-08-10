@@ -4,6 +4,7 @@
 include "txl/Dialect/TXL/IR/TXLDialect.td"
 include "triton/Dialect/Triton/IR/TritonDialect.td"
 include "triton/Dialect/Triton/IR/TritonTypes.td"
+include "triton/Dialect/TritonGPU/IR/TritonGPUTypeInterfaces.td"
 include "txl/Dialect/TXL/IR/TXLAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
@@ -106,8 +107,9 @@ def TXL_MbarWaitOp : TXL_Op<"mbar_wait", [MemoryEffects<[MemRead<SmemMemory>, Me
   let assemblyFormat = "$mbar `,` $phase attr-dict `:` type($mbar) `,` type($phase)";
 }
 
-def TXL_MbarArriveOp : TXL_Op<"mbar_arrive", [AttrSizedOperandSegments, MemoryEffects<[MemWrite<SmemMemory>]>]> {
-  let summary = "mbarrier.arrive";
+def TXL_MbarArriveOp : TXL_Op<"mbar_arrive", [AttrSizedOperandSegments,
+                                                      MemoryEffects<[MemWrite<SmemMemory>]>]> {
+  let summary = "mbarrier arrive";
 
   let description = [{
     This operation defining the arriving action for a mbarrier.
@@ -123,11 +125,11 @@ def TXL_MbarArriveOp : TXL_Op<"mbar_arrive", [AttrSizedOperandSegments, MemoryEf
 
     Example:
 
-    txl.mbar_arrive %0 {trackAsyncOp = false} : !tt.ptr<i64>
+    mbar_arrive %0 {trackAsyncOp = false} : !tt.ptr<i64>
 
   }];
 
-  let arguments = (ins TT_Tensor:$mbar,
+  let arguments = (ins TTG_TensorOrMemDesc:$mbarrier,
                        Optional<I1>:$pred,
                        Optional<I32>:$remoteCtaId,
                        I1Attr: $trackAsyncOp,
@@ -162,20 +164,20 @@ def TXL_TmaLoadOp : TXL_Op<"tma_load", [MemoryEffects<[MemWrite<SmemMemory>]>]> 
   }];
   let arguments = (ins
     TT_Tensor:$src,
+    TT_Tensor:$mbar,
     TT_TensorDescType:$desc,
     Variadic<I32>:$indices,
-    TT_Tensor:$mbar,
     DefaultValuedAttr<TXL_CacheModifierXAttr, "::mlir::triton::CacheModifierX::NONE">:$cache,
     DefaultValuedAttr<TXL_EvictionPolicyXAttr, "::mlir::triton::EvictionPolicyX::NORMAL">:$evict
   );
 
   let assemblyFormat = [{
-    $src `,` $desc `[` $indices `]` `,` $mbar
+    $src `,` $mbar `,` $desc `[` $indices `]`
     oilist(
       `cacheModifier` `=` $cache |
       `evictionPolicy` `=` $evict
     )
-    attr-dict `:` type($src) `,` qualified(type($desc)) `,` type($mbar)
+    attr-dict `:` type($src) `,` type($mbar) `,` qualified(type($desc))
   }];
 
 }
@@ -183,17 +185,17 @@ def TXL_TmaLoadOp : TXL_Op<"tma_load", [MemoryEffects<[MemWrite<SmemMemory>]>]> 
 def TXL_NamedBarrierArriveOp : TXL_Op<"barrier_arrive", [MemoryEffects<[MemWrite]>]> {
   let summary = "named barrier arrive";
 
-  let arguments = (ins I32:$bar, I32: $numThreads);
+  let arguments = (ins I32Attr:$bar, I32Attr: $numThreads);
 
-  let assemblyFormat = "$bar `,` $numThreads attr-dict `:` type(operands)";
+  let assemblyFormat = "attr-dict";
 }
 
 def TXL_NamedBarrierWaitOp : TXL_Op<"barrier_wait", [MemoryEffects<[MemWrite]>]> {
   let summary = "named barrier wait";
 
-  let arguments = (ins I32:$bar, I32: $numThreads);
+  let arguments = (ins I32Attr:$bar, I32Attr: $numThreads);
 
-  let assemblyFormat = "$bar `,` $numThreads attr-dict `:` type(operands)";
+  let assemblyFormat = "attr-dict";
 }
 
 def TXL_IsWarpgroupOp : TXL_Op<"is_warpgroup", []> {
@@ -286,13 +288,14 @@ def TXL_TmaGatherOp : TXL_Op<"tma_gather", [MemoryEffects<[MemRead]>]> {
 
   let arguments = (ins
     TT_Tensor:$src,
+    TT_Tensor:$mbar,
     TT_TensorDescType:$desc,
     RankedTensorOf<[I32]>:$x_offsets,
     I32:$y_offset
   );
 
   let assemblyFormat = [{
-    $src `,` $desc `[` $x_offsets `,` $y_offset `]`
+    $src `,` $mbar `,` $desc `[` $x_offsets `,` $y_offset `]`
     attr-dict `:` functional-type(operands, results)
   }];
 

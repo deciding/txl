@@ -432,8 +432,8 @@ void SpecializeOuterWarpgroupIf(scf::IfOp ifOp, int32_t numWarpgroups, bool hasT
   OpBuilder builder(ifOp);
   auto loc = ifOp.getLoc();
 
-  //Value curAsyncTaskId = builder.create<ttxg::CanonicalWarpgroupIdOp>(loc, builder.getI32Type());
-  Value curAsyncTaskId = builder.create<ttng::GetAsyncTaskIdOp>(loc);
+  Value curAsyncTaskId = builder.create<ttxg::CanonicalWarpgroupIdOp>(loc, builder.getI32Type());
+  //Value curAsyncTaskId = builder.create<ttng::GetAsyncTaskIdOp>(loc);
 
   Value cond = ifOp.getCondition();
   assert(isa<tt::IsWarpgroupOp>(cond.getDefiningOp()) && "not a isWarpgroup If\n");
@@ -511,10 +511,10 @@ void SpecializeOuterWarpgroupIf(scf::IfOp ifOp, int32_t numWarpgroups, bool hasT
       auto regAlloc = scanRegUsage(newIfOp.thenBlock(), asyncTaskId, 0, 0, numWarpgroups, hasTma); //TODO: user control
       taskBuilder.setInsertionPointToStart(&(newIfOp.getThenRegion().front()));
       if (regAlloc.second)
-        taskBuilder.create<ttng::RegAllocOp>(
+        taskBuilder.create<ttxg::RegAllocOp>(
             loc, taskBuilder.getI32IntegerAttr(regAlloc.first));
       else
-        taskBuilder.create<ttng::RegDeallocOp>(
+        taskBuilder.create<ttxg::RegDeallocOp>(
             loc, taskBuilder.getI32IntegerAttr(regAlloc.first));
 
     }
@@ -535,6 +535,7 @@ void SpecializeOuterWarpgroupIf(scf::IfOp ifOp, int32_t numWarpgroups, bool hasT
   return;
 }
 
+#if 0
 // Lower to use GetCanonicalWarpIdOp.
 // In Hopper, each task is a warpgroup consisting of 4 warps.
 static const int WARPS_PER_TASK = 4;
@@ -558,6 +559,7 @@ void lowerGetAsyncTaskIdOp(Operation *parentOp, int numConsumerGroups) {
   for (Operation *op : eraseOps)
     op->erase();
 }
+#endif
 
 
 class TXLGPUWSCodePartitionPass
@@ -596,8 +598,14 @@ public:
         assert(isWarpgroupOp->use_empty() && "is_warpgroup not lowered!\n");
         isWarpgroupOp->erase();
     });
+    OpBuilder builder(m);
+    m->setAttr("ttg.total-num-warps", builder.getI32IntegerAttr(numWarpgroups*4));
+    if (numWarpgroups == 1)
+        m->setAttr("ttg.txl-warpgroups-set", builder.getI32IntegerAttr(0));
+    else
+        m->setAttr("ttg.txl-warpgroups-set", builder.getI32IntegerAttr(1));
 
-    lowerGetAsyncTaskIdOp(m, numWarpgroups-1); // assume only 1 producer
+    //lowerGetAsyncTaskIdOp(m, numWarpgroups-1); // assume only 1 producer
 
     LLVM_DEBUG({
       DBGS() << "Module after ws code parition:\n";

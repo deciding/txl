@@ -900,6 +900,7 @@ def _attn_fwd_ws_tma_txl1(sm_scale, M,  #
 # TXL + TMA + FA3 Algo2 Pingpong
 ###################################################
 
+#test_config = {'BLOCK_M':64, 'BLOCK_N':256, 'NUM_CONSUMERS': 2, 'NUM_STAGES': 2} # stages: 3, num warps: 4, num_warpgroups: 3
 @txl.autotune(
     configs=[
         txl.Config(
@@ -1168,6 +1169,7 @@ def _attn_fwd_ws_tma_txl2(sm_scale, M,  #
     ],
     key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT"],
  )
+#@txl.jit(src_file='dump/BFTFLZXGNHJ5H24JXMORYIYU7P6KTCTQ5YJ5EZJSF77MVLWKGJNA/_attn_fwd_ws_tma_txl3.ptx')
 @txl.jit
 def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
               Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #

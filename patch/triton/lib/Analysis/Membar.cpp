@@ -255,11 +255,12 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
       curBlockInfo.syncReadIntervals[allIntervals].insert(op);
     }
     // NOTE: txl this is before lowering to LLVM
-    if (isa<triton::MbarArriveOp>(op)) {
-      Interval<size_t> allIntervals(0, std::numeric_limits<size_t>::max());
-      curBlockInfo.syncWriteIntervals[allIntervals].insert(op);
-      curBlockInfo.syncReadIntervals[allIntervals].insert(op);
-    }
+    // THIS additional bar.sync make things slower
+    //if (isa<triton::MbarArriveOp>(op)) {
+    //  Interval<size_t> allIntervals(0, std::numeric_limits<size_t>::max());
+    //  curBlockInfo.syncWriteIntervals[allIntervals].insert(op);
+    //  curBlockInfo.syncReadIntervals[allIntervals].insert(op);
+    //}
     scratchBufferId = allocation->getBufferId(op);
   }
 

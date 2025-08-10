@@ -509,7 +509,13 @@ void SpecializeOuterWarpgroupIf(scf::IfOp ifOp, int32_t numWarpgroups, bool hasT
 
       OpBuilder taskBuilder(newIfOp.getContext());
       auto regAlloc = scanRegUsage(newIfOp.thenBlock(), asyncTaskId, 0, 0, numWarpgroups, hasTma); //TODO: user control
-      taskBuilder.setInsertionPointToStart(&(newIfOp.getThenRegion().front()));
+
+      Block &firstBlock = newIfOp.getThenRegion().front();
+      Operation& firstOp = firstBlock.front();
+      if (isa<RegAllocOp, RegDeallocOp>(firstOp)){
+          continue;
+      }
+      taskBuilder.setInsertionPointToStart(&firstBlock);
       if (regAlloc.second)
         taskBuilder.create<ttxg::RegAllocOp>(
             loc, taskBuilder.getI32IntegerAttr(regAlloc.first));

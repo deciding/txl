@@ -900,6 +900,10 @@ def _attn_fwd_ws_tma_txl1(sm_scale, M,  #
 # TXL + TMA + FA3 Algo2 Pingpong
 ###################################################
 
+class NamedBarrier:
+    WG1 = tl.constexpr(8)
+    WG2 = tl.constexpr(9)
+
 #test_config = {'BLOCK_M':64, 'BLOCK_N':256, 'NUM_CONSUMERS': 2, 'NUM_STAGES': 2} # stages: 3, num warps: 4, num_warpgroups: 3
 @txl.autotune(
     configs=[
@@ -933,6 +937,9 @@ def _attn_fwd_ws_tma_txl2(sm_scale, M,  #
     off_hz = tl.program_id(1)
     off_z = off_hz // H
     off_h = off_hz % H
+    #off_z = tl.program_id(2)
+    #off_h = tl.program_id(1)
+    #off_hz = off_z * H + off_h
 
     y_dim = Z * H * N_CTX
     # If no host desc, then make device desc
@@ -978,6 +985,7 @@ def _attn_fwd_ws_tma_txl2(sm_scale, M,  #
 
 
     if txl.is_warpgroup([0]):
+        #txl.reg_dealloc(24)
 
         bQ0i = txl.get_buffer(bQ0, 0)
         pMbar_bQ0i = txl.get_buffer(pMbar_bQ0, 0)
@@ -1025,6 +1033,7 @@ def _attn_fwd_ws_tma_txl2(sm_scale, M,  #
 
 
     if txl.is_warpgroup([1, 2]):
+        #txl.reg_alloc(240)
 
         if txl.is_warpgroup([1]):
             offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M//2)
@@ -1156,6 +1165,24 @@ def _attn_fwd_ws_tma_txl2(sm_scale, M,  #
 ###################################################
 # TXL + TMA + FA3 Algo3 Pingpong + Intra Overlap
 ###################################################
+
+@txl.jit
+def softmax_txl(m_i, l_i, qk, qk_scale, dtype):
+    # -- compute softamx, block arg updates ----
+    m_ij = tl.maximum(m_i, tl.max(qk, 1) * qk_scale)
+    qk = qk * qk_scale - m_ij[:, None]
+
+    # udpate p
+    p = tl.math.exp2(qk)
+    l_ij = tl.sum(p, 1)
+    # update m_i and l_i
+    alpha = tl.math.exp2(m_i - m_ij)
+    l_i = l_i * alpha + l_ij
+    m_i = m_ij
+
+    # update acc, NOTE: p position is important
+    p = p.to(dtype)
+    return m_i, l_i, p, alpha
 
 @txl.autotune(
     configs=[
@@ -1423,20 +1450,22 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
             # --- release QK finished ---
             txl.mbar_arrive(cur_mbar_QK)
 
-            # -- compute softamx, block arg updates ----
-            m_ij = tl.maximum(m_i, tl.max(qk, 1) * qk_scale)
-            qk = qk * qk_scale - m_ij[:, None]
+            m_i, l_i, p, alpha = softmax_txl(m_i, l_i, qk, qk_scale, dtype)
 
-            # udpate p
-            p = tl.math.exp2(qk)
-            l_ij = tl.sum(p, 1)
-            # update m_i and l_i
-            alpha = tl.math.exp2(m_i - m_ij)
-            l_i = l_i * alpha + l_ij
-            m_i = m_ij
+            ## -- compute softamx, block arg updates ----
+            #m_ij = tl.maximum(m_i, tl.max(qk, 1) * qk_scale)
+            #qk = qk * qk_scale - m_ij[:, None]
 
-            # update acc, NOTE: p position is important
-            p = p.to(dtype)
+            ## udpate p
+            #p = tl.math.exp2(qk)
+            #l_ij = tl.sum(p, 1)
+            ## update m_i and l_i
+            #alpha = tl.math.exp2(m_i - m_ij)
+            #l_i = l_i * alpha + l_ij
+            #m_i = m_ij
+
+            ## update acc, NOTE: p position is important
+            #p = p.to(dtype)
 
             # update output accumulator
             txl.dot_wait(0)
@@ -1527,6 +1556,7 @@ class _attention(torch.autograd.Function):
 
         def grid(META):
             return (triton.cdiv(q.shape[2], META["BLOCK_M"]), q.shape[0] * q.shape[1], 1)
+            #return (triton.cdiv(q.shape[2], META["BLOCK_M"]), q.shape[1], q.shape[0])
 
         ctx.grid = grid
         #if no_tune:
@@ -1619,7 +1649,7 @@ import math
 #@pytest.mark.parametrize("HEAD_DIM", [64, 128])
 #@pytest.mark.parametrize("causal", [True])  # FIXME: Non-causal tests do not pass at the moment.
 #@pytest.mark.parametrize("warp_specialize", [False, True] if is_blackwell() else [False])
-def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=False):
+def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=False, profiling=False):
     #torch.manual_seed(20)
     #q = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5))
     #k = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5))
@@ -1644,6 +1674,9 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=
         tri_out = tri_out.permute(0,2,1,3).contiguous()
     elif Has_TXL:
         tri_out = attention(q, k, v, causal, 1/math.sqrt(HEAD_DIM), algo, no_tune).half()
+
+    if profiling:
+        exit()
 
     ## OLD
     #dout = torch.randn_like(q)
@@ -1779,10 +1812,11 @@ if __name__ == "__main__":
     print("TEST...")
     #test_op(1, 2, 1024, 128, False, dtype=torch.float16, no_tune=no_tune)
 
-    #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=0, no_tune=no_tune)
-    #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=1, no_tune=no_tune)
-    #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune)
-    test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=3, no_tune=no_tune)
+    PROFILING=True
+    #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=0, no_tune=no_tune, profiling=PROFILING)
+    #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=1, no_tune=no_tune, profiling=PROFILING)
+    #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)
+    test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=3, no_tune=no_tune, profiling=PROFILING)
 
     print("BENCH...")
-    bench_flash_attention.run(save_path=".", print_data=True, algo=3, no_tune=no_tune)
+    #bench_flash_attention.run(save_path=".", print_data=True, algo=2, no_tune=no_tune)

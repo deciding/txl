@@ -183,3 +183,6 @@ log/
 tmp.*
 tmp/
 *.pdf
+*dump/
+*.mlir
+triton3.3.x

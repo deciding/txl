@@ -142,7 +142,8 @@ def _flash_attn_fwd(
 
     if compute_capability == 9:  # TODO: tune block size according to hdim
         if not causal and not local:
-            n_block_size = 192
+            #n_block_size = 192
+            n_block_size = 128
 
     compile_key = (
         dtype, head_dim, head_dim_v, qhead_per_kvhead, causal, softcap is not None,
@@ -184,8 +185,10 @@ def _flash_attn_fwd(
         _flash_attn_fwd.compile_cache[compile_key] = cute.compile(
             fa_fwd, q_tensor, k_tensor, v_tensor, o_tensor, lse_tensor, softmax_scale, current_stream,
             cu_seqlens_q_tensor, cu_seqlens_k_tensor, seqused_q_tensor, seqused_k_tensor,
-            softcap, window_size_left, window_size_right,
+            softcap, window_size_left, window_size_right, no_cache=False
         )
+        # test for cache
+        #_flash_attn_fwd.compile_cache[compile_key] = fa_fwd
     _flash_attn_fwd.compile_cache[compile_key](
         q_tensor, k_tensor, v_tensor, o_tensor, lse_tensor, softmax_scale, current_stream,
         cu_seqlens_q_tensor, cu_seqlens_k_tensor, seqused_q_tensor, seqused_k_tensor,

@@ -186,3 +186,4 @@ tmp/
 *dump/
 *.mlir
 triton3.3.x
+*.ncu-rep

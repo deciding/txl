@@ -123,7 +123,7 @@ class Autotuner(KernelInterface):
         return self._do_bench
 
     def _bench(self, *args, config, **meta):
-        from ..compiler.errors import CompileTimeAssertionFailure
+        from triton.compiler.errors import CompileTimeAssertionFailure
 
         verbose = knobs.autotuning.print
         if verbose:

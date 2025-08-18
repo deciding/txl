@@ -697,6 +697,7 @@ def _attn_fwd_tma_txl(sm_scale, M,  #
     key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT"],
  )
 @txl.jit
+#@txl.jit(diff_mode="llir")
 def _attn_fwd_ws_tma_txl1(sm_scale, M,  #
               Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #
               HEAD_DIM: tl.constexpr,  #
@@ -1812,11 +1813,11 @@ if __name__ == "__main__":
     print("TEST...")
     #test_op(1, 2, 1024, 128, False, dtype=torch.float16, no_tune=no_tune)
 
-    PROFILING=True
-    #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=0, no_tune=no_tune, profiling=PROFILING)
-    #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=1, no_tune=no_tune, profiling=PROFILING)
-    #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)
+    PROFILING=False
+    test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=0, no_tune=no_tune, profiling=PROFILING)
+    test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=1, no_tune=no_tune, profiling=PROFILING)
+    test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)
     test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=3, no_tune=no_tune, profiling=PROFILING)
 
     print("BENCH...")
-    #bench_flash_attention.run(save_path=".", print_data=True, algo=2, no_tune=no_tune)
+    bench_flash_attention.run(save_path=".", print_data=True, algo=2, no_tune=no_tune)

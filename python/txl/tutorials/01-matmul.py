@@ -631,8 +631,8 @@ def matmul_descriptor_persistent(a, b, warp_specialize: bool):
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
-@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
-#@txl.jit(launch_metadata=_matmul_launch_metadata)
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+@txl.jit(launch_metadata=_matmul_launch_metadata)
 def matmul_naive_tma_txl_kernel(
     a_desc,
     b_desc,
@@ -919,7 +919,8 @@ filename = 'dump/3H2OJ5D5CYZY5Q4QRKILSI7DZ5IUKDPDDLUQYE6POPBUMHJUGKNA/matmul_per
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
-#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='llir', log_dir='dump')
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='llir')
 #@txl.jit(launch_metadata=_matmul_launch_metadata, src_file=filename)
 @txl.jit(launch_metadata=_matmul_launch_metadata)
 def matmul_persistent_ws_tma_txl_kernel(
@@ -1619,9 +1620,9 @@ def validate(M, N, K, dtype, log=False):
     #run_test(naive_result, matmul_persistent, a, b.T, "Persistent")
     #run_test(naive_result, lambda a, b: matmul_descriptor_persistent(a, b, True), a, b, "TMA WS Persistent", log=log)
 
-    run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
-    run_test(naive_result, lambda a, b: matmul_tma_persistent_txl(a, b), a, b, "TXL TMA Persistent", log=log)
-    run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=log)
+    #run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
+    #run_test(naive_result, lambda a, b: matmul_tma_persistent_txl(a, b), a, b, "TXL TMA Persistent", log=log)
+    run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
     #run_test(naive_result, lambda a, b: matmul_tma_ws_nn_persistent_txl(a, bn), a, bn, "TXL TMA WS NN Persistent", log=log)
 
     return
@@ -1659,8 +1660,8 @@ def profile(M, N, K, dtype, log=False):
     b = torch.randn((K, N), device="cuda", dtype=torch.float16).to(dtype)
     b = b.T.contiguous()
 
-    naive_result = cublas_matmul(a, b)
-    #matmul_tma_ws_persistent_txl(a, b)
+    #naive_result = cublas_matmul(a, b)
+    print(matmul_tma_ws_persistent_txl(a, b))
 
 
 if __name__ == "__main__":

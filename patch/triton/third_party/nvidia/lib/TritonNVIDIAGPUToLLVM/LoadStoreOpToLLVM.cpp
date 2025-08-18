@@ -1306,6 +1306,39 @@ getMsgToUnpackedOffsetLayout(const LinearLayout &packedLayout,
   return unpackLayout * packedLayout;
 }
 
+
+// txl
+int getWarpOffset(Operation *op) {
+  int wgId = getOpAttrWgId(op);
+  if (wgId != -1) {
+    return 4 * wgId; // each WG has 4 warps
+  }
+  return 0;
+}
+Value getWGThreadId(OpBuilder& rewriter, Location loc, Operation* op){
+    Value tid =
+        rewriter.create<::mlir::gpu::ThreadIdOp>(loc, ::mlir::gpu::Dimension::x);
+    tid = rewriter.create<arith::IndexCastOp>(loc, i32_ty, tid);
+
+    Operation *lookupPt = &rewriter.getInsertionBlock()->front(); // each block has num warps
+    int numWarps = triton::gpu::lookupNumWarps(lookupPt);
+    int threadsPerWarp = triton::gpu::lookupThreadsPerWarp(rewriter);
+    int upperBound = numWarps * threadsPerWarp;
+
+    TritonLLVMOpBuilder b(loc, rewriter);
+
+    auto warpOffset = getWarpOffset(op);
+    if (warpOffset) {
+        tid = rewriter.create<arith::SubIOp>(loc, tid, b.i32_val(warpOffset * threadsPerWarp));
+    }
+
+    assert(llvm::isPowerOf2_32(upperBound));
+    // help LLVM's known bits analysis:
+    tid = b.and_(tid, b.i32_val(upperBound - 1));
+    return tid;
+
+}
+
 struct AsyncTMACopyGlobalToLocalOpConversion
     : public ConvertOpToLLVMPattern<
           triton::nvidia_gpu::AsyncTMACopyGlobalToLocalOp> {
@@ -1333,7 +1366,8 @@ struct AsyncTMACopyGlobalToLocalOpConversion
     auto dstMemObj = LLVM::getSharedMemoryObjectFromStruct(
         loc, adaptor.getResult(), llvmElemTy, rewriter);
     auto voidTy = void_ty(op->getContext());
-    auto id = getThreadId(rewriter, loc);
+    // NOTE: txl, we don't need warpID-warpOffset, because assuming tmaLoad always at wg0
+    auto id = getWGThreadId(rewriter, loc, op);
 
     auto mod = op->getParentOfType<ModuleOp>();
     int numWarps = ttg::lookupNumWarps(op);
@@ -1366,13 +1400,6 @@ struct AsyncTMACopyGlobalToLocalOpConversion
     auto zero = b.i32_val(0);
     auto ctaId = rewriter.create<nvgpu::ClusterCTAIdOp>(loc);
 
-    // txl
-    int wgId = getOpAttrWgId(op);
-    int firstThreadId = 0;
-    if (wgId != -1) {
-      firstThreadId = wgId * numWarps * warpSize;
-    }
-
     // The bounding box inner dimension must be less than or equal to the
     // swizzle size.
     // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TENSOR__MEMORY.html#group__CUDA__TENSOR__MEMORY_1ga7c7d2aaac9e49294304e755e6f341d7
@@ -1383,7 +1410,7 @@ struct AsyncTMACopyGlobalToLocalOpConversion
       if (numWarpsToCopy == 1)
         warpID = b.i32_val(0);
       Value boxPred =
-          b.and_(pred, b.icmp_ult(id, b.i32_val(numWarpsToCopy * warpSize + firstThreadId))); // txl
+          b.and_(pred, b.icmp_ult(id, b.i32_val(numWarpsToCopy * warpSize)));
       ::mlir::triton::PTXBuilder ptxBuilderTMA;
       Type elemPtrTy = ptr_ty(rewriter.getContext(), 3);
       Value copyIdxVal = b.add(warpID, b.i32_val(copyIdx));
@@ -1426,15 +1453,6 @@ struct AsyncTMACopyGlobalToLocalOpConversion
   }
 };
 
-// txl
-int getWarpOffset(Operation *op) {
-  int wgId = getOpAttrWgId(op);
-  if (wgId != -1) {
-    return 4 * wgId; // each WG has 4 warps
-  }
-  return 0;
-}
-
 LogicalResult convertTMAStoreLikeOp(Operation *op,
                                     const TypeConverter *typeConverter,
                                     ConversionPatternRewriter &rewriter,
@@ -1447,7 +1465,7 @@ LogicalResult convertTMAStoreLikeOp(Operation *op,
   auto dstMemObj =
       LLVM::getSharedMemoryObjectFromStruct(loc, src, llvmElemTy, rewriter);
   auto voidTy = void_ty(op->getContext());
-  auto id = getThreadId(rewriter, loc);
+  auto id = getWGThreadId(rewriter, loc, op); // NOTE: txl
   // Select just one thread for the TMA copy. This also helps the compiler to
   // figure out that the op is uniform.
   Value pred = LLVM::NVIDIA::createElectPredicate(loc, rewriter);
@@ -1478,11 +1496,12 @@ LogicalResult convertTMAStoreLikeOp(Operation *op,
   for (int copyIdx = 0; copyIdx < numCopies; copyIdx += numWarps) {
     int numWarpsToCopy = std::min(numCopies - copyIdx, numWarps);
     // txl
-    auto warpOffset = getWarpOffset(op);
-    if (numWarpsToCopy == 1)
-      warpID = b.i32_val(warpOffset);
-    warpID = b.sub(warpID, b.i32_val(warpOffset));
-    id = b.sub(id, b.i32_val(warpOffset * warpSize));
+    if (numWarpsToCopy == 1) {
+      warpID = b.i32_val(0);
+    } else {
+      auto warpOffset = getWarpOffset(op);
+      warpID = b.sub(warpID, b.i32_val(warpOffset));
+    }
 
     Value boxPred =
         b.and_(pred, b.icmp_ult(id, b.i32_val(numWarpsToCopy * warpSize)));

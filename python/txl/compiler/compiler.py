@@ -540,7 +540,7 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
         return nvidia.passes.ttgpuir.add_to_llvmir(i, capability, ptx_version)
 
     def add_allocate_shared_memory_nv(i):
-        nvidia.passes.ttnvgpuir.add_allocate_shared_memory_nv(i, capability, ptx_version)
+        nvidia.passes.ttgpuir.add_allocate_shared_memory_nv(i, capability, ptx_version)
 
     def add_proxy_fence_insertion(i):
         nvidia.passes.ttnvgpuir.add_proxy_fence_insertion(i, capability)
@@ -680,7 +680,7 @@ def add_dbg_stages(backend, stages, options, diff_mode='ttgir', log_dir=None, us
         stages["ttir"] = lambda src, metadata: backend.make_ttir(src, metadata, options, capability)
         stages["ttgir"] = lambda src, metadata: make_nv_dbg_ttgir(src, metadata, options, capability, log_dir=log_dir, use_txl=use_txl)
     else:
-        stages["ttir"] = lambda src, metadata: backend.make_ttir(src, metadata, options)
+        stages["ttir"] = lambda src, metadata: backend.make_ttir(src, metadata, options, capability)
         stages["ttgir"] = lambda src, metadata: backend.make_ttgir(src, metadata, options, capability, use_txl=use_txl)
         stages["llir"] = lambda src, metadata: make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=log_dir)
 

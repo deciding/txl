@@ -1,4 +1,5 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -186,28 +187,17 @@ static Value createAlloc(Operation* loadOp, int numStages,
 
 // Create an allocation and init the mbarriers.
 Value createBarrierAlloc(tt::MbarAllocOp& mbarAllocOp) {
+  ImplicitLocOpBuilder rewriter(mbarAllocOp->getLoc(), mbarAllocOp);
+
   int arrCount = mbarAllocOp.getArrCount();
   int numBarriers = mbarAllocOp.getNumStages();
-  MLIRContext *ctx = mbarAllocOp->getContext();
-  IRRewriter rewriter(ctx); // OpBuilder is also okay I suppose
-  rewriter.setInsertionPoint(mbarAllocOp);
-  Location loc = mbarAllocOp->getLoc();
-  unsigned numCTAs = triton::gpu::TritonGPUDialect::getNumCTAs(
-      mbarAllocOp->getParentOfType<ModuleOp>());
-  Attribute sharedMemorySpace = ttg::SharedMemorySpaceAttr::get(ctx);
-  auto barrierCTALayout = ttg::CTALayoutAttr::get(
-      /*context=*/ctx, /*CTAsPerCGA=*/{numCTAs},
-      /*CTASplitNum=*/{1}, /*CTAOrder=*/{0});
-  auto barrierEncoding =
-      ttg::SwizzledSharedEncodingAttr::get(ctx, 1, 1, 1, {0}, barrierCTALayout);
-  ttg::MemDescType barrierMemDescType = ttg::MemDescType::get(
-      {numBarriers}, rewriter.getI64Type(), barrierEncoding, sharedMemorySpace,
-      /*mutableMemory=*/true);
+
   Value barrierAlloc =
-      rewriter.create<ttg::LocalAllocOp>(loc, barrierMemDescType, Value());
+        triton::createScalarAlloc(rewriter, rewriter.getI64Type(), numBarriers);
+
   for (unsigned i = 0; i < numBarriers; i++) {
     Value barrierView = triton::createSingleBufferView(rewriter, barrierAlloc, i);
-    rewriter.create<ttng::InitBarrierOp>(loc, barrierView, arrCount);
+    rewriter.create<ttng::InitBarrierOp>(barrierView, arrCount);
   }
   return barrierAlloc;
 }

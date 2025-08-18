@@ -8,10 +8,14 @@ import json
 from functools import cached_property
 from typing import Dict, Tuple, List, Optional
 
+# NOTE: txl
 from triton import knobs
-from triton.runtime.jit import KernelInterface
+from triton.runtime.jit import KernelInterface, JITFunction
 from triton.runtime.errors import OutOfResources, PTXASError
 from triton.runtime.driver import driver
+from triton.runtime.cache import get_cache_manager, triton_key
+
+from triton._C.libtriton import get_cache_invalidating_env_vars
 
 
 class Autotuner(KernelInterface):
@@ -99,7 +103,7 @@ class Autotuner(KernelInterface):
                            "https://github.com/triton-lang/triton/pull/4496 for details."), DeprecationWarning,
                           stacklevel=1)
             if use_cuda_graph:
-                from triton.testing import do_bench_cudagraph
+                from triton.testing import do_bench_cudagraph # NOTE: txl
                 self._do_bench = lambda kernel_call, quantiles: do_bench_cudagraph(
                     kernel_call,
                     rep=rep if rep is not None else 100,
@@ -123,7 +127,7 @@ class Autotuner(KernelInterface):
         return self._do_bench
 
     def _bench(self, *args, config, **meta):
-        from triton.compiler.errors import CompileTimeAssertionFailure
+        from triton.compiler.errors import CompileTimeAssertionFailure # NOTE: txl
 
         verbose = knobs.autotuning.print
         if verbose:
@@ -170,10 +174,7 @@ class Autotuner(KernelInterface):
             bench_fn()
             return False
 
-        from triton._C.libtriton import get_cache_invalidating_env_vars
-        from triton.compiler.compiler import make_backend, triton_key
-        from triton.runtime.cache import get_cache_manager
-        from triton.runtime.jit import JITFunction
+        from triton.compiler.compiler import make_backend
 
         fn = self.fn
         while not isinstance(fn, JITFunction):

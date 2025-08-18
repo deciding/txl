@@ -1,20 +1,22 @@
 from __future__ import annotations
 import hashlib
 import json
+
+#txl
 from triton._C.libtriton import get_cache_invalidating_env_vars, ir
 from triton.backends import backends
 from triton.backends.compiler import Language
 from triton.backends.compiler import BaseBackend, GPUTarget
 from triton import __version__, knobs
 from triton.runtime.autotuner import OutOfResources
-from triton.runtime.cache import get_cache_manager, get_dump_manager, get_override_manager
+from triton.runtime.cache import get_cache_manager, get_dump_manager, get_override_manager, get_cache_key
 from triton.runtime.driver import driver
 from triton.tools.disasm import get_sass
+
 from pathlib import Path
 import re
 import functools
 import os
-import sysconfig
 import time
 
 # - ^\s*tt\.func\s+ : match the start of the string, any leading whitespace, the keyword func,
@@ -64,12 +66,9 @@ class ASTSource:
                 assert isinstance(k, tuple)
                 self.constants[k] = v
         self.attrs = attrs or dict()
-        if isinstance(self.signature, str):
-            self.signature = {k: v.strip() for k, v in enumerate(self.signature.split(","))}
-        else:
-            for k in self.signature.keys():
-                if not isinstance(k, str):
-                    raise TypeError("Signature keys must be string")
+        for k in self.signature.keys():
+            if not isinstance(k, str):
+                raise TypeError("Signature keys must be string")
 
     def hash(self):
         sorted_sig = [v for k, v in sorted(self.signature.items())]
@@ -78,7 +77,7 @@ class ASTSource:
         key = f"{self.fn.cache_key}-{str(self.attrs)}-{sorted_sig}-{constants_key}"
         return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
-    def make_ir(self, options, codegen_fns, module_map, context):
+    def make_ir(self, target: GPUTarget, options, codegen_fns, module_map, context):
         from .code_generator import ast_to_ttir
         return ast_to_ttir(self.fn, self, context=context, options=options, codegen_fns=codegen_fns,
                            module_map=module_map)
@@ -113,12 +112,12 @@ class IRSource:
             funcOp = self.module.get_function(fn_name)
             func_ty = self.module.get_function_signature(funcOp)
             self.signature = {k: ty for k, ty in enumerate(func_ty)}
-        self.constants = None
+        self.constants = None # TODO: txl
 
     def hash(self):
         return hashlib.sha256(self.src.encode("utf-8")).hexdigest()
 
-    def make_ir(self, options, codegen_fns, module_map, context):
+    def make_ir(self, target: GPUTarget, options, codegen_fns, module_map, context):
         self.module.context = context
         return self.module
 
@@ -128,46 +127,6 @@ class IRSource:
             assert num_warps is not None, "Unable to parse ttg.num-warps attribute"
             return {'num_warps': num_warps}
         return dict()
-
-
-@functools.lru_cache()
-def triton_key():
-    import pkgutil
-    # NOTE: txl
-    PYTHON_TXL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    TXL_PATH = os.path.dirname(os.path.dirname(PYTHON_TXL))
-    TRITON_PATH = os.path.join(TXL_PATH, 'thirdparty', 'triton', 'python', 'triton')
-
-    contents = []
-    # frontend
-    with open(__file__, "rb") as f:
-        contents += [hashlib.sha256(f.read()).hexdigest()]
-    # compiler
-    path_prefixes = [
-        (os.path.join(TRITON_PATH, "compiler"), "triton.compiler."),
-        (os.path.join(TRITON_PATH, "backends"), "triton.backends."),
-    ]
-    for path, prefix in path_prefixes:
-        for lib in pkgutil.walk_packages([path], prefix=prefix):
-            with open(lib.module_finder.find_spec(lib.name).origin, "rb") as f:
-                contents += [hashlib.sha256(f.read()).hexdigest()]
-
-    # backend
-    libtriton_hash = hashlib.sha256()
-    ext = sysconfig.get_config_var("EXT_SUFFIX").split(".")[-1]
-    with open(os.path.join(TRITON_PATH, "_C", f"libtriton.{ext}"), "rb") as f:
-        while True:
-            chunk = f.read(1024**2)
-            if not chunk:
-                break
-            libtriton_hash.update(chunk)
-    contents.append(libtriton_hash.hexdigest())
-    # language
-    language_path = os.path.join(TRITON_PATH, 'language')
-    for lib in pkgutil.walk_packages([language_path], prefix="triton.language."):
-        with open(lib.module_finder.find_spec(lib.name).origin, "rb") as f:
-            contents += [hashlib.sha256(f.read()).hexdigest()]
-    return f'{__version__}' + '-'.join(contents)
 
 
 @functools.lru_cache()
@@ -185,6 +144,7 @@ def parse(full_name, ext, context):
     if ext == "cubin" or ext == "hsaco":
         return Path(full_name).read_bytes()
 
+# NOTE: txl
 import difflib
 def diff_strings_colored(str1, str2, log_dir=None, log_filename='tmp.ir'):
     if log_dir is not None:
@@ -291,7 +251,7 @@ class CompileTimer:
             store_results=delta(stage_start, self.store_results_end),
         )
 
-
+# NOTE: txl
 ############################################
 # Start from nvidia backend compiler
 ############################################
@@ -434,6 +394,14 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
     def add_ws_canonicalization(i):
         passes.ttgpuir.add_ws_canonicalization(i, opt.num_consumer_groups)
 
+    def add_hoist_tmem_alloc_true(i):
+        passes.ttgpuir.add_hoist_tmem_alloc(i, True)
+    def add_hoist_tmem_alloc_false(i):
+        passes.ttgpuir.add_hoist_tmem_alloc(i, False)
+
+    def add_fence_insertion(i):
+        nvidia.passes.ttnvgpuir.add_fence_insertion(i, capability)
+
 
     pass_funcs = [
         add_convert_to_ttgpuir,
@@ -452,13 +420,12 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
         passes.ttgpuir.add_remove_layout_conversions,
         passes.ttgpuir.add_smem_alloc_layout_conversions_txl,
         passes.ttgpuir.add_optimize_thread_locality,
-        #passes.ttgpuir.add_accelerate_matmul,
-        passes.ttgpuir.add_accelerate_matmul_txl,
+        passes.ttgpuir.add_accelerate_matmul,
         passes.ttgpuir.add_remove_layout_conversions,
-        #add_optimize_dot_operands,
-        add_optimize_dot_operands_txl,
+        add_optimize_dot_operands,
         nvidia.passes.ttnvgpuir.add_optimize_descriptor_encoding, # 3.4.x
-        passes.common.add_cse,
+        #passes.common.add_cse, # 3.4.x
+        passes.ttir.add_loop_aware_cse, # 0817
     ]
     if capability // 10 in [8, 9]:
         pass_funcs += [
@@ -488,7 +455,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
             #passes.common.add_licm, # 3.3.x
             passes.ttir.add_triton_licm, # 3.4.x
             passes.ttgpuir.add_optimize_accumulator_init,
-            passes.ttgpuir.add_hoist_tmem_alloc, # 3.4.x
+            add_hoist_tmem_alloc_false, # 3.4.x, 0817
             nvidia.passes.ttnvgpuir.add_promote_lhs_to_tmem, # 3.4.x
             add_assign_latencies, # 3.4.x
             passes.ttgpuir.add_schedule_loops, # 3.4.x
@@ -502,6 +469,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
             passes.ttgpuir.add_combine_tensor_select_and_if,
             #nvidia.passes.ttnvgpuir.add_keep_acc_in_tmem, # 3.3.x
             #add_ws_lowering, # 3.3.x
+            add_hoist_tmem_alloc_true, # 0817
             nvidia.passes.ttnvgpuir.add_remove_tmem_tokens, # 3.4.x
         ]
     else:
@@ -520,16 +488,19 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
         nvidia.passes.ttnvgpuir.add_interleave_tmem, # 3.4.x
         passes.ttgpuir.add_reduce_data_duplication,
         passes.ttgpuir.add_reorder_instructions,
-        passes.common.add_cse,
+        #passes.common.add_cse, # 3.4.x
+        passes.ttir.add_loop_aware_cse, # 0817
         passes.common.add_symbol_dce,
     ]
     if capability // 10 >= 9:
         pass_funcs += [
             nvidia.passes.ttnvgpuir.add_tma_lowering,
-            nvidia.passes.ttnvgpuir.add_fence_insertion,
         ]
     pass_funcs += [
+        add_fence_insertion, # 0817
+        nvidia.passes.ttnvgpuir.add_lower_mma, # 0817
         passes.common.add_sccp, # 3.4.x
+        passes.common.add_cse, # 0817
         passes.common.add_canonicalizer,
     ]
     #if capability // 10 >= 9: # 3.3.x
@@ -564,8 +535,22 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
 
 def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
     ptx_version = load_ptx_func('get_ptx_version_from_options')(options, backend.target.arch)
+
     def add_to_llvmir(i):
         return nvidia.passes.ttgpuir.add_to_llvmir(i, capability, ptx_version)
+
+    def add_allocate_shared_memory_nv(i):
+        nvidia.passes.ttnvgpuir.add_allocate_shared_memory_nv(i, capability, ptx_version)
+
+    def add_proxy_fence_insertion(i):
+        nvidia.passes.ttnvgpuir.add_proxy_fence_insertion(i, capability)
+
+    def instrument_ttgpuir_to_llvmir(i):
+        #TODO: check
+        backend.instrumentation.patch("ttgpuir_to_llvmir", i, src.context)
+    def instrument_llvmir_to_llvm(i):
+        #TODO: check
+        backend.instrumentation.patch("llvmir_to_llvm", i, src.context)
 
 
     mod = src
@@ -575,14 +560,29 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
     pm2 = ir.pass_manager(mod.context)
     #pm.enable_debug()
     pass_funcs = [
-        nvidia.passes.ttnvgpuir.add_lower_mma,
+        #nvidia.passes.ttnvgpuir.add_lower_mma, # 0817
         passes.ttgpuir.add_combine_tensor_select_and_if,
         passes.ttgpuir.add_allocate_warp_groups,
         nvidia.passes.txlgpuir.add_txlgpu_inherit_wg_id,
         passes.convert.add_scf_to_cf,
-        passes.ttgpuir.add_allocate_shared_memory,
+        #passes.ttgpuir.add_allocate_shared_memory, # 3.4.x
+        add_allocate_shared_memory_nv, # 0817
         nvidia.passes.ttnvgpuir.add_allocate_tensor_memory,
+    ]
+    if knobs.compilation.enable_experimental_consan:
+        # Call ConcurrencySanitizerPass here, before allocating global scratch memory but after allocating tensor and shared
+        pass_funcs += [
+            passes.ttgpuir.add_concurrency_sanitizer # 0817
+        ]
+    pass_funcs += [
         passes.ttgpuir.add_allocate_global_scratch_memory,
+        add_proxy_fence_insertion, # 0817
+    ]
+    if backend.instrumentation:
+        pass_funcs += [
+            instrument_ttgpuir_to_llvmir # 0817
+        ]
+    pass_funcs += [
         add_to_llvmir,
         passes.common.add_canonicalizer,
         passes.common.add_cse,
@@ -592,10 +592,15 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
         passes.common.add_canonicalizer,
         passes.common.add_cse,
         passes.common.add_symbol_dce,
+        passes.convert.add_nvvm_to_llvm, # 0817
     ]
     if not knobs.compilation.disable_line_info:
         pass_funcs += [
             passes.llvmir.add_di_scope,
+        ]
+    if backend.instrumentation:
+        pass_funcs += [
+            instrument_llvmir_to_llvm # 0817
         ]
 
     def opt1(mod):
@@ -615,7 +620,7 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
         llvm.attach_datalayout(llvm_mod, triple, proc, features)
         nvidia.set_nvvm_reflect_ftz(llvm_mod)
 
-        if options.extern_libs:
+        if options.extern_libs and nvidia.has_extern_deps(llvm_mod):
             paths = [path for (name, path) in options.extern_libs]
             llvm.link_extern_libs(llvm_mod, paths)
 
@@ -663,6 +668,8 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
     metadata["tmem_size"] = src.get_int_attr("ttg.tensor_memory_size")
     metadata["global_scratch_size"] = src.get_int_attr("ttg.global_scratch_memory_size")
     metadata["global_scratch_align"] = src.get_int_attr("ttg.global_scratch_memory_alignment")
+    metadata["profile_scratch_size"] = src.get_int_attr("ttg.profile_scratch_memory_size") or 0
+    metadata["profile_scratch_align"] = src.get_int_attr("ttg.profile_scratch_memory_alignment") or 1
     return ret
 
 def add_dbg_stages(backend, stages, options, diff_mode='ttgir', log_dir=None, use_txl=True):
@@ -681,8 +688,8 @@ def add_dbg_stages(backend, stages, options, diff_mode='ttgir', log_dir=None, us
 # End from nvidia backend compiler
 ############################################
 
-
-def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_txl=True, txl_options=None):
+# NOTE: txl
+def compile(src, target=None, options=None, _env_vars=None, diff_mode=None, log_dir=None, use_txl=True, txl_options=None):
     compilation_listener = knobs.compilation.listener
     if compilation_listener:
         timer = CompileTimer()
@@ -692,7 +699,8 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_tx
     assert isinstance(target, GPUTarget), "target must be of GPUTarget type"
     backend = make_backend(target)
     ir_source = not isinstance(src, ASTSource)
-    # NOTE: txl
+
+    # TODO: txl
     # create backend
     if ir_source:
         src_filename = src
@@ -710,8 +718,8 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_tx
     extra_options = src.parse_options()
     options = backend.parse_options(dict(options or dict(), **extra_options))
     # create cache manager
-    env_vars = get_cache_invalidating_env_vars()
-    key = f"{triton_key()}-{src.hash()}-{backend.hash()}-{options.hash()}-{str(sorted(env_vars.items()))}"
+    env_vars = get_cache_invalidating_env_vars() if _env_vars is None else _env_vars
+    key = get_cache_key(src, backend, options, env_vars=env_vars)
     hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
     fn_cache_manager = get_cache_manager(hash)
     # For dumping/overriding only hash the source as we want it to be independent of triton
@@ -751,7 +759,9 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_tx
         **env_vars,
     }
     metadata["triton_version"] = __version__
+
     metadata.update(txl_options) # NOTE: txl
+
     # run compilation pipeline  and populate metadata
     stages = dict()
     # NOTE: txl
@@ -773,12 +783,12 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_tx
 
     codegen_fns = backend.get_codegen_implementation(options)
     module_map = backend.get_module_map()
-    # NOTE: txl
+    # TODO: txl
     if src.ext == 'ptx':
         module = src.src
     else:
         try:
-            module = src.make_ir(options, codegen_fns, module_map, context)
+            module = src.make_ir(target, options, codegen_fns, module_map, context)
         except Exception as e:
             filter_traceback(e)
             raise
@@ -813,6 +823,9 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_tx
             metadata_group[ir_filename] = fn_cache_manager.put(next_module, ir_filename)
         if fn_dump_manager is not None:
             fn_dump_manager.put(next_module, ir_filename)
+            if ext == "cubin":
+                sass = get_sass(next_module)
+                fn_dump_manager.put(sass, file_name + ".sass")
         # use an env variable to parse ir from file
         if use_ir_loc == ext:
             ir_full_name = fn_cache_manager.get_file(ir_filename)
@@ -839,6 +852,8 @@ def compile(src, target=None, options=None, diff_mode=None, log_dir=None, use_tx
     # multithreading in the MLIR context
     if not knobs.compilation.enable_asan:
         context.disable_multithreading()
+
+    # TODO: txl
     if fn_dump_manager is not None:
         fn_dump_manager.put(json.dumps(metadata, default=vars), metadata_filename)
         signature_filename = f"{file_name}_signature.json"
@@ -903,6 +918,10 @@ class AsmDict(dict):
         return value
 
 
+def _raise_error(err, *args, **kwargs):
+    raise err
+
+
 class CompiledKernel:
 
     def __init__(self, src, metadata_group, hash):
@@ -927,53 +946,60 @@ class CompiledKernel:
             file.suffix[1:]: file.read_bytes() if file.suffix[1:] == binary_ext else file.read_text()
             for file in asm_files
         })
+        self.metadata_group = metadata_group
         self.kernel = self.asm[binary_ext]
         # binaries are lazily initialized
         # because it involves doing runtime things
         # (e.g., checking amount of shared memory on current device)
         self.module = None
         self.function = None
+        self._run = None
 
     def _init_handles(self):
         if self.module is not None:
             return
+
+        def raise_(err):
+            self._run = functools.partial(_raise_error, err)
+            raise err
+
         device = driver.active.get_current_device()
         # create launcher
-        self.run = driver.active.launcher_cls(self.src, self.metadata)
+        self._run = driver.active.launcher_cls(self.src, self.metadata)
         # not enough shared memory to run the kernel
         max_shared = max_shared_mem(device)
         if self.metadata.shared > max_shared:
-            raise OutOfResources(self.metadata.shared, max_shared, "shared memory")
+            raise_(OutOfResources(self.metadata.shared, max_shared, "shared memory"))
         if hasattr(self.metadata, "tmem_size") and self.metadata.tmem_size is not None:
             # Use blackwell max tmem size for now, this should be moved in device properties
             max_tmem_size = 512  # tmem size in number of columns
             if self.metadata.tmem_size > max_tmem_size:
-                raise OutOfResources(self.metadata.tmem_size, max_tmem_size, "tensor memory")
+                raise_(OutOfResources(self.metadata.tmem_size, max_tmem_size, "tensor memory"))
+        if knobs.runtime.kernel_load_start_hook is not None:
+            knobs.runtime.kernel_load_start_hook(self.module, self.function, self.name, self.metadata_group, self.hash)
         # TODO: n_regs, n_spills should be metadata generated when calling `ptxas`
         self.module, self.function, self.n_regs, self.n_spills, self.n_max_threads = driver.active.utils.load_binary(
             self.name, self.kernel, self.metadata.shared, device)
-        print(f"n_regs: {self.n_regs}")
-        print(f"n_spills: {self.n_spills}")
         warp_size = driver.active.get_current_target().warp_size
         if self.metadata.num_warps * warp_size > self.n_max_threads:
-            raise OutOfResources(self.metadata.num_warps * warp_size, self.n_max_threads, "threads")
+            raise_(OutOfResources(self.metadata.num_warps * warp_size, self.n_max_threads, "threads"))
+        if knobs.runtime.kernel_load_end_hook is not None:
+            knobs.runtime.kernel_load_end_hook(self.module, self.function, self.name, self.metadata_group, self.hash)
 
-    def __getattribute__(self, name):
-        if name == 'run':
+    @property
+    def run(self):
+        if self._run is None:
             self._init_handles()
-        return super().__getattribute__(name)
+        return self._run
 
     def launch_metadata(self, grid, stream, *args):
         if knobs.runtime.launch_enter_hook is None:
             return None
+        self._init_handles()
         ret = LazyDict({"name": self.name, "function": self.function, "stream": stream})
         if not isinstance(self.src, ASTSource) or self.src.fn.launch_metadata is None:
             return ret
-        arg_dict = {}
-        arg_idx = 0
-        for i, arg_name in enumerate(self.src.fn.arg_names):
-            arg_dict[arg_name] = args[arg_idx]
-            arg_idx += 1
+        arg_dict = {name: arg for name, arg in zip(self.src.fn.arg_names, args)}
         ret.add(self.src.fn.launch_metadata, (grid, self.metadata, arg_dict))
         return ret
 

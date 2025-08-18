@@ -99,6 +99,8 @@ public:
   // Return the mapped value in the given encoding. This will insert a convert
   // if the encoding is different than the encoding decided at resolve time.
   Value getValueAs(Value value, Attribute encoding);
+  // Return the original value mapped to the new desired encoding.
+  Value getRewrittenValue(Value value);
   // Dump the current stage of layout information.
   void dump();
 
@@ -180,6 +182,7 @@ void LayoutRematerialization::cleanup() {
 // Return true if the op is an op with a layout we don't want to change. We will
 // propagate the layout starting from anchor ops.
 bool isLayoutAnchor(Operation *op) {
+  // txl
   if (isa<LoadOp, AsyncLoadOp, StoreOp>(op))
     return isExpensiveLoadOrStore(op);
   if (isa<DotOp, DotScaledOp, nvidia_gpu::WarpGroupDotOp, AtomicRMWOp,
@@ -345,7 +348,7 @@ void LayoutPropagation::resolveConflicts() {
     // TODO: add a proper heuristic.
     Attribute encoding = *info.encodings.begin();
     bool isLoadOrStore =
-        op && isa<LoadOp, AsyncLoadOp, StoreOp, AtomicRMWOp, AtomicCASOp>(op);
+        op && isa<LoadOp, AsyncLoadOp, StoreOp, AtomicRMWOp, AtomicCASOp>(op); // txl
     for (Attribute e : info.encodings) {
       if ((isLoadOrStore && isa<BlockedEncodingAttr>(e)) ||
           (!isLoadOrStore && isa<MmaEncodingTrait>(e))) {
@@ -441,29 +444,31 @@ void LayoutPropagation::map(Value old, Value newV) {
       newV;
 }
 
+Value LayoutPropagation::getRewrittenValue(Value value) {
+  auto tensorType = dyn_cast<RankedTensorType>(value.getType());
+  if (!tensorType)
+    return value;
+  auto layoutIt = layouts.find(value);
+  if (layoutIt == layouts.end()) {
+    return value;
+  }
+  assert(layoutIt->second.encodings.size() == 1 &&
+         "we should have resolved to a single encoding");
+  Attribute encodingPicked = *(layoutIt->second.encodings.begin());
+  if (encodingPicked == tensorType.getEncoding())
+    return value;
+  return rewriteMapping.at({value, encodingPicked});
+}
+
 Value LayoutPropagation::getValueAs(Value value, Attribute encoding) {
   if (auto tensorType = dyn_cast<RankedTensorType>(value.getType())) {
-    Value rewrittenValue;
-    auto layoutIt = layouts.find(value);
-    if (layoutIt == layouts.end()) {
-      rewrittenValue = value;
-    } else {
-      assert(layoutIt->second.encodings.size() == 1 &&
-             "we should have resolved to a single encoding");
-      Attribute encodingPicked = *(layoutIt->second.encodings.begin());
-      if (encodingPicked == tensorType.getEncoding())
-        rewrittenValue = value;
-      else
-        rewrittenValue = rewriteMapping[{value, encodingPicked}];
-    }
-    assert(rewrittenValue);
+    Value rewrittenValue = getRewrittenValue(value);
     if (cast<RankedTensorType>(rewrittenValue.getType()).getEncoding() ==
         encoding)
       return rewrittenValue;
     OpBuilder rewriter(value.getContext());
     rewriter.setInsertionPointAfterValue(rewrittenValue);
-    auto tmpType = RankedTensorType::get(tensorType.getShape(),
-                                         tensorType.getElementType(), encoding);
+    auto tmpType = tensorType.cloneWithEncoding(encoding);
     Value converted = rewriter.create<ConvertLayoutOp>(value.getLoc(), tmpType,
                                                        rewrittenValue);
     // TODO: we could cache the conversion.
@@ -479,7 +484,19 @@ Operation *LayoutPropagation::cloneElementwise(OpBuilder &rewriter,
 
   Attribute operandEnc;
   if (op->getNumOperands() > 0) {
-    operandEnc = inferSrcEncoding(op, encoding);
+    for (auto operand : op->getOperands()) {
+      auto ty =
+          dyn_cast<RankedTensorType>(getRewrittenValue(operand).getType());
+      if (!ty)
+        continue;
+      auto enc = ty.getEncoding();
+      if (inferDstEncoding(op, enc) == encoding) {
+        operandEnc = enc;
+        break;
+      }
+    }
+    if (!operandEnc)
+      operandEnc = inferSrcEncoding(op, encoding);
     assert(operandEnc);
   }
 
@@ -492,8 +509,7 @@ Operation *LayoutPropagation::cloneElementwise(OpBuilder &rewriter,
     auto origType = dyn_cast<RankedTensorType>(op->getResult(i).getType());
     if (!origType)
       continue;
-    auto newType = RankedTensorType::get(origType.getShape(),
-                                         origType.getElementType(), encoding);
+    auto newType = origType.cloneWithEncoding(encoding);
     newOp->getResult(i).setType(newType);
   }
   return newOp;
@@ -556,9 +572,7 @@ Operation *LayoutPropagation::rewriteWhileOp(scf::WhileOp whileOp) {
       continue;
     }
     auto origType = dyn_cast<RankedTensorType>(ret.getType());
-    auto newType =
-        RankedTensorType::get(origType.getShape(), origType.getElementType(),
-                              it->second.encodings[0]);
+    auto newType = origType.cloneWithEncoding(it->second.encodings[0]);
     returnTypes.push_back(newType);
   }
 
@@ -608,8 +622,7 @@ Operation *LayoutPropagation::rewriteIfOp(scf::IfOp ifOp) {
       continue;
     auto origType = cast<RankedTensorType>(ifOp->getResult(i).getType());
     Attribute encoding = *(it->second.encodings.begin());
-    newResultTypes[i] = RankedTensorType::get(
-        origType.getShape(), origType.getElementType(), encoding);
+    newResultTypes[i] = origType.cloneWithEncoding(encoding);
   }
   auto newIfOp = rewriter.create<scf::IfOp>(ifOp.getLoc(), newResultTypes,
                                             ifOp.getCondition(), true, true);
@@ -705,8 +718,7 @@ Operation *LayoutPropagation::rewriteOp(Operation *op) {
       srcEncoding = *(it->second.encodings.begin());
     Value src = getValueAs(convertOp.getSrc(), srcEncoding);
     auto tensorType = cast<RankedTensorType>(op->getResult(0).getType());
-    auto newType = RankedTensorType::get(tensorType.getShape(),
-                                         tensorType.getElementType(), encoding);
+    auto newType = tensorType.cloneWithEncoding(encoding);
     auto cvt = rewriter.create<ConvertLayoutOp>(op->getLoc(), newType, src);
     map(op->getResult(0), cvt.getResult());
     return cvt.getOperation();
@@ -714,8 +726,7 @@ Operation *LayoutPropagation::rewriteOp(Operation *op) {
   if (canFoldIntoConversion(op, encoding)) {
     Operation *newOp = rewriter.clone(*op);
     auto tensorType = cast<RankedTensorType>(op->getResult(0).getType());
-    auto newType = RankedTensorType::get(tensorType.getShape(),
-                                         tensorType.getElementType(), encoding);
+    auto newType = tensorType.cloneWithEncoding(encoding);
     auto cvt = rewriter.create<ConvertLayoutOp>(op->getLoc(), newType,
                                                 newOp->getResult(0));
     map(op->getResult(0), cvt.getResult());
@@ -741,6 +752,7 @@ Operation *LayoutPropagation::rewriteOp(Operation *op) {
 }
 
 bool canBeRemat(Operation *op) {
+  // txl
   if (isa<LoadOp, AsyncLoadOp, StoreOp>(op))
     return !isExpensiveLoadOrStore(op);
   if (isa<AtomicRMWOp, AtomicCASOp, DotOp>(op))
@@ -875,8 +887,7 @@ void LayoutRematerialization::rewriteSlice(SetVector<Value> &slice,
           assert(it != layout.end());
 
           auto oldType = cast<RankedTensorType>(res.getType());
-          auto newType = RankedTensorType::get(
-              oldType.getShape(), oldType.getElementType(), it->second);
+          auto newType = oldType.cloneWithEncoding(it->second);
           newTypes.push_back(newType);
         }
       }
@@ -914,9 +925,7 @@ void LayoutRematerialization::rewriteSlice(SetVector<Value> &slice,
     if (isa<arith::ConstantOp>(op)) {
       Operation *newOp = builder.clone(*op);
       auto tensorType = cast<RankedTensorType>(op->getResult(0).getType());
-      auto newType = RankedTensorType::get(tensorType.getShape(),
-                                           tensorType.getElementType(),
-                                           layout[op->getResult(0)]);
+      auto newType = tensorType.cloneWithEncoding(layout[op->getResult(0)]);
       auto cvt = builder.create<ConvertLayoutOp>(op->getLoc(), newType,
                                                  newOp->getResult(0));
       mapping.map(op->getResult(0), cvt.getResult());
@@ -929,9 +938,8 @@ void LayoutRematerialization::rewriteSlice(SetVector<Value> &slice,
       auto it = layout.find(old);
       if (it == layout.end())
         continue;
-      auto newType = RankedTensorType::get(
-          cast<RankedTensorType>(old.getType()).getShape(),
-          cast<RankedTensorType>(old.getType()).getElementType(), it->second);
+      auto newType =
+          cast<RankedTensorType>(old.getType()).cloneWithEncoding(it->second);
       newV.setType(newType);
       addRematValue(old, it->second, newV);
     }
@@ -1194,7 +1202,7 @@ void LayoutRematerialization::backwardRematerialization(
     } else if (isa<arith::ConstantOp>(op)) {
       // special-case: arith.constant has zero cost
       continue;
-    } else if (isa<LoadOp>(op)) {
+    } else if (isa<LoadOp>(op) || isa<AsyncLoadOp>(op) || isa<LocalLoadOp>(op)) { // txl
       // optimistically assume L1-cached:
       for (Value result : op->getResults()) {
         rematerialisationCost += 8 * getByteCount(result);
@@ -1209,6 +1217,19 @@ void LayoutRematerialization::backwardRematerialization(
       for (Value result : op->getResults()) {
         rematerialisationCost += multiplier * getByteCount(result);
       }
+    } else if (isa<ReduceOp>(op)) {
+      // Reduce op introduce much cost.
+      auto reduceOp = dyn_cast<ReduceOp>(op);
+      ReduceOpHelper helper(reduceOp);
+      if (!helper.isAssociative()) {
+        // We shouldn't rematerize a no associative reduce op if it has multiple
+        // use chain.
+        LDBG("  skipped rematerialization due to non-associative reduce in the "
+             "slice");
+        return;
+      }
+      rematerialisationCost += helper.getIntraWarpSizeWithUniqueData();
+      rematerialisationCost += 8 * helper.getInterWarpSizeWithUniqueData();
     }
   }
 
@@ -1317,7 +1338,7 @@ void LayoutRematerialization::hoistConvertDotOperand(
 
     // We expect the leaves of the slice to be Load, DescriptorLoad or
     // arith::Constant This could be generalised if necessary
-    if (!isa<LoadOp, DescriptorLoadOp>(v.getDefiningOp())) {
+    if (!isa<LoadOp, AsyncLoadOp, DescriptorLoadOp>(v.getDefiningOp())) { // txl
       auto op = v.getDefiningOp();
       if (isa<arith::ConstantOp>(op) || noDataMovement(op)) {
         innerSlice.insert(v);
@@ -1335,8 +1356,7 @@ void LayoutRematerialization::hoistConvertDotOperand(
     auto type = dyn_cast<RankedTensorType>(loadOp->getResult(0).getType());
     if (!type)
       continue;
-    auto newType = RankedTensorType::get(type.getShape(), type.getElementType(),
-                                         layout[loadOp->getResult(0)]);
+    auto newType = type.cloneWithEncoding(layout[loadOp->getResult(0)]);
     auto newConvertOp = builder.create<ConvertLayoutOp>(
         convertOp.getLoc(), newType, loadOp->getResult(0));
     mapping.map(loadOp->getResult(0), newConvertOp.getResult());
@@ -1438,18 +1458,16 @@ void LayoutRematerialization::hoistConvertOnTopOfExtOrBroadcast(
   OpBuilder builder(extOrBroadcastOp);
   auto tensorType =
       cast<RankedTensorType>(extOrBroadcastOp->getOperand(0).getType());
-  auto newType = RankedTensorType::get(
-      tensorType.getShape(), tensorType.getElementType(), srcEncoding);
+  auto newType = tensorType.cloneWithEncoding(srcEncoding);
   auto newConvertOp = builder.create<ConvertLayoutOp>(
       convertOp.getLoc(), newType, extOrBroadcastOp->getOperand(0));
   Operation *newExtOrBroadcast = builder.clone(*extOrBroadcastOp);
   newExtOrBroadcast->setOperand(0, newConvertOp.getResult());
   auto oldExtOrBroadcastType =
       cast<RankedTensorType>(extOrBroadcastOp->getResult(0).getType());
-  Type newExtOrBroadcasrType = RankedTensorType::get(
-      oldExtOrBroadcastType.getShape(), oldExtOrBroadcastType.getElementType(),
-      dstEncoding);
-  newExtOrBroadcast->getResult(0).setType(newExtOrBroadcasrType);
+  Type newExtOrBroadcastType =
+      oldExtOrBroadcastType.cloneWithEncoding(dstEncoding);
+  newExtOrBroadcast->getResult(0).setType(newExtOrBroadcastType);
   IRMapping mapping;
   mapping.map(extOrBroadcastOp->getResult(0), newExtOrBroadcast->getResult(0));
   slice.remove(extOrBroadcastOp->getResult(0));
@@ -1554,8 +1572,7 @@ void LayoutRematerialization::hoistConvertIntoConditionals(
   IRMapping mapping;
   auto hoistRemat = [&](OpBuilder &b, Value v, Attribute encoding) {
     auto tensorType = cast<RankedTensorType>(v.getType());
-    auto newType = RankedTensorType::get(tensorType.getShape(),
-                                         tensorType.getElementType(), encoding);
+    auto newType = tensorType.cloneWithEncoding(encoding);
     Value newCvt = b.create<ConvertLayoutOp>(convertOp.getLoc(), newType, v);
 
     mapping.map(v, newCvt);

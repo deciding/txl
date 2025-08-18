@@ -1,9 +1,11 @@
 TO_DIR=thirdparty/triton
-FROM_DIR=patch/triton3.4.x
+FROM_DIR=patch/triton
 
 cp ${FROM_DIR}/bin/RegisterTritonDialects.h ${TO_DIR}/bin
 
 cp ${FROM_DIR}/include/CMakeLists.txt ${TO_DIR}/include/
+
+cp ${FROM_DIR}/include/triton/Analysis/Allocation.h ${TO_DIR}/include/triton/Analysis/
 
 cp ${FROM_DIR}/include/triton/Analysis/TXLUtility.h ${TO_DIR}/include/triton/Analysis/
 
@@ -17,6 +19,7 @@ cp ${FROM_DIR}/lib/Analysis/CMakeLists.txt ${TO_DIR}/lib/Analysis/
 cp ${FROM_DIR}/lib/Analysis/Membar.cpp ${TO_DIR}/lib/Analysis/
 cp ${FROM_DIR}/lib/Analysis/TXLUtility.cpp ${TO_DIR}/lib/Analysis/
 
+cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/AllocateWarpGroups.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/lib/Conversion/TritonToTritonGPU/TritonGPUConversion.cpp ${TO_DIR}/lib/Conversion/TritonToTritonGPU/
 cp ${FROM_DIR}/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp ${TO_DIR}/lib/Conversion/TritonToTritonGPU/
 
@@ -26,6 +29,7 @@ cp ${FROM_DIR}/lib/Dialect/CMakeLists.txt ${TO_DIR}/lib/Dialect/
 
 cp ${FROM_DIR}/lib/Dialect/Triton/Transforms/RewriteTensorPointer.cpp ${TO_DIR}/lib/Dialect/Triton/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Coalesce.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
+cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/OptimizeThreadLocality.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/RemoveLayoutConversions.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Utility.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/

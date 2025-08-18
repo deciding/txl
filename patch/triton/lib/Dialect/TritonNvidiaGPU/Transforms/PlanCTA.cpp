@@ -25,8 +25,8 @@
 
 #include "mlir/Support/LLVM.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
-#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/Passes.h"
 #include "llvm/ADT/STLExtras.h"
@@ -56,8 +56,7 @@ Type replaceLayout(const Type &type, const Attribute &newLayout) {
   if (ptrTy)
     curType = ptrTy.getPointeeType();
   if (auto tensorTy = dyn_cast<RankedTensorType>(curType))
-    curType = RankedTensorType::get(tensorTy.getShape(),
-                                    tensorTy.getElementType(), newLayout);
+    curType = tensorTy.cloneWithEncoding(newLayout);
   if (ptrTy)
     curType = triton::PointerType::get(curType, ptrTy.getAddressSpace());
   return curType;
@@ -619,6 +618,7 @@ void CTAPlanner::eliminateAdjacentCasts(CastOp cast0, CastOp cast1) {
 }
 
 bool CTAPlanner::isLoadStoreOp(Operation *op) const {
+  // txl
   return llvm::isa<triton::LoadOp, triton::StoreOp, triton::AsyncLoadOp, triton::AtomicRMWOp,
                    triton::AtomicCASOp, triton::DescriptorLoadOp,
                    triton::DescriptorStoreLikeOpInterface,
@@ -726,8 +726,7 @@ bool CTAPlanner::processConstant(arith::ConstantOp constant, Attribute layout) {
   if (auto tensorTy = dyn_cast<RankedTensorType>(constant.getType())) {
     if (auto attr = dyn_cast<SplatElementsAttr>(constant.getValue())) {
 
-      auto newTensorTy = RankedTensorType::get(
-          tensorTy.getShape(), tensorTy.getElementType(), layout);
+      auto newTensorTy = tensorTy.cloneWithEncoding(layout);
       constant.setValueAttr(
           SplatElementsAttr::get(newTensorTy, attr.getSplatValue<Attribute>()));
     }

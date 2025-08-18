@@ -631,8 +631,8 @@ def matmul_descriptor_persistent(a, b, warp_specialize: bool):
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
-#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
-@txl.jit(launch_metadata=_matmul_launch_metadata)
+@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+#@txl.jit(launch_metadata=_matmul_launch_metadata)
 def matmul_naive_tma_txl_kernel(
     a_desc,
     b_desc,
@@ -1684,10 +1684,10 @@ if __name__ == "__main__":
 
         #validate(32, 32, 32, dtype)
         #validate(128, 128, 512, dtype, log=True)
-        #validate(8192, 8192, args.K_range[0], dtype)
+        validate(8192, 8192, args.K_range[0], dtype)
 
-        profile(8192, 8192, args.K_range[0], dtype)
-        exit()
+        #profile(8192, 8192, args.K_range[0], dtype)
+        #exit()
 
         proton.start("matmul", hook="triton")
         proton.deactivate()

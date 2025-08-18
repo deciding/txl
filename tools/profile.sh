@@ -1,9 +1,11 @@
 export CUDA_VISIBLE_DEVICES=3
 export TRITON_ALWAYS_COMPILE=1
 
+CMD=$1 # ncu, nsys
+
 REGEX="flash|txl|coopA"
 
-OUTPUT="fa3_profile"
+OUTPUT="txl_fa_profile"
 ### 3 levels of metrics
 
 ANALYSIS="full"
@@ -51,10 +53,20 @@ if [ -n "$SECTIONS" ]; then
     done
 fi
 
-ncu \
-    ${METRICS:+--metrics "$METRICS"} \
-    ${ANALYSIS:+--set "$ANALYSIS"} \
-    "${section_flags[@]}" \
-    ${REGEX:+--kernel-name "regex:$REGEX"} \
-    ${OUTPUT:+-o "$OUTPUT"} \
-    python $PY_SCRIPT
+if [ "$CMD" == "ncu" ]; then
+    ncu \
+        ${METRICS:+--metrics "$METRICS"} \
+        ${ANALYSIS:+--set "$ANALYSIS"} \
+        "${section_flags[@]}" \
+        ${REGEX:+--kernel-name "regex:$REGEX"} \
+        ${OUTPUT:+-o "$OUTPUT"} \
+        python $PY_SCRIPT
+elif [ "$CMD" == "nsys" ]; then
+    nsys profile \
+        -t cuda \
+        ${OUTPUT:+-o "$OUTPUT"} \
+        python $PY_SCRIPT
+else
+    echo "Usage: $0 [ncu|nsys]"
+    exit 1
+fi

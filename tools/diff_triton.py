@@ -1,18 +1,24 @@
 # must at the src_commit
 FROM_DIR='.'
-PATCH_DIR="patch/triton"
-NEW_PATCH_DIR="patch/triton3.4.x"
 
-REPO_PATH = '/ssd2/zhangzn/triton/'
+PATCH_DIR="patch/triton"
+NEW_PATCH_DIR="patch/triton3.4.x-proton"
+
+# src_commit
+REPO_PATH = '/ssd2/zhangzn/triton-old/'
+# trg_commit
 NEW_REPO_PATH = '/ssd2/zhangzn/triton-latest/'
-src_commit  = "release/3.3.x"
-trg_commit  = "release/3.4.x"
+
+src_commit  = "release/3.4.x"
+#trg_commit  = "release/3.4.x"
+trg_commit  = "5231471"
 
 files = []
 files.append(f"{FROM_DIR}/bin/RegisterTritonDialects.h")
 
 files.append(f"{FROM_DIR}/include/CMakeLists.txt")
 
+files.append(f"{FROM_DIR}/include/triton/Analysis/Allocation.h")
 files.append(f"{FROM_DIR}/include/triton/Analysis/TXLUtility.h")
 
 files.append(f"{FROM_DIR}/include/triton/Conversion/TritonToTritonGPU/Passes.td")
@@ -25,6 +31,7 @@ files.append(f"{FROM_DIR}/lib/Analysis/CMakeLists.txt")
 files.append(f"{FROM_DIR}/lib/Analysis/Membar.cpp")
 files.append(f"{FROM_DIR}/lib/Analysis/TXLUtility.cpp")
 
+files.append(f"{FROM_DIR}/lib/Conversion/TritonGPUToLLVM/AllocateWarpGroups.cpp")
 files.append(f"{FROM_DIR}/lib/Conversion/TritonToTritonGPU/TritonGPUConversion.cpp")
 files.append(f"{FROM_DIR}/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp")
 
@@ -36,10 +43,10 @@ files.append(f"{FROM_DIR}/lib/Dialect/Triton/Transforms/RewriteTensorPointer.cpp
 files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Coalesce.cpp")
 files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/OptimizeThreadLocality.cpp")
 files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/RemoveLayoutConversions.cpp")
-files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/TaskIdPropagate.cpp")
+#files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/TaskIdPropagate.cpp")
 files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Utility.cpp")
-files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/WSCodePartition.cpp")
-files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/WSDataPartition.cpp")
+#files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/WSCodePartition.cpp")
+#files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/WSDataPartition.cpp")
 files.append(f"{FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/CMakeLists.txt")
 files.append(f"{FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/PlanCTA.cpp")
 
@@ -101,22 +108,24 @@ def git_diff_commits(repo_path, file_path, commit1, commit2):
         print(f"Error diffing files: {e.stderr}")
         return None
 
-init = 32
+init = 31
 for idx, fn in enumerate(files[init:]):
     idx += init
     txl_full_path = os.path.join(os.getcwd(), PATCH_DIR, fn)
     triton_full_path = os.path.join(REPO_PATH, fn)
     new_triton_full_path = os.path.join(NEW_REPO_PATH, fn)
-    print(f"{idx}. Release Diff: {fn}")
-    (git_diff_commits(REPO_PATH, fn, src_commit, trg_commit))
-    print(f"{idx}. TXL Diff: {fn}")
-    (git_diff_files(triton_full_path, txl_full_path))
 
     new_triton_path = os.path.join(os.getcwd(), NEW_PATCH_DIR, fn)
     if (os.path.exists(new_triton_full_path) and not os.path.exists(new_triton_path)):
         new_parent_path = os.path.dirname(new_triton_path)
         os.makedirs(new_parent_path, exist_ok=True)
         shutil.copy(new_triton_full_path, new_parent_path)
+
+    print(f"{idx}. Release Diff: {fn}")
+    (git_diff_commits(REPO_PATH, fn, src_commit, trg_commit))
+    print(f"{idx}. TXL Diff: {fn}")
+    (git_diff_files(triton_full_path, txl_full_path))
+
     print(f"vim -O {new_triton_path} {txl_full_path}")
 
     cont = input("CONTINUE?")
@@ -124,6 +133,45 @@ for idx, fn in enumerate(files[init:]):
         continue
     else:
         break
+
+txl_dirs = [
+    "include/txl",
+    "lib/Dialect/TXL",
+    "third_party/nvidia/include/Dialect/TXLGPU",
+    "third_party/nvidia/include/TXLGPUToLLVM",
+    "third_party/nvidia/lib/Dialect/TXLGPU",
+    "third_party/nvidia/lib/TXLGPUToLLVM",
+]
+
+def copy_with_full_path_overwrite(old_parent, new_parent, dir_to_copy):
+    old_parent = Path(old_parent)
+    new_parent = Path(new_parent)
+    dir_to_copy = Path(dir_to_copy)
+
+    src_path = old_parent / dir_to_copy
+    dest_path = new_parent / dir_to_copy
+
+    # Remove destination if it exists
+    if dest_path.exists():
+        # CAREFULL for the exists case
+        print(f"{dest_path} exists!")
+        return
+
+        if dest_path.is_dir():
+            shutil.rmtree(dest_path)
+        else:
+            dest_path.unlink()
+
+    # Create parent directories
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Copy the directory tree
+    shutil.copytree(src_path, dest_path)
+
+#for txl_dir in txl_dirs:
+#    copy_with_full_path_overwrite(PATCH_DIR, NEW_PATCH_DIR, txl_dir)
+#exit()
+
 
 # CHECK CHANGE OF IR
 files = [
@@ -150,49 +198,109 @@ for idx, fn in enumerate(files[init:]):
 #third_party/nvidia/include/Dialect/TXLGPU
 #third_party/nvidia/include/TXLGPUToLLVM
 #third_party/nvidia/lib/Dialect/TXLGPU
+
+#files = []
+#files.append(
+#    (
+#        f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp",
+#        f"{FROM_DIR}/third_party/nvidia/lib/Dialect/TXLGPU/Transforms/AccelerateMatmul.cpp",
+#    )
+#)
+#files.append(
+#    (
+#        f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/OptimizeDotOperands.cpp",
+#        f"{FROM_DIR}/third_party/nvidia/lib/Dialect/TXLGPU/Transforms/OptimizeDotOperands.cpp",
+#    )
+#)
+## Also WGMMAPipeline for asyncDot and updateWaits
+#init = 0
+## remember to copy the whole folder to new patch, and remove the specific files
+#for idx, (triton_fn, txl_fn) in enumerate(files[init:]):
+#    idx += init
+#    txl_full_path = os.path.join(os.getcwd(), PATCH_DIR, txl_fn)
+#    triton_full_path = os.path.join(REPO_PATH, triton_fn)
+#    new_triton_full_path = os.path.join(NEW_REPO_PATH, triton_fn)
+#
+#    new_triton_path = os.path.join(os.getcwd(), NEW_PATCH_DIR, triton_fn)
+#    if (os.path.exists(new_triton_full_path) and not os.path.exists(new_triton_path)):
+#        new_parent_path = os.path.dirname(new_triton_path)
+#        os.makedirs(new_parent_path, exist_ok=True)
+#        shutil.copy(new_triton_full_path, new_parent_path)
+#        continue
+#
+#    print(f"{idx}. Release Diff: {txl_fn}")
+#    (git_diff_commits(REPO_PATH, triton_fn, src_commit, trg_commit))
+#    print(f"{idx}. TXL Diff: {txl_fn}")
+#    (git_diff_files(triton_full_path, txl_full_path))
+#
+#    print(f"vim -O {new_triton_path} {txl_full_path}")
+#
+#    cont = input("CONTINUE?")
+#    if cont.strip() != 'q':
+#        continue
+#    else:
+#        break
+
+
+
+#third_party/nvidia/lib/TXLGPUToLLVM
+
+# CHECK language/__init__.py
+# CHECK runtime.jit and compiler.compiler
+# CHECK proton, autotune, code_generator
+
 files = []
 files.append(
     (
-        f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp",
-        f"{FROM_DIR}/third_party/nvidia/lib/Dialect/TXLGPU/Transforms/AccelerateMatmul.cpp",
+        f"./python/triton/language/__init__.py",
+        f"./python/txl/language/__init__.py",
     )
 )
 files.append(
     (
-        f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/OptimizeDotOperands.cpp",
-        f"{FROM_DIR}/third_party/nvidia/lib/Dialect/TXLGPU/Transforms/OptimizeDotOperands.cpp",
+        f"./python/triton/runtime/jit.py",
+        f"./python/txl/runtime/jit.py",
     )
 )
-# Also WGMMAPipeline for asyncDot and updateWaits
-init = 1
-# remember to copy the whole folder to new patch, and remove the specific files
+files.append(
+    (
+        f"./python/triton/runtime/autotuner.py",
+        f"./python/txl/runtime/autotuner.py",
+    )
+)
+files.append(
+    (
+        f"./python/triton/compiler/compiler.py",
+        f"./python/txl/compiler/compiler.py",
+    )
+)
+files.append(
+    (
+        f"./python/triton/compiler/code_generator.py",
+        f"./python/txl/compiler/code_generator.py",
+    )
+)
+init = 4
 for idx, (triton_fn, txl_fn) in enumerate(files[init:]):
     idx += init
-    txl_full_path = os.path.join(os.getcwd(), PATCH_DIR, txl_fn)
+    txl_full_path = txl_fn
+
     triton_full_path = os.path.join(REPO_PATH, triton_fn)
     new_triton_full_path = os.path.join(NEW_REPO_PATH, triton_fn)
+
     print(f"{idx}. Release Diff: {txl_fn}")
-    (git_diff_commits(REPO_PATH, triton_fn, src_commit, trg_commit))
+    (git_diff_files(triton_full_path, new_triton_full_path))
     print(f"{idx}. TXL Diff: {txl_fn}")
     (git_diff_files(triton_full_path, txl_full_path))
 
-    new_triton_path = os.path.join(os.getcwd(), NEW_PATCH_DIR, triton_fn)
-    if (os.path.exists(new_triton_full_path) and not os.path.exists(new_triton_path)):
-        new_parent_path = os.path.dirname(new_triton_path)
-        os.makedirs(new_parent_path, exist_ok=True)
-        shutil.copy(new_triton_full_path, new_parent_path)
-    print(f"vim -O {new_triton_path} {txl_full_path}")
+    print(f"vim -O {new_triton_full_path} {txl_fn}")
 
     cont = input("CONTINUE?")
     if cont.strip() != 'q':
         continue
     else:
         break
-#third_party/nvidia/lib/TXLGPUToLLVM
 
-# CHECK runtime.jit and compiler.compiler
-# CHECK semantic and core, language/__init__.py
-
-# CHECK proton, autotune, code_generator
-
+# align semantic and core
 # align compiler.compiler with nvidia backend
+# vim -O python/txl/compiler/compiler.py patch/triton3.4.x-proton/third_party/nvidia/backend/compiler.py

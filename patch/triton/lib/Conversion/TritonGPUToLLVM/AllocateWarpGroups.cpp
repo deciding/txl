@@ -193,6 +193,8 @@ struct AllocateWarpGroups
     });
 
     Builder b(&getContext());
+
+    //txl
     auto totalNumWarps = mod->getAttrOfType<IntegerAttr>("ttg.total-num-warps");
     auto txlWarpgroupsSet = mod->getAttrOfType<IntegerAttr>("ttg.txl-warpgroups-set");
     // NOTE: txl this might break the WS for hopper

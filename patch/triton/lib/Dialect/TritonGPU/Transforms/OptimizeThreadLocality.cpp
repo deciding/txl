@@ -8,8 +8,8 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 #include "triton/Analysis/Utility.h"
-#include "triton/Dialect/Triton/IR/Utility.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
+#include "triton/Dialect/Triton/IR/Utility.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
@@ -91,12 +91,6 @@ struct OptimizeReshapeLayoutPattern : public OpRewritePattern<ReshapeOp> {
   }
 };
 } // namespace
-
-static RankedTensorType replaceEncoding(RankedTensorType oldType,
-                                        Attribute newEncoding) {
-  return RankedTensorType::get(oldType.getShape(), oldType.getElementType(),
-                               newEncoding);
-}
 
 // This function considers a gather op in isolation and attempts to determine
 // whether an optimized layout can be applied to the source and index tensors.
@@ -206,9 +200,9 @@ static LogicalResult setOptimizedGatherLayout(GatherOp op, RewriterBase &b) {
 
   // Update the layout on the gather op and insert conversions.
   auto cvtSrc = b.create<ConvertLayoutOp>(
-      op.getLoc(), replaceEncoding(srcType, newLayout), op.getSrc());
+      op.getLoc(), srcType.cloneWithEncoding(newLayout), op.getSrc());
   auto cvtIdx = b.create<ConvertLayoutOp>(
-      op.getLoc(), replaceEncoding(idxType, newLayout), op.getIndices());
+      op.getLoc(), idxType.cloneWithEncoding(newLayout), op.getIndices());
 
   b.setInsertionPointAfter(op);
   auto cvtOut =
@@ -218,7 +212,7 @@ static LogicalResult setOptimizedGatherLayout(GatherOp op, RewriterBase &b) {
   b.modifyOpInPlace(op, [&] {
     op.getSrcMutable().set(cvtSrc);
     op.getIndicesMutable().set(cvtIdx);
-    op.getResult().setType(replaceEncoding(op.getType(), newLayout));
+    op.getResult().setType(op.getType().cloneWithEncoding(newLayout));
 
     // Mark the layout as optimized on the op to prevent it from being changed.
     op.setEfficientLayout(true);
@@ -277,6 +271,7 @@ class TritonGPUOptimizeThreadLocalityPass
       if (reduce.getAxis() != rank - 1)
         return;
       for (auto operand : reduce->getOperands()) {
+        //txl
         if (!(operand.getDefiningOp<triton::LoadOp>() || operand.getDefiningOp<triton::AsyncLoadOp>()))
           return;
       }

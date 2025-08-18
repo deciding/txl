@@ -35,6 +35,8 @@ public:
 
   RewritedInfo(const RewritedInfo &other) = default;
 
+  RewritedInfo &operator=(const RewritedInfo &other) = default;
+
   RewritedInfo(Value base, const SmallVector<Value> &shape,
                const SmallVector<Value> &strides,
                const SmallVector<Value> &offsets,
@@ -80,7 +82,7 @@ public:
     // Expand dimensions
     Value expandedResult =
         builder.create<arith::AddIOp>(loc, splatOffset, i64Range);
-    for (int j = 0; j < tensorShape.size(); ++j) {
+    for (uint j = 0; j < tensorShape.size(); ++j) {
       if (j == i)
         continue;
       expandedResult =
@@ -258,7 +260,7 @@ public:
     // Calculate new offsets
     assert(info.length() == op.getOffsets().size());
     SmallVector<Value> newOffsets;
-    for (int i = 0; i < info.length(); ++i) {
+    for (uint i = 0; i < info.length(); ++i) {
       Value i64Offset = builder.create<arith::ExtSIOp>(
           op.getLoc(), builder.getI64Type(), op.getOffsets()[i]);
       Value newOffset = builder.create<arith::AddIOp>(
@@ -277,6 +279,7 @@ public:
 
   Operation *rewriteLoadStoreOp(OpBuilder &builder, Operation *op,
                                 std::stack<Operation *> &eraser) {
+    // txl
     assert(isa<triton::LoadOp>(op) || isa<triton::StoreOp>(op) || isa<triton::AsyncLoadOp>(op));
 
     // We only have to rewrite load/stores with tensor pointers
@@ -297,6 +300,7 @@ public:
       assert(!loadOp.getMask() && !loadOp.getOther());
       boundaryCheck = loadOp.getBoundaryCheck();
     } else if (auto loadOp = dyn_cast<triton::AsyncLoadOp>(op)) {
+      // txl
       assert(!loadOp.getMask());
       boundaryCheck = loadOp.getBoundaryCheck();
     } else if (auto storeOp = dyn_cast<triton::StoreOp>(op)) {
@@ -311,7 +315,7 @@ public:
     if (auto loadOp = dyn_cast<triton::LoadOp>(op))
       newOther = info.generateOther(builder, op->getLoc(), loadOp.getPadding());
     else if (auto loadOp = dyn_cast<triton::AsyncLoadOp>(op)) {
-      // PaddingOptionX to PaddingOption
+      // txl: PaddingOptionX to PaddingOption
       std::optional<triton::PaddingOption> optPadding;
       if (loadOp.getPadding().has_value())
           optPadding = static_cast<triton::PaddingOption>(static_cast<uint32_t>(loadOp.getPadding().value()));
@@ -325,6 +329,7 @@ public:
           loadOp.getEvict(), loadOp.getIsVolatile());
       op->getResult(0).replaceAllUsesWith(newResult);
     } else if (auto loadOp = dyn_cast<triton::AsyncLoadOp>(op)) {
+      // txl
       auto newResult = builder.create<triton::AsyncLoadOp>(
           loadOp.getLoc(),
           loadOp->getResult(0).getType(),
@@ -516,7 +521,7 @@ public:
       return rewriteMakeTensorPtrOp(builder, makeTensorPtrOp, eraser);
     } else if (auto advanceOp = dyn_cast<triton::AdvanceOp>(op)) {
       return rewriteAdvanceOp(builder, advanceOp, eraser);
-    } else if (isa<triton::LoadOp>(op) || isa<triton::StoreOp>(op) || isa<triton::AsyncLoadOp>(op)) {
+    } else if (isa<triton::LoadOp>(op) || isa<triton::StoreOp>(op) || isa<triton::AsyncLoadOp>(op)) { // txl
       return rewriteLoadStoreOp(builder, op, eraser);
     } else if (isa<scf::SCFDialect, cf::ControlFlowDialect>(op->getDialect())) {
       if (auto ifOp = dyn_cast<scf::IfOp>(op)) {

@@ -26,6 +26,8 @@
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/TritonGPUConversion.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
+#include "proton/Dialect/include/Dialect/Proton/IR/Dialect.h"
+#include "proton/Dialect/include/Dialect/ProtonGPU/IR/Dialect.h"
 #include <deque>
 #include <memory>
 
@@ -33,6 +35,8 @@ using namespace mlir::triton::gpu;
 namespace tt = mlir::triton;
 namespace ttxg = mlir::triton::txlgpu;
 namespace ttng = ::mlir::triton::nvidia_gpu;
+namespace ttp = ::mlir::triton::proton;
+namespace ttpg = ::mlir::triton::proton::gpu;
 
 namespace mlir::triton::txlgpu {
 
@@ -421,6 +425,16 @@ Operation *SpecializeOp(Operation *op, IRMapping &mapping,
   return nullptr;
 }
 
+template <typename T, typename OP> bool hasOperator(T *o) {
+  bool exist = false;
+  o->walk([&](OP op) {
+    exist = true;
+    return WalkResult::interrupt();
+  });
+  return exist;
+}
+
+
 void SpecializeOuterWarpgroupIf(scf::IfOp ifOp, int32_t numWarpgroups, bool hasTma) {
 
   LLVM_DEBUG({
@@ -480,6 +494,7 @@ void SpecializeOuterWarpgroupIf(scf::IfOp ifOp, int32_t numWarpgroups, bool hasT
       auto newIfOp = builder.create<scf::IfOp>(loc, cond);
       setOpAttrWgId(newIfOp, asyncTaskId);
       tasksToIfOp[asyncTaskId] = newIfOp;
+      newIfOp->setAttr("txl-outer-warpgroup", builder.getI32IntegerAttr(1));
 
       OpBuilder taskBuilder(context);
 
@@ -489,9 +504,35 @@ void SpecializeOuterWarpgroupIf(scf::IfOp ifOp, int32_t numWarpgroups, bool hasT
 
       // copy over the ops inside the region to the new ifop
       IRMapping mapping;
-      for (Operation &op : blockVec[i]->getOperations()) { // TODO: assume no else
-        SpecializeOp(&op, mapping, taskBuilder, asyncTaskId, idsVec[i]); // TODO: add parent task ids for else block
+      for (Operation &op : blockVec[i]->getOperations()) {
+        SpecializeOp(&op, mapping, taskBuilder, asyncTaskId, idsVec[i]);
       }
+
+      // TODO: to enable yield we either:
+      // 1. yield dummy for else
+      // 2. nest if else in else
+      //unsigned resultIdx = 0;
+      //SmallVector<unsigned> keptResultVec;
+      //if (!ifOp->getResultTypes().empty()) {
+      //  for (Value yieldV : ifOp.thenYield()->getOperands()) {
+      //    keptResultVec.push_back(resultIdx);
+      //    ++resultIdx;
+      //  }
+      //}
+
+      //SmallVector<Type> newResultTypes;
+      //for (auto idx : keptResultVec) {
+      //  newResultTypes.push_back(ifOp->getResultTypes()[idx]);
+      //}
+
+      //for (auto idx : keptResultVec) {
+      //  auto oldIfResultSrc = ifOp.thenYield()->getOperands()[idx]; // then or else
+      //  auto flatIfResult = mapping.lookupOrDefault(oldIfResultSrc);
+      //  assert(flatIfResult && "Unexpected missing mapping");
+
+      //  mapping.map(ifOp.getResult(idx), flatIfResult);
+      //}
+
       yieldOp->erase();
 
       LLVM_DEBUG({
@@ -522,6 +563,29 @@ void SpecializeOuterWarpgroupIf(scf::IfOp ifOp, int32_t numWarpgroups, bool hasT
       else
         taskBuilder.create<ttxg::RegDeallocOp>(
             loc, taskBuilder.getI32IntegerAttr(regAlloc.first));
+
+    }
+
+    // Stage 3
+    // check proton record op exist and add ctx ops
+    for (auto ifOps : tasksToIfOp) {
+      int asyncTaskId = ifOps.first;
+      // don't create new segment for master warp
+      if (asyncTaskId == 0)
+          continue;
+      auto newIfOp = ifOps.second;
+
+      OpBuilder taskBuilder(newIfOp.getContext());
+
+      Block &firstBlock = newIfOp.getThenRegion().front();
+
+      if (hasOperator<Operation, ttp::RecordOp>(newIfOp)) {
+          taskBuilder.setInsertionPointToStart(&firstBlock);
+          taskBuilder.create<ttxg::RestoreCtxOp>(loc, asyncTaskId);
+
+          taskBuilder.setInsertionPoint(newIfOp.thenYield());
+          taskBuilder.create<ttxg::SaveCtxOp>(loc, asyncTaskId);
+      }
 
     }
   }
@@ -567,7 +631,6 @@ void lowerGetAsyncTaskIdOp(Operation *parentOp, int numConsumerGroups) {
 }
 #endif
 
-
 class TXLGPUWSCodePartitionPass
     : public impl::TXLGPUWSCodePartitionBase<
           TXLGPUWSCodePartitionPass> {
@@ -598,6 +661,12 @@ public:
           SpecializeOuterWarpgroupIf(outerIf, numWarpgroups, hasTma);
         }
 
+        // add init context
+        if (wgOps.size()) {
+            OpBuilder builder(funcOp);
+            builder.setInsertionPointToStart(&funcOp.getBody().front());
+            builder.create<ttxg::InitCtxOp>(funcOp.getLoc()); // TODO: better loc
+        }
     });
 
     m->walk([&](tt::IsWarpgroupOp isWarpgroupOp) {

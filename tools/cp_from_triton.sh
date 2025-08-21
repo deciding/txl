@@ -58,6 +58,9 @@ cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/LoadStoreOpToLLVM.cp
 
 cp ${FROM_DIR}/third_party/nvidia/triton_nvidia.cc ${TO_DIR}/third_party/nvidia/
 
+cp ${FROM_DIR}/third_party/proton/Dialect/lib/ProtonToProtonGPU/ProtonToProtonGPUPass.cpp ${TO_DIR}/third_party/proton/Dialect/lib/ProtonToProtonGPU/
+cp ${FROM_DIR}/third_party/proton/proton/language.py ${TO_DIR}/third_party/proton/proton/
+
 # make sure folder no exist
 rm -rf ${TO_DIR}/include/txl
 rm -rf ${TO_DIR}/lib/Dialect/TXL/

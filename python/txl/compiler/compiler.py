@@ -533,6 +533,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
     #metadata["tensordesc_meta"] = tensordesc_meta
     return mod
 
+from triton.backends.nvidia.compiler import CUDABackend
 def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
     ptx_version = load_ptx_func('get_ptx_version_from_options')(options, backend.target.arch)
 
@@ -547,10 +548,10 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
 
     def instrument_ttgpuir_to_llvmir(i):
         #TODO: check
-        backend.instrumentation.patch("ttgpuir_to_llvmir", i, src.context)
+        CUDABackend.instrumentation.patch("ttgpuir_to_llvmir", i, src.context)
     def instrument_llvmir_to_llvm(i):
         #TODO: check
-        backend.instrumentation.patch("llvmir_to_llvm", i, src.context)
+        CUDABackend.instrumentation.patch("llvmir_to_llvm", i, src.context)
 
 
     mod = src
@@ -578,7 +579,7 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
         passes.ttgpuir.add_allocate_global_scratch_memory,
         add_proxy_fence_insertion, # 0817
     ]
-    if backend.instrumentation:
+    if CUDABackend.instrumentation:
         pass_funcs += [
             instrument_ttgpuir_to_llvmir # 0817
         ]
@@ -598,7 +599,7 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
         pass_funcs += [
             passes.llvmir.add_di_scope,
         ]
-    if backend.instrumentation:
+    if CUDABackend.instrumentation:
         pass_funcs += [
             instrument_llvmir_to_llvm # 0817
         ]

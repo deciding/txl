@@ -47,4 +47,46 @@ def MBarrier_ArriveTypeAttr : I32EnumAttr<"MBarriveType",
   let cppNamespace = "::mlir::triton::txlgpu";
 }
 
+def TXLGPU_InitCtxOp : TXLGPU_Op<"init_ctx", [
+    MemoryEffects<[MemRead]>,
+    MemoryEffects<[MemWrite]>
+]> {
+  let summary = "init all  warp-level context";
+
+  let description = [{
+    init all  warp context 
+  }];
+
+  let assemblyFormat = "attr-dict";
+}
+
+def TXLGPU_RestoreCtxOp : TXLGPU_Op<"restore_ctx", [
+    MemoryEffects<[MemRead]>,
+    MemoryEffects<[MemWrite]>
+]> {
+  let summary = "Restore the current warp-level context";
+
+  let arguments = (ins I32Attr: $asyncTaskId);
+
+  let description = [{
+    Restore the current warp context 
+  }];
+
+  let assemblyFormat = "attr-dict";
+}
+
+def TXLGPU_SaveCtxOp : TXLGPU_Op<"save_ctx", [
+    MemoryEffects<[MemWrite]>
+]> {
+  let summary = "Save the current warp-level context";
+
+  let arguments = (ins I32Attr: $asyncTaskId);
+
+  let description = [{
+    Restore the current warp context 
+  }];
+
+  let assemblyFormat = "attr-dict";
+}
+
 #endif

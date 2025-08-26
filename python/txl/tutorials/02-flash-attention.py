@@ -2176,13 +2176,13 @@ if __name__ == "__main__":
     print("TEST...")
     #test_op(1, 2, 1024, 128, False, dtype=torch.float16, no_tune=no_tune)
 
-    PROFILING=True
+    PROFILING=False
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=0, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=1, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)
-    #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=3, no_tune=no_tune, profiling=PROFILING)
+    test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=3, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
-    test_op(1, 2, 1536, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
+    #test_op(1, 2, 1536, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
 
     #print("BENCH...")
-    #bench_flash_attention.run(save_path=".", print_data=True, algo=4, no_tune=no_tune)
+    bench_flash_attention.run(save_path=".", print_data=True, algo=3, no_tune=no_tune)

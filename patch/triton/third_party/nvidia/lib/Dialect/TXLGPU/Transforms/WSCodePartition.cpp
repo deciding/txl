@@ -662,7 +662,7 @@ public:
         }
 
         // add init context
-        if (wgOps.size()) {
+        if (wgOps.size() && hasOperator<Operation, ttp::RecordOp>(funcOp)) {
             OpBuilder builder(funcOp);
             builder.setInsertionPointToStart(&funcOp.getBody().front());
             builder.create<ttxg::InitCtxOp>(funcOp.getLoc()); // TODO: better loc

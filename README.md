@@ -6,13 +6,19 @@ pip install -r requirements.txt # torch must be installed before hand
 bash tools/cp_to_triton.sh
 
 pip install -r thirdparty/triton/python/requirements.txt
+
+# Option1: Build
 pip install -e thirdparty/triton/
+export PYTHONPATH=$(pwd)/python/
 # CXX=/usr/bin/c++ CC=/usr/bin/cc, set them properly if pip install failed
+# Option2: Or directly install from wheel
+pip uninstall triton # must not conflict
+pip install <release>.whl
 
 
 # TEST
-export PYTHONPATH=$(pwd)/python/
 #if get 'GLIBCXX_3.4.30' not found, do `conda install -c conda-forge gcc=12.1.0`
+CUDA_VISIBLE_DEVICES=1 TRITON_ALWAYS_COMPILE=1 python python/txl/tutorials/02-fused-attention.py
 TRITON_PRINT_AUTOTUNING=1 TRITON_KERNEL_DUMP=1 TRITON_DUMP_DIR=dump TRITON_ALWAYS_COMPILE=1 python python/txl/tests/01-vector-add.py
 ```
 

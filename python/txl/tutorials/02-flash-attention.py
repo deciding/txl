@@ -2003,8 +2003,8 @@ attention = _attention.apply
 
 # Validate results
 import sys
-sys.path.insert(0, './tools')  # Insert at beginning
-from test_util import attention_ref
+#sys.path.insert(0, './tools')  # Insert at beginning
+from txl.tests.test_util import attention_ref
 import math
 
 #@pytest.mark.parametrize("Z", [1, 4])
@@ -2078,7 +2078,7 @@ try:
     #from flash_attn.flash_attn_interface import \
     #    flash_attn_qkvpacked_func as flash_attn_func
     # fa3
-    from flash_attn.cute.interface import flash_attn_func
+    from txl.tests.flash_attn.cute.interface import flash_attn_func
     PYFLASH = True
 
     HAS_FLASH = True

@@ -2,15 +2,16 @@
 
 ## Install
 ```
+# TODO: make this test only
 pip install -r requirements.txt # torch must be installed before hand
-bash tools/cp_to_triton.sh
-
-pip install -r thirdparty/triton/python/requirements.txt
 
 # Option1: Build
+bash tools/cp_to_triton.sh
+pip install -r thirdparty/triton/python/requirements.txt
 pip install -e thirdparty/triton/
-export PYTHONPATH=$(pwd)/python/
 # CXX=/usr/bin/c++ CC=/usr/bin/cc, set them properly if pip install failed
+export PYTHONPATH=$(pwd)/python/
+
 # Option2: Or directly install from wheel
 pip uninstall triton # must not conflict
 pip install <release>.whl

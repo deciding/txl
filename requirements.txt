@@ -4,3 +4,4 @@ matplotlib # for triton.testing
 pandas # for triton.testing
 llnl-hatchet # for proton profiling
 einops
+nvidia-cutlass-dsl

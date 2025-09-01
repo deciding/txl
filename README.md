@@ -23,6 +23,15 @@ CUDA_VISIBLE_DEVICES=1 TRITON_ALWAYS_COMPILE=1 python python/txl/tutorials/02-fu
 TRITON_PRINT_AUTOTUNING=1 TRITON_KERNEL_DUMP=1 TRITON_DUMP_DIR=dump TRITON_ALWAYS_COMPILE=1 python python/txl/tests/01-vector-add.py
 ```
 
+## Modal
+
+```
+# 1. download from https://0x0.st/KHle.whl, rename as txl-3.4.0-cp312-cp312-linux_x86_64.whl
+# 2. go to docker/
+# You have $30 budget. You can use H100, H200, B200. Have fun!
+modal run flash_attention.py
+```
+
 
 ## DEBUG
 ```

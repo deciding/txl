@@ -13,6 +13,7 @@ txl_image = (
         "pandas",
         "llnl-hatchet",
         "einops",
+        "nvidia-cutlass-dsl",
     )
     #.add_local_file("requirements.txt", "/home/conda/requirements.txt")
     #.add_local_file("txl-3.4.0-cp312-cp312-linux_x86_64.whl", "/root/txl.whl")
@@ -520,11 +521,30 @@ def test_flash_attention():
                 ctx.causal = causal
                 return o
         attention = _attention.apply
-        HAS_FLASH=False
+        try:
+            # fa3
+            from txl.tests.flash_attn.cute.interface import flash_attn_func
+            HAS_FLASH = True
+            PYFLASH = True
+
+            print("Has Flash")
+        except Exception as e:
+            print(e)
+            HAS_FLASH = False
+            print("Has No Flash")
+            exit()
+
+        #if HAS_FLASH:
+        #    Has_TXL = False
+        #    print("Flash over TXL")
+        if Has_TXL:
+            HAS_FLASH = False
+            print("TXL over Flash")
 
         import sys
         import math
         from txl.tests.test_util import attention_ref
+
         def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=False, profiling=False):
             q = (torch.randn((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE))
             k = (torch.randn((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE))
@@ -533,24 +553,30 @@ def test_flash_attention():
             k1 = k.permute(0,2,1,3).contiguous()
             v1 = v.permute(0,2,1,3).contiguous()
 
+            test_outs = []
             # txl
             if HAS_FLASH:
                 if PYFLASH:
-                    tri_out, lse = flash_attn_func(q1, k1, v1, causal=causal)
-                    tri_out = tri_out.half()
+                    flash_out, lse = flash_attn_func(q1, k1, v1, causal=causal)
+                    flash_out = flash_out.half()
                 else:
-                    tri_out = flash_attn_func(q1, k1, v1, causal=causal).half()
-                tri_out = tri_out.permute(0,2,1,3).contiguous()
+                    flash_out = flash_attn_func(q1, k1, v1, causal=causal).half()
+                flash_out = flash_out.permute(0,2,1,3).contiguous()
+                test_outs.append(flash_out)
             elif Has_TXL:
-                tri_out = attention(q, k, v, causal, 1/math.sqrt(HEAD_DIM), algo, no_tune, profiling).half()
+                txl_out = attention(q, k, v, causal, 1/math.sqrt(HEAD_DIM), algo, no_tune, profiling).half()
+                test_outs.append(txl_out)
 
             if profiling:
                 exit()
+
             ref_out, ref_attn = attention_ref(q1, k1, v1, causal=causal)
             ref_out = ref_out.permute(0,2,1,3).contiguous()
-            print(f"Output max diff: {(tri_out - ref_out).abs().max().item()}")
-            print(f"Output mean diff: {(tri_out - ref_out).abs().mean().item()}")
-            assert torch.allclose(ref_out, tri_out, atol=1e-2, rtol=0)
+            for actual_out in test_outs:
+                print(f"Output max diff: {(actual_out - ref_out).abs().max().item()}")
+                print(f"Output mean diff: {(actual_out - ref_out).abs().mean().item()}")
+                assert torch.allclose(ref_out, actual_out, atol=1e-2, rtol=0)
+
 
         TORCH_HAS_FP8 = hasattr(torch, 'float8_e5m2')
         BATCH, N_HEADS, HEAD_DIM = 16, 32, 128

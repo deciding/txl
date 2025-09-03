@@ -26,10 +26,17 @@ TRITON_PRINT_AUTOTUNING=1 TRITON_KERNEL_DUMP=1 TRITON_DUMP_DIR=dump TRITON_ALWAY
 ## Modal
 
 ```
-# 1. download from https://0x0.st/KHle.whl, rename as txl-3.4.0-cp312-cp312-linux_x86_64.whl
+# 1. download from https://0x0.st/KXMu.whl, rename as txl-3.4.0-cp312-cp312-linux_x86_64.whl
 # 2. go to docker/
 # You have $30 budget. You can use H100, H200, B200. Have fun!
 modal run flash_attention.py
+```
+
+## DEV
+```
+cd thirdparty/triton
+python setup.py bdist_wheel
+curl -F"file=@dist/txl-3.4.0-cp312-cp312-linux_x86_64.whl" https://0x0.st
 ```
 
 

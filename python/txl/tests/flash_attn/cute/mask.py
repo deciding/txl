@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import cutlass
 import cutlass.cute as cute
 
-import flash_attn.cute.utils as utils
+import txl.tests.flash_attn.cute.utils as utils
 
 
 @dataclass(frozen=True)

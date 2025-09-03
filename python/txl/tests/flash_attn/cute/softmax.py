@@ -8,7 +8,7 @@ import cutlass
 import cutlass.cute as cute
 from cutlass import Float32
 
-import flash_attn.cute.utils as utils
+import txl.tests.flash_attn.cute.utils as utils
 
 
 class Softmax:

@@ -29,12 +29,12 @@ import cutlass
 import cutlass.cute as cute
 from cutlass.cute.runtime import from_dlpack
 
-from flash_attn.cute import utils
-from flash_attn.cute.flash_fwd import FlashAttentionForwardSm80, FlashAttentionForwardSm90
-from flash_attn.cute.flash_fwd_sm100 import FlashAttentionForwardSm100
-from flash_attn.cute.flash_bwd_preprocess import FlashAttentionBackwardPreprocess
-from flash_attn.cute.flash_bwd import FlashAttentionBackwardSm80
-from flash_attn.cute.flash_bwd_postprocess import FlashAttentionBackwardPostprocess
+from txl.tests.flash_attn.cute import utils
+from txl.tests.flash_attn.cute.flash_fwd import FlashAttentionForwardSm80, FlashAttentionForwardSm90
+from txl.tests.flash_attn.cute.flash_fwd_sm100 import FlashAttentionForwardSm100
+from txl.tests.flash_attn.cute.flash_bwd_preprocess import FlashAttentionBackwardPreprocess
+from txl.tests.flash_attn.cute.flash_bwd import FlashAttentionBackwardSm80
+from txl.tests.flash_attn.cute.flash_bwd_postprocess import FlashAttentionBackwardPostprocess
 
 
 def maybe_contiguous(x):

@@ -19,17 +19,17 @@ from cutlass.cute.nvgpu import cpasync, warp, warpgroup
 import cutlass.utils.ampere_helpers as sm80_utils_basic
 import cutlass.utils.hopper_helpers as sm90_utils_basic
 
-from flash_attn.cute import ampere_helpers as sm80_utils
-from flash_attn.cute import hopper_helpers as sm90_utils
-from flash_attn.cute import utils
-from flash_attn.cute.mask import AttentionMask
-from flash_attn.cute.softmax import Softmax
-from flash_attn.cute.seqlen_info import SeqlenInfo
-from flash_attn.cute.block_info import BlockInfo
-from flash_attn.cute import pipeline
-from flash_attn.cute.pack_gqa import PackGQA
-from flash_attn.cute.named_barrier import NamedBarrierFwd
-from flash_attn.cute.tile_scheduler import TileSchedulerArguments, SingleTileScheduler, SingleTileLPTScheduler, SingleTileVarlenScheduler, ParamsBase
+from txl.tests.flash_attn.cute import ampere_helpers as sm80_utils
+from txl.tests.flash_attn.cute import hopper_helpers as sm90_utils
+from txl.tests.flash_attn.cute import utils
+from txl.tests.flash_attn.cute.mask import AttentionMask
+from txl.tests.flash_attn.cute.softmax import Softmax
+from txl.tests.flash_attn.cute.seqlen_info import SeqlenInfo
+from txl.tests.flash_attn.cute.block_info import BlockInfo
+from txl.tests.flash_attn.cute import pipeline
+from txl.tests.flash_attn.cute.pack_gqa import PackGQA
+from txl.tests.flash_attn.cute.named_barrier import NamedBarrierFwd
+from txl.tests.flash_attn.cute.tile_scheduler import TileSchedulerArguments, SingleTileScheduler, SingleTileLPTScheduler, SingleTileVarlenScheduler, ParamsBase
 
 
 class FlashAttentionForwardBase:

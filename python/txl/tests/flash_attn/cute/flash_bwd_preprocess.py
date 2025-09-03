@@ -10,7 +10,7 @@ import cuda.bindings.driver as cuda
 import cutlass
 import cutlass.cute as cute
 
-from flash_attn.cute import utils
+from txl.tests.flash_attn.cute import utils
 
 
 class FlashAttentionBackwardPreprocess:

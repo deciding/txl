@@ -13,10 +13,10 @@ import cutlass.cute as cute
 from cutlass.cute.nvgpu import cpasync, warp
 import cutlass.utils.ampere_helpers as sm80_utils_basic
 
-from flash_attn.cute import ampere_helpers as sm80_utils
-from flash_attn.cute import utils
-from flash_attn.cute.mask import AttentionMask
-from flash_attn.cute.seqlen_info import SeqlenInfo
+from txl.tests.flash_attn.cute import ampere_helpers as sm80_utils
+from txl.tests.flash_attn.cute import utils
+from txl.tests.flash_attn.cute.mask import AttentionMask
+from txl.tests.flash_attn.cute.seqlen_info import SeqlenInfo
 
 
 class FlashAttentionBackwardSm80:

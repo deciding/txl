@@ -6,7 +6,7 @@ from cutlass.cute.nvgpu import tcgen05
 from cutlass.cutlass_dsl import T
 from cutlass._mlir.dialects import llvm
 
-import flash_attn.cute.mma_sm100_desc as sm100_desc
+import txl.tests.flash_attn.cute.mma_sm100_desc as sm100_desc
 
 
 @cute.jit

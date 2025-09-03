@@ -107,6 +107,264 @@ def test_flash_attention():
             else:
                 return tl.make_tensor_descriptor(desc_or_ptr, shape, strides, block_shape)
 
+
+        @txl.autotune(
+            configs=[
+                txl.Config(
+                    tma_ws_best_config,
+                    num_stages=2,
+                    num_warps=4,
+                    num_warpgroups=3,
+                    pre_hook = _host_descriptor_pre_hook,
+                )
+            ],
+            key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT"],
+         )
+        @txl.jit
+        def _attn_fwd_ws_tma_txl2(sm_scale, M,  #
+                      Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #
+                      HEAD_DIM: tl.constexpr,  #
+                      BLOCK_M: tl.constexpr,  #
+                      BLOCK_N: tl.constexpr,  #
+                      FP8_OUTPUT: tl.constexpr,  #
+                      STAGE: tl.constexpr,  #
+                      warp_specialize: tl.constexpr,  #
+
+                      # NOTE: txl
+                      NUM_STAGES: tl.constexpr,  #
+                      NUM_CONSUMERS: tl.constexpr  #
+                      ):
+            dtype = tl.float8e5 if FP8_OUTPUT else tl.float16
+            tl.static_assert(BLOCK_N <= HEAD_DIM)
+            start_m = tl.program_id(0)
+            off_hz = tl.program_id(1)
+            off_z = off_hz // H
+            off_h = off_hz % H
+            #off_z = tl.program_id(2)
+            #off_h = tl.program_id(1)
+            #off_hz = off_z * H + off_h
+
+            y_dim = Z * H * N_CTX
+            # If no host desc, then make device desc
+            desc_q = _maybe_make_tensor_desc(desc_q, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                             block_shape=[BLOCK_M, HEAD_DIM])
+            desc_v = _maybe_make_tensor_desc(desc_v, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                             block_shape=[BLOCK_N, HEAD_DIM])
+            desc_k = _maybe_make_tensor_desc(desc_k, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                             block_shape=[BLOCK_N, HEAD_DIM])
+            desc_o = _maybe_make_tensor_desc(desc_o, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                             block_shape=[BLOCK_M, HEAD_DIM])
+
+            offset_y = off_z * (N_CTX * H) + off_h * N_CTX
+            qo_offset_y = offset_y + start_m * BLOCK_M
+
+
+            # load q: it will stay in SRAM throughout
+            #q = desc_q.load([qo_offset_y, 0])
+            bQ0 = txl.smem_alloc([BLOCK_M//2, HEAD_DIM], dtype=dtype) # bQ has only 1 buffer for reuse only
+            pMbar_bQ0 = txl.mbar_alloc(1)
+            bQ1 = txl.smem_alloc([BLOCK_M//2, HEAD_DIM], dtype=dtype)
+            pMbar_bQ1 = txl.mbar_alloc(1)
+
+            bK = txl.smem_alloc([BLOCK_N, HEAD_DIM], dtype=dtype, num_stages=NUM_STAGES)
+            bV = txl.smem_alloc([BLOCK_N, HEAD_DIM], dtype=dtype, num_stages=NUM_STAGES)
+            pMbar_bK = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+            pMbar_bV = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+
+            cMbar_QK1 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+            cMbar_PV1 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+            cMbar_QK2 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+            cMbar_PV2 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+
+            WG1_BAR = 8
+            WG2_BAR = 9
+            WG_NUM_THREADS = 128 * 2
+
+            # TODO: func type mismatch
+
+            # range of values handled by this stage
+            lo, hi = 0, N_CTX
+            offsetkv_y = offset_y + lo
+
+
+            if txl.is_warpgroup([0]):
+                #txl.reg_dealloc(24)
+
+                bQ0i = txl.get_buffer(bQ0, 0)
+                pMbar_bQ0i = txl.get_buffer(pMbar_bQ0, 0)
+                bQ1i = txl.get_buffer(bQ1, 0)
+                pMbar_bQ1i = txl.get_buffer(pMbar_bQ1, 0)
+
+                txl.mbar_expect(pMbar_bQ0i, BLOCK_M // 2 * HEAD_DIM * 2)
+                txl.tma_load(bQ0i, desc_q, [qo_offset_y, 0], pMbar_bQ0i)
+                txl.mbar_wait(pMbar_bQ0i, 0)
+                txl.mbar_expect(pMbar_bQ1i, BLOCK_M // 2 * HEAD_DIM * 2)
+                txl.tma_load(bQ1i, desc_q, [qo_offset_y+BLOCK_M//2, 0], pMbar_bQ1i)
+                txl.mbar_wait(pMbar_bQ1i, 0)
+
+                bufIdxW = 0 # write buffer
+                phase = 1
+
+                for start_n in range(lo, hi, BLOCK_N):
+                    start_n = tl.multiple_of(start_n, BLOCK_N)
+                    cur_mbar_bK = txl.get_buffer(pMbar_bK, bufIdxW)
+                    cur_mbar_bV = txl.get_buffer(pMbar_bV, bufIdxW)
+                    cur_bK = txl.get_buffer(bK, bufIdxW)
+                    cur_bV = txl.get_buffer(bV, bufIdxW)
+
+                    cur_mbar_QK1 = txl.get_buffer(cMbar_QK1, bufIdxW) # wait for the same buffer
+                    cur_mbar_PV1 = txl.get_buffer(cMbar_PV1, bufIdxW)
+                    cur_mbar_QK2 = txl.get_buffer(cMbar_QK2, bufIdxW)
+                    cur_mbar_PV2 = txl.get_buffer(cMbar_PV2, bufIdxW)
+
+                    # TODO: tma_expect_and_load
+                    txl.mbar_wait(cur_mbar_QK1, phase)
+                    txl.mbar_wait(cur_mbar_QK2, phase)
+                    txl.mbar_expect(cur_mbar_bK, BLOCK_N * HEAD_DIM * 2)
+                    txl.tma_load(cur_bK, desc_k, [offsetkv_y, 0], cur_mbar_bK)
+
+                    txl.mbar_wait(cur_mbar_PV1, phase)
+                    txl.mbar_wait(cur_mbar_PV2, phase)
+                    txl.mbar_expect(cur_mbar_bV, BLOCK_N * HEAD_DIM * 2)
+                    txl.tma_load(cur_bV, desc_v, [offsetkv_y, 0], cur_mbar_bV)
+
+                    offsetkv_y += BLOCK_N
+                    bufIdxW = (bufIdxW + 1) % NUM_STAGES
+                    if bufIdxW == 0:
+                        phase = phase^1
+
+
+
+            if txl.is_warpgroup([1, 2]):
+                #txl.reg_alloc(240)
+
+                if txl.is_warpgroup([1]):
+                    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M//2)
+
+                    # first let wg1 to start
+                    #txl.bar_arrive(WG1_BAR, WG_NUM_THREADS)
+                    txl.bar_arrive(8, 256)
+                else:
+                    offs_m = start_m * BLOCK_M + tl.arange(BLOCK_M//2, BLOCK_M)
+                # initialize pointer to m and l
+                # These are in regs
+                m_i = tl.zeros([BLOCK_M//2], dtype=tl.float32) - float("inf")
+                l_i = tl.zeros([BLOCK_M//2], dtype=tl.float32) + 1.0
+                acc = tl.zeros([BLOCK_M//2, HEAD_DIM], dtype=tl.float32)
+                # load scales
+                qk_scale = sm_scale
+                qk_scale *= 1.44269504  # 1/log(2)
+
+                bQ0i = txl.get_buffer(bQ0, 0)
+                pMbar_bQ0i = txl.get_buffer(pMbar_bQ0, 0)
+                bQ1i = txl.get_buffer(bQ1, 0)
+                pMbar_bQ1i = txl.get_buffer(pMbar_bQ1, 0)
+
+                if txl.is_warpgroup([1]):
+                    txl.mbar_wait(pMbar_bQ0i, 0)
+                    # WG1 just start
+                    #txl.bar_wait(WG1_BAR, WG_NUM_THREADS)
+                    txl.bar_wait(8, 256)
+                if txl.is_warpgroup([2]):
+                    txl.mbar_wait(pMbar_bQ1i, 0)
+                    # WG2 start after wg1 gemm0
+                    #txl.bar_wait(WG2_BAR, WG_NUM_THREADS)
+                    txl.bar_wait(9, 256)
+
+                bufIdxR = 0 # read buffer
+                phase = 0
+                # loop over k, v and update accumulator
+                for start_n in range(lo, hi, BLOCK_N):
+                    start_n = tl.multiple_of(start_n, BLOCK_N)
+
+                    # -- compute qk ----
+                    cur_mbar_bK = txl.get_buffer(pMbar_bK, bufIdxR)
+                    cur_bK = txl.get_buffer(bK, bufIdxR)
+                    txl.mbar_wait(cur_mbar_bK, phase)
+
+                    if txl.is_warpgroup([1]):
+                        cur_mbar_QK = txl.get_buffer(cMbar_QK1, bufIdxR) # wait for the same buffer
+                        cur_mbar_PV = txl.get_buffer(cMbar_PV1, bufIdxR)
+                        qk = tl.dot(bQ0i, cur_bK.T)
+
+                        # TODO whether before dot wait?
+                        #txl.bar_arrive(WG2_BAR, WG_NUM_THREADS)
+                        txl.bar_arrive(9, 256)
+                        txl.dot_wait(0)
+                        txl.mbar_arrive(cur_mbar_QK)
+
+                    else: # [2]
+                        cur_mbar_QK = txl.get_buffer(cMbar_QK2, bufIdxR)
+                        cur_mbar_PV = txl.get_buffer(cMbar_PV2, bufIdxR)
+                        qk = tl.dot(bQ1i, cur_bK.T)
+
+                        # TODO whether before dot wait?
+                        #txl.bar_arrive(WG1_BAR, WG_NUM_THREADS)
+                        txl.bar_arrive(8, 256)
+                        txl.dot_wait(0)
+                        txl.mbar_arrive(cur_mbar_QK)
+
+
+                    m_ij = tl.maximum(m_i, tl.max(qk, 1) * qk_scale)
+                    qk = qk * qk_scale - m_ij[:, None]
+
+                    p = tl.math.exp2(qk)
+                    l_ij = tl.sum(p, 1)
+                    # -- update m_i and l_i
+                    alpha = tl.math.exp2(m_i - m_ij)
+                    l_i = l_i * alpha + l_ij
+                    # -- update output accumulator --
+                    acc = acc * alpha[:, None]
+
+                    # load v
+                    cur_mbar_bV = txl.get_buffer(pMbar_bV, bufIdxR)
+                    cur_bV = txl.get_buffer(bV, bufIdxR)
+                    txl.mbar_wait(cur_mbar_bV, phase)
+
+                    # Downgrade if put before load v
+                    if txl.is_warpgroup([1]):
+                        #txl.bar_wait(WG1_BAR, WG_NUM_THREADS)
+                        txl.bar_wait(8, 256)
+                    else:
+                        #txl.bar_wait(WG2_BAR, WG_NUM_THREADS)
+                        txl.bar_wait(9, 256)
+
+
+                    # update acc
+                    p = p.to(dtype)
+
+                    # note that this non transposed v for FP8 is only supported on Blackwell
+                    acc = tl.dot(p, cur_bV, acc)
+                    txl.dot_wait(0)
+
+                    # update m_i and l_i
+                    m_i = m_ij
+
+                    bufIdxR = (bufIdxR + 1) % NUM_STAGES
+                    if bufIdxR == 0:
+                        phase = phase ^ 1
+
+                    txl.mbar_arrive(cur_mbar_PV)
+
+                if txl.is_warpgroup([1]):
+                    #txl.bar_arrive(WG2_BAR, WG_NUM_THREADS)
+                    txl.bar_arrive(9, 256)
+                else:
+                    #txl.bar_arrive(WG1_BAR, WG_NUM_THREADS)
+                    txl.bar_arrive(8, 256)
+
+                # epilogue
+                m_i += tl.math.log2(l_i)
+                acc = acc / l_i[:, None]
+                m_ptrs = M + off_hz * N_CTX + offs_m
+                tl.store(m_ptrs, m_i)
+
+                if txl.is_warpgroup([1]):
+                    desc_o.store([qo_offset_y, 0], acc.to(dtype))
+                if txl.is_warpgroup([2]):
+                    desc_o.store([qo_offset_y+BLOCK_M//2, 0], acc.to(dtype))
+
+
         @txl.autotune(
             configs=[
                 txl.Config(
@@ -494,7 +752,7 @@ def test_flash_attention():
                 algo_map = {
                     #0: _attn_fwd_tma_txl,
                     #1: _attn_fwd_ws_tma_txl1,
-                    #2: _attn_fwd_ws_tma_txl2,
+                    2: _attn_fwd_ws_tma_txl2,
                     3: _attn_fwd_ws_tma_txl3,
                     #4: _attn_fwd_ws_tma_txl4,
                 }
@@ -657,8 +915,8 @@ def test_flash_attention():
 
         no_tune=True
         PROFILING=False
-        test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=3, no_tune=no_tune, profiling=PROFILING)
-        bench_flash_attention.run(save_path=".", print_data=True, algo=3, no_tune=no_tune)
+        test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)
+        bench_flash_attention.run(save_path=".", print_data=True, algo=2, no_tune=no_tune)
 
     test_torch()
     test_txl()

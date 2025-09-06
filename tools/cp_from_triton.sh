@@ -1,6 +1,8 @@
 FROM_DIR=thirdparty/triton
 TO_DIR=patch/triton
 
+cp ${FROM_DIR}/setup.py ${TO_DIR}/
+
 cp ${FROM_DIR}/bin/RegisterTritonDialects.h ${TO_DIR}/bin
 
 cp ${FROM_DIR}/include/CMakeLists.txt ${TO_DIR}/include/
@@ -36,6 +38,7 @@ cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Utility.cpp ${TO_DIR}/lib/Dialec
 cp ${FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/CMakeLists.txt ${TO_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/PlanCTA.cpp ${TO_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/
 
+cp ${FROM_DIR}/python/build_helpers.py ${TO_DIR}/python/
 cp ${FROM_DIR}/python/src/ir.cc ${TO_DIR}/python/src/
 cp ${FROM_DIR}/python/src/passes.cc ${TO_DIR}/python/src/
 
@@ -74,5 +77,7 @@ cp -r ${FROM_DIR}/third_party/nvidia/include/Dialect/TXLGPU/ ${TO_DIR}/third_par
 cp -r ${FROM_DIR}/third_party/nvidia/include/TXLGPUToLLVM/ ${TO_DIR}/third_party/nvidia/include/
 cp -r ${FROM_DIR}/third_party/nvidia/lib/Dialect/TXLGPU/ ${TO_DIR}/third_party/nvidia/lib/Dialect/
 cp -r ${FROM_DIR}/third_party/nvidia/lib/TXLGPUToLLVM/ ${TO_DIR}/third_party/nvidia/lib/
+
+#cp -r python/txl ${TO_DIR}/python
 
 find patch/triton -type f | wc -l

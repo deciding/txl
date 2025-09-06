@@ -1614,8 +1614,8 @@ bool comesFromLoadOrBlockArg(Value v) {
   }
   // We also accept block arguments as they appear in many MLIR tests
   // If this is problematic we can totally drop them
-  return isa<BlockArgument>(v) ||
-         (v.getDefiningOp() &&
+  //return isa<BlockArgument>(v) ||
+  return       (v.getDefiningOp() &&
           isa<SmemAllocOp, LoadOp, DescriptorLoadOp, DescriptorGatherOp>(v.getDefiningOp())); // txl
 }
 

@@ -813,7 +813,7 @@ CLASSIFIERS = BASE_CLASSIFIERS + PYTHON_CLASSIFIERS
 setup(
     name=os.environ.get("TRITON_WHEEL_NAME", "txl"),
     version=TRITON_VERSION,
-    author="zhangnz710",
+    author="zhangzn710",
     author_email="zhangzn710@gmail.com",
     description="A language and compiler for custom Deep Learning operations",
     long_description="",

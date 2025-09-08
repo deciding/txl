@@ -678,11 +678,12 @@ class TXLJITFunction(JITFunction):
     def __init__(self, fn, version=None, do_not_specialize=None, do_not_specialize_on_alignment=None, debug=None,
                  noinline=None, repr=None, launch_metadata=None,
                  # NOTE: txl
-                 diff_mode=None, log_dir=None, src_file=None, use_txl=True):
+                 diff_mode=None, diff_select=None, log_dir=None, src_file=None, use_txl=True):
         super().__init__(fn=fn, version=version, do_not_specialize=do_not_specialize, do_not_specialize_on_alignment=do_not_specialize_on_alignment, debug=debug, noinline=noinline, repr=repr, launch_metadata=launch_metadata)
 
         # NOTE: txl
         self.diff_mode = diff_mode
+        self.diff_select = diff_select
         self.log_dir = log_dir
         self.src_file = src_file
         self.use_txl = use_txl
@@ -708,7 +709,7 @@ class TXLJITFunction(JITFunction):
             def async_compile():
                 # txl
                 return self.compile(src, target=target, options=options.__dict__, _env_vars=env_vars,
-                        diff_mode=self.diff_mode, log_dir=self.log_dir, use_txl=self.use_txl, txl_options=self.txl_options)
+                        diff_mode=self.diff_mode, diff_select=self.diff_select, log_dir=self.log_dir, use_txl=self.use_txl, txl_options=self.txl_options)
 
             def finalize_compile(kernel):
                 # txl
@@ -723,7 +724,7 @@ class TXLJITFunction(JITFunction):
         else:
             # txl
             kernel = self.compile(src, target=target, options=options.__dict__,
-                    diff_mode=self.diff_mode, log_dir=self.log_dir, use_txl=self.use_txl, txl_options=self.txl_options)
+                    diff_mode=self.diff_mode, diff_select=self.diff_select, log_dir=self.log_dir, use_txl=self.use_txl, txl_options=self.txl_options)
             if self.diff_mode:
                 exit()
 
@@ -769,6 +770,7 @@ def jit(
     noinline: Optional[bool] = None,
     # NOTE: txl
     diff_mode: Optional[str] = None, # diff the passes
+    diff_select: Optional[int] = None,
     log_dir: Optional[str] = None, # log the intermediate ir
     src_file: Optional[str] = None, # use the src file directly for compilation
     use_txl: bool = True, # use txl passes
@@ -810,6 +812,7 @@ def jit(
                 launch_metadata=launch_metadata,
                 # NOTE: txl
                 diff_mode=diff_mode,
+                diff_select=diff_select,
                 log_dir=log_dir,
                 src_file=src_file,
                 use_txl=use_txl,

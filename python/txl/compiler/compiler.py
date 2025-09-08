@@ -275,7 +275,7 @@ def load_ptx_func(func_name):
     func = getattr(compiler_module, func_name)
     return func
 
-def make_nv_dbg_ttir(mod, metadata, opt, capability, log_dir=None):
+def make_nv_dbg_ttir(mod, metadata, opt, capability, diff_select=None, log_dir=None):
     pm1 = ir.pass_manager(mod.context)
     pm2 = ir.pass_manager(mod.context)
 
@@ -308,8 +308,12 @@ def make_nv_dbg_ttir(mod, metadata, opt, capability, log_dir=None):
 
     for i, p in enumerate(pass_funcs):
         print(f"{i}. {p.__name__}")
-    index = input("Choose your interest: ")
-    index = int(index)
+    if diff_select is None:
+        index = input("Choose your interest: ")
+        index = int(index)
+    else:
+        index = diff_select
+        print(f"You selected {index}")
     passes1 = pass_funcs[:index]
     passes2 = pass_funcs[:index+1]
 
@@ -328,7 +332,7 @@ def make_nv_dbg_ttir(mod, metadata, opt, capability, log_dir=None):
 
     return mod
 
-def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True):
+def make_nv_dbg_ttgir(mod, metadata, opt, capability, diff_select=None, log_dir=None, use_txl=True):
     # Set maxnreg on all kernels, if it was provided.
     if opt.maxnreg is not None:
         mod.set_attr("ttg.maxnreg", ir.builder(mod.context).get_int32_attr(opt.maxnreg))
@@ -510,8 +514,14 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
 
     for i, p in enumerate(pass_funcs):
         print(f"{i}. {p.__name__}")
-    index = input("Choose your interest: ")
-    index = int(index)
+    if diff_select is None:
+        index = input("Choose your interest: ")
+        index = int(index)
+    else:
+        index = diff_select
+        print(f"You selected {index}")
+    passes1 = pass_funcs[:index]
+    passes2 = pass_funcs[:index+1]
     passes1 = pass_funcs[:index]
     passes2 = pass_funcs[:index+1]
 
@@ -534,7 +544,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, log_dir=None, use_txl=True
     return mod
 
 from triton.backends.nvidia.compiler import CUDABackend
-def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
+def make_nv_dbg_llir(backend, src, metadata, options, capability, diff_select=None, log_dir=None):
     ptx_version = load_ptx_func('get_ptx_version_from_options')(options, backend.target.arch)
 
     def add_to_llvmir(i):
@@ -638,8 +648,12 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
     for i, p in enumerate(opt_passes):
         print(f"{i+len(pass_funcs)}. {p.__name__}")
 
-    index = input("Choose your interest: ")
-    index = int(index)
+    if diff_select is None:
+        index = input("Choose your interest: ")
+        index = int(index)
+    else:
+        index = diff_select
+        print(f"You selected {index}")
     passes1 = pass_funcs[:index]
     passes2 = pass_funcs[:index+1]
 
@@ -673,24 +687,24 @@ def make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=None):
     metadata["profile_scratch_align"] = src.get_int_attr("ttg.profile_scratch_memory_alignment") or 1
     return ret
 
-def add_dbg_stages(backend, stages, options, diff_mode='ttgir', log_dir=None, use_txl=True):
+def add_dbg_stages(backend, stages, options, diff_mode='ttgir', diff_select=None, log_dir=None, use_txl=True):
     capability = backend._parse_arch(options.arch)
     if diff_mode == 'ttir':
-        stages["ttir"] = lambda src, metadata: make_nv_dbg_ttir(src, metadata, options, capability, log_dir=log_dir)
+        stages["ttir"] = lambda src, metadata: make_nv_dbg_ttir(src, metadata, options, capability, diff_select=diff_select, log_dir=log_dir)
     elif diff_mode == 'ttgir':
         stages["ttir"] = lambda src, metadata: backend.make_ttir(src, metadata, options, capability)
-        stages["ttgir"] = lambda src, metadata: make_nv_dbg_ttgir(src, metadata, options, capability, log_dir=log_dir, use_txl=use_txl)
+        stages["ttgir"] = lambda src, metadata: make_nv_dbg_ttgir(src, metadata, options, capability, diff_select=diff_select, log_dir=log_dir, use_txl=use_txl)
     else:
         stages["ttir"] = lambda src, metadata: backend.make_ttir(src, metadata, options, capability)
         stages["ttgir"] = lambda src, metadata: backend.make_ttgir(src, metadata, options, capability, use_txl=use_txl)
-        stages["llir"] = lambda src, metadata: make_nv_dbg_llir(backend, src, metadata, options, capability, log_dir=log_dir)
+        stages["llir"] = lambda src, metadata: make_nv_dbg_llir(backend, src, metadata, options, capability, diff_select=diff_select, log_dir=log_dir)
 
 ############################################
 # End from nvidia backend compiler
 ############################################
 
 # NOTE: txl
-def compile(src, target=None, options=None, _env_vars=None, diff_mode=None, log_dir=None, use_txl=True, txl_options=None):
+def compile(src, target=None, options=None, _env_vars=None, diff_mode=None, diff_select=None, log_dir=None, use_txl=True, txl_options=None):
     compilation_listener = knobs.compilation.listener
     if compilation_listener:
         timer = CompileTimer()
@@ -767,7 +781,7 @@ def compile(src, target=None, options=None, _env_vars=None, diff_mode=None, log_
     stages = dict()
     # NOTE: txl
     if diff_mode:
-        add_dbg_stages(backend, stages, options, diff_mode=diff_mode, log_dir=log_dir, use_txl=use_txl)
+        add_dbg_stages(backend, stages, options, diff_mode=diff_mode, diff_select=diff_select, log_dir=log_dir, use_txl=use_txl)
     else:
         backend.add_stages(stages, options, src.language, use_txl=use_txl)
     first_stage = list(stages.keys()).index(src.ext)

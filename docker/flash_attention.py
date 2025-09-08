@@ -443,6 +443,7 @@ def test_flash_attention():
 
 
             if txl.is_warpgroup([0]):
+                txl.reg_dealloc(24)
 
                 bQ0i = txl.get_buffer(bQ0, 0)
                 pMbar_bQ0i = txl.get_buffer(pMbar_bQ0, 0)
@@ -489,6 +490,7 @@ def test_flash_attention():
 
 
             if txl.is_warpgroup([1, 2]):
+                txl.reg_alloc(240)
 
                 if txl.is_warpgroup([1]):
                     offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M//2)
@@ -872,6 +874,7 @@ def test_flash_attention():
         def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, device=DEVICE, algo=0, no_tune=False):
             # follow fa3 paper
             BATCH = int(16384 / N_CTX)
+            #BATCH = 4
             assert mode in ["fwd", "bwd"]
             dtype = torch.float16
             q = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
@@ -915,8 +918,8 @@ def test_flash_attention():
 
         no_tune=True
         PROFILING=False
-        test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)
-        bench_flash_attention.run(save_path=".", print_data=True, algo=2, no_tune=no_tune)
+        test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=3, no_tune=no_tune, profiling=PROFILING)
+        bench_flash_attention.run(save_path=".", print_data=True, algo=3, no_tune=no_tune)
 
     test_torch()
     test_txl()

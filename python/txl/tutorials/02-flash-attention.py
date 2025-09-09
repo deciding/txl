@@ -13,7 +13,7 @@ Extra Credits:
 
 """
 
-import pytest
+#import pytest
 import torch
 import os
 
@@ -1264,6 +1264,7 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
 
 
     if txl.is_warpgroup([0]):
+        txl.reg_dealloc(24)
 
         bQ0i = txl.get_buffer(bQ0, 0)
         pMbar_bQ0i = txl.get_buffer(pMbar_bQ0, 0)
@@ -1310,6 +1311,7 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
 
 
     if txl.is_warpgroup([1, 2]):
+        txl.reg_alloc(240)
 
         if txl.is_warpgroup([1]):
             offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M//2)
@@ -1441,7 +1443,6 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
             # note that this non transposed v for FP8 is only supported on Blackwell
             acc = tl.dot(p, cur_bV, acc)
 
-            txl.dot_wait(1)
             # TODO: before or after wait? oh previously is also before QK wait
             if txl.is_warpgroup([1]):
                 #txl.bar_arrive(WG2_BAR, WG_NUM_THREADS)
@@ -1449,6 +1450,7 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
             else:
                 #txl.bar_arrive(WG1_BAR, WG_NUM_THREADS)
                 txl.bar_arrive(8, 256)
+            txl.dot_wait(1)
             # --- release QK finished ---
             txl.mbar_arrive(cur_mbar_QK)
 
@@ -1466,15 +1468,15 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
             l_i = l_i * alpha + l_ij
             m_i = m_ij
 
-            # update acc, NOTE: p position is important
-            p = p.to(dtype)
-
             # update output accumulator
             txl.dot_wait(0)
             # --- release PV j-1 finished ---
             txl.mbar_arrive(cur_mbar_PV)
 
             acc = acc * alpha[:, None]
+
+            # update acc, NOTE: p position is important
+            p = p.to(dtype)
 
             bufIdxRK = (bufIdxRK + 1) % NUM_STAGES
             if bufIdxRK == 0:
@@ -2024,12 +2026,12 @@ except Exception as e:
     print("Has No Flash")
 
 
-if HAS_FLASH:
-    Has_TXL = False
-    print("Flash over TXL")
-#if Has_TXL:
-#    HAS_FLASH = False
-#    print("TXL over Flash")
+#if HAS_FLASH:
+#    Has_TXL = False
+#    print("Flash over TXL")
+if Has_TXL:
+    HAS_FLASH = False
+    print("TXL over Flash")
 
 #@pytest.mark.parametrize("Z", [1, 4])
 #@pytest.mark.parametrize("H", [2, 48])
@@ -2182,7 +2184,16 @@ def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, dev
     return total_flops * 1e-12 / (ms * 1e-3)
 
 
-if __name__ == "__main__":
+def run_test(algo=0, dump_dir=None):
+    from triton import knobs
+
+    knobs.autotuning.print=True
+    knobs.compilation.always_compile=True
+    
+    if dump_dir:
+        knobs.compilation.dump_ir=True
+        knobs.cache.dump_dir=dump_dir
+
     # only works on post-Ampere GPUs right now
     no_tune=True # has best config
     #no_tune=False # no best config
@@ -2190,13 +2201,16 @@ if __name__ == "__main__":
     print("TEST...")
     #test_op(1, 2, 1024, 128, False, dtype=torch.float16, no_tune=no_tune)
 
-    PROFILING=True
+    PROFILING=False
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=0, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=1, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)
-    test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=3, no_tune=no_tune, profiling=PROFILING)
+    test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=algo, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
     #test_op(1, 2, 1536, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
 
-    #print("BENCH...")
-    bench_flash_attention.run(save_path=".", print_data=True, algo=3, no_tune=no_tune)
+    print("BENCH...")
+    bench_flash_attention.run(save_path=".", print_data=True, algo=algo, no_tune=no_tune)
+
+if __name__ == "__main__":
+    run_test(3)

@@ -42,6 +42,9 @@ cp ${FROM_DIR}/python/build_helpers.py ${TO_DIR}/python/
 cp ${FROM_DIR}/python/src/ir.cc ${TO_DIR}/python/src/
 cp ${FROM_DIR}/python/src/passes.cc ${TO_DIR}/python/src/
 
+# Temp for 3.4.x compatibility
+cp ${FROM_DIR}/python/triton/compiler/compiler.py ${TO_DIR}/python/triton/compiler/
+
 cp ${FROM_DIR}/third_party/nvidia/backend/compiler.py ${TO_DIR}/third_party/nvidia/backend/
 
 cp ${FROM_DIR}/third_party/nvidia/include/CMakeLists.txt ${TO_DIR}/third_party/nvidia/include/

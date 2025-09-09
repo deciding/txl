@@ -26,7 +26,7 @@ TRITON_PRINT_AUTOTUNING=1 TRITON_KERNEL_DUMP=1 TRITON_DUMP_DIR=dump TRITON_ALWAY
 ## Modal
 
 ```
-# 1. download from https://0x0.st/KXMu.whl, rename as txl-3.4.0-cp312-cp312-linux_x86_64.whl
+# 1. download from https://0x0.st/KqGx.whl, rename as txl-3.4.0-cp312-cp312-linux_x86_64.whl
 # 2. go to docker/
 # You have $30 budget. You can use H100, H200, B200. Have fun!
 modal run flash_attention.py
@@ -55,13 +55,10 @@ num heads 32, head dim 128, causal=False
 hardware: H100 PCIe
 
 TFLOPS:
-- FA3: 372,397, 412, 423
-- FA3py: 317 367 388 406
-- Triton: 259, 288, 287, 294
-- MS-ours: 281, 297, 308, 313
-- WS1-ours: 298, 333, 351, 359
-- WS2-ours: 309, 347, 367, 378
-- WS3-ours: 267, 296, 310, 324
+- TXL2: 482, 526, 559, 576
+- TXL3: 485, 537, 566, 594, 603
+- Cute:  521, 572, 609, 628, 635
+
 
 WS3 downgrade might because of the additional bar.sync added.
 
@@ -69,7 +66,7 @@ Known that triton optimized with 3 multi-stages with MMAPV overlap with prev buf
 
 ## Milestones
 - [x] when running ws persistent on 8192x8192x512 (default in triton) get 411 vs. 424 TFLOPS on H100 PCIe. better than 403 of fully ws triton (2%). reached 97% of cublas.
-- [x] FA3 90%
+- [x] FA3 95%
 - [x] 421 vs. 340 vs. 318 (cublas vs. triton vs. txl) for multi-stage MM without TMA. need to find the reason of downgrade
 - [x] Triton upgrade to 3.4
 

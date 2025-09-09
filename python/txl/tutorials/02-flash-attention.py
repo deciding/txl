@@ -41,7 +41,7 @@ except:
                 pass
 
         @staticmethod
-        def jit(use_txl=False, diff_mode='ttir'):
+        def jit(use_txl=False, diff_mode='ttir', diff_select=-1, log_dir=''):
             def decorator(func):
                 return func
             return decorator
@@ -1199,6 +1199,7 @@ def softmax_txl(m_i, l_i, qk, qk_scale, dtype):
  )
 #@txl.jit(src_file='dump/BFTFLZXGNHJ5H24JXMORYIYU7P6KTCTQ5YJ5EZJSF77MVLWKGJNA/_attn_fwd_ws_tma_txl3.ptx')
 @txl.jit
+#@txl.jit(diff_mode='ttgir', diff_select=6, log_dir='dump')
 def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
               Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #
               HEAD_DIM: tl.constexpr,  #
@@ -2007,6 +2008,29 @@ import sys
 from txl.tests.test_util import attention_ref
 import math
 
+try:
+    #from flash_attn.flash_attn_interface import \
+    #    flash_attn_qkvpacked_func as flash_attn_func
+    # fa3
+    from txl.tests.flash_attn.cute.interface import flash_attn_func
+    PYFLASH = True
+
+    HAS_FLASH = True
+
+    print("Has Flash")
+except Exception as e:
+    import pdb;pdb.set_trace()
+    HAS_FLASH = False
+    print("Has No Flash")
+
+
+if HAS_FLASH:
+    Has_TXL = False
+    print("Flash over TXL")
+#if Has_TXL:
+#    HAS_FLASH = False
+#    print("TXL over Flash")
+
 #@pytest.mark.parametrize("Z", [1, 4])
 #@pytest.mark.parametrize("H", [2, 48])
 #@pytest.mark.parametrize("N_CTX", [128, 1024, (2 if is_hip() else 4) * 1024])
@@ -2027,17 +2051,20 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=
     k1 = k.permute(0,2,1,3).contiguous()
     v1 = v.permute(0,2,1,3).contiguous()
 
+    test_outs = []
     # txl
     if HAS_FLASH:
         #tri_out = flash_attn_func(q1, k1, v1, softmax_scale=sm_scale, causal=causal).half()
         if PYFLASH:
-            tri_out, lse = flash_attn_func(q1, k1, v1, causal=causal)
-            tri_out = tri_out.half()
+            flash_out, lse = flash_attn_func(q1, k1, v1, causal=causal)
+            flash_out = flash_out.half()
         else:
-            tri_out = flash_attn_func(q1, k1, v1, causal=causal).half()
-        tri_out = tri_out.permute(0,2,1,3).contiguous()
+            flash_out = flash_attn_func(q1, k1, v1, causal=causal).half()
+        flash_out = flash_out.permute(0,2,1,3).contiguous()
+        test_outs.append(flash_out)
     elif Has_TXL:
-        tri_out = attention(q, k, v, causal, 1/math.sqrt(HEAD_DIM), algo, no_tune, profiling).half()
+        txl_out = attention(q, k, v, causal, 1/math.sqrt(HEAD_DIM), algo, no_tune, profiling).half()
+        test_outs.append(txl_out)
 
     if profiling:
         exit()
@@ -2063,9 +2090,10 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=
     # this correctness issue only happens when get too many B and H (maybe S also)
 
     ## OLD
-    print(f"Output max diff: {(tri_out - ref_out).abs().max().item()}")
-    print(f"Output mean diff: {(tri_out - ref_out).abs().mean().item()}")
-    assert torch.allclose(ref_out, tri_out, atol=1e-2, rtol=0)
+    for actual_out in test_outs:
+        print(f"Output max diff: {(actual_out - ref_out).abs().max().item()}")
+        print(f"Output mean diff: {(actual_out - ref_out).abs().mean().item()}")
+        assert torch.allclose(ref_out, actual_out, atol=1e-2, rtol=0)
 
     #rtol = 0.0
     ## Relative tolerance workaround for known hardware limitation of MI200 GPU.
@@ -2073,20 +2101,6 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=
     #if torch.version.hip is not None and triton.runtime.driver.active.get_current_target().arch == "gfx90a":
     #    rtol = 1e-2
 
-
-try:
-    #from flash_attn.flash_attn_interface import \
-    #    flash_attn_qkvpacked_func as flash_attn_func
-    # fa3
-    from txl.tests.flash_attn.cute.interface import flash_attn_func
-    PYFLASH = True
-
-    HAS_FLASH = True
-
-    print("Has Flash")
-except BaseException:
-    HAS_FLASH = False
-    print("Has No Flash")
 
 TORCH_HAS_FP8 = hasattr(torch, 'float8_e5m2')
 BATCH, N_HEADS, HEAD_DIM = 16, 32, 128
@@ -2176,7 +2190,7 @@ if __name__ == "__main__":
     print("TEST...")
     #test_op(1, 2, 1024, 128, False, dtype=torch.float16, no_tune=no_tune)
 
-    PROFILING=False
+    PROFILING=True
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=0, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=1, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)

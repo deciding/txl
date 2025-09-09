@@ -182,11 +182,22 @@ def matmul_tma_set_block_size_hook(nargs):
         nargs["c_desc"].block_shape = [BLOCK_M, BLOCK_N]
 
 
+def matmul_get_naive_configs(pre_hook=None):
+    return [
+        triton.Config({'BLOCK_SIZE_M': BM, 'BLOCK_SIZE_N': BN, "BLOCK_SIZE_K" : BK, "GROUP_SIZE_M" : 8}, num_stages=s, num_warps=w, pre_hook=pre_hook) \
+        for BM in [128] \
+        for BN in [256] \
+        for BK in [64] \
+        for s in ([1]) \
+        for w in [4] \
+    ]
 @triton.autotune(
-    configs=matmul_get_configs(pre_hook=matmul_tma_set_block_size_hook),
+    configs=matmul_get_naive_configs(pre_hook=matmul_tma_set_block_size_hook),
     key=["M", "N", "K", "WARP_SPECIALIZE"],
 )
-@triton.jit(launch_metadata=_matmul_launch_metadata)
+#@triton.jit(launch_metadata=_matmul_launch_metadata)
+@txl.jit(launch_metadata=_matmul_launch_metadata)
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
 def matmul_kernel_tma(a_desc, b_desc, c_desc,  #
                       M, N, K,  #
                       BLOCK_SIZE_M: tl.constexpr,  #
@@ -1619,10 +1630,11 @@ def validate(M, N, K, dtype, log=False):
     #run_test(naive_result, cublas_matmul, a, b, "cuBLAS", enabled=cublas is not None)
     #run_test(naive_result, matmul_persistent, a, b.T, "Persistent")
     #run_test(naive_result, lambda a, b: matmul_descriptor_persistent(a, b, True), a, b, "TMA WS Persistent", log=log)
+    run_test(naive_result, lambda a, b: matmul_tma(a, b, False), a, b, "TMA Naive", log=log)
 
     #run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
     #run_test(naive_result, lambda a, b: matmul_tma_persistent_txl(a, b), a, b, "TXL TMA Persistent", log=log)
-    run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
+    #run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
     #run_test(naive_result, lambda a, b: matmul_tma_ws_nn_persistent_txl(a, bn), a, bn, "TXL TMA WS NN Persistent", log=log)
 
     return
@@ -1688,7 +1700,7 @@ if __name__ == "__main__":
         validate(8192, 8192, args.K_range[0], dtype)
 
         #profile(8192, 8192, args.K_range[0], dtype)
-        #exit()
+        exit()
 
         proton.start("matmul", hook="triton")
         proton.deactivate()

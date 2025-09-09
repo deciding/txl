@@ -622,7 +622,6 @@ def test_flash_attention():
                     # note that this non transposed v for FP8 is only supported on Blackwell
                     acc = tl.dot(p, cur_bV, acc)
 
-                    txl.dot_wait(1)
                     # TODO: before or after wait? oh previously is also before QK wait
                     if txl.is_warpgroup([1]):
                         #txl.bar_arrive(WG2_BAR, WG_NUM_THREADS)
@@ -630,6 +629,7 @@ def test_flash_attention():
                     else:
                         #txl.bar_arrive(WG1_BAR, WG_NUM_THREADS)
                         txl.bar_arrive(8, 256)
+                    txl.dot_wait(1)
                     # --- release QK finished ---
                     txl.mbar_arrive(cur_mbar_QK)
 
@@ -647,15 +647,15 @@ def test_flash_attention():
                     l_i = l_i * alpha + l_ij
                     m_i = m_ij
 
-                    # update acc, NOTE: p position is important
-                    p = p.to(dtype)
-
                     # update output accumulator
                     txl.dot_wait(0)
                     # --- release PV j-1 finished ---
                     txl.mbar_arrive(cur_mbar_PV)
 
                     acc = acc * alpha[:, None]
+
+                    # update acc, NOTE: p position is important
+                    p = p.to(dtype)
 
                     bufIdxRK = (bufIdxRK + 1) % NUM_STAGES
                     if bufIdxRK == 0:

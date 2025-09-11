@@ -21,6 +21,99 @@ import triton.language as tl
 # log2(e) constant (can be passed in instead)
 LOG2_E = 1.0 / math.log(2.0)  # ~1.4426950408889634
 
+
+def naive_softmax(x):
+    """Compute row-wise softmax of X using native pytorch
+
+    We subtract the maximum element in order to avoid overflows. Softmax is invariant to
+    this shift.
+    """
+    # read  MN elements ; write M  elements
+    x_max = x.max(dim=1)[0]
+    # read MN + M elements ; write MN elements
+    z = x - x_max[:, None]
+    # read  MN elements ; write MN elements
+    numerator = torch.exp(z)
+    # read  MN elements ; write M  elements
+    denominator = numerator.sum(dim=1)
+    # read MN + M elements ; write MN elements
+    ret = numerator / denominator[:, None]
+    # in total: read 5MN + 2M elements ; wrote 3MN + 2M elements
+    return ret
+
+@triton.jit
+def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
+                   num_stages: tl.constexpr):
+    # starting row of the program
+    row_start = tl.program_id(0)
+    row_step = tl.num_programs(0)
+    for row_idx in tl.range(row_start, n_rows, row_step, num_stages=num_stages):
+        # The stride represents how much we need to increase the pointer to advance 1 row
+        row_start_ptr = input_ptr + row_idx * input_row_stride
+        # The block size is the next power of two greater than n_cols, so we can fit each
+        # row in a single block
+        col_offsets = tl.arange(0, BLOCK_SIZE)
+        input_ptrs = row_start_ptr + col_offsets
+        # Load the row into SRAM, using a mask since BLOCK_SIZE may be > than n_cols
+        mask = col_offsets < n_cols
+        row = tl.load(input_ptrs, mask=mask, other=-float('inf'))
+        row = tl.cast(row, tl.float32)
+        # Subtract maximum for numerical stability
+        row_minus_max = row - tl.max(row, axis=0)
+        # Note that exponentiation in Triton is fast but approximate (i.e., think __expf in CUDA)
+        numerator = tl.exp(row_minus_max)
+        denominator = tl.sum(numerator, axis=0)
+        softmax_output = numerator / denominator
+        # Write back output to DRAM
+        output_row_start_ptr = output_ptr + row_idx * output_row_stride
+        output_ptrs = output_row_start_ptr + col_offsets
+        tl.store(output_ptrs, softmax_output, mask=mask)
+
+
+def fused_softmax(x):
+    n_rows, n_cols = x.shape
+
+    # The block size of each loop iteration is the smallest power of two greater than the number of columns in `x`
+    BLOCK_SIZE = triton.next_power_of_2(n_cols)
+
+    # Another trick we can use is to ask the compiler to use more threads per row by
+    # increasing the number of warps (`num_warps`) over which each row is distributed.
+    # You will see in the next tutorial how to auto-tune this value in a more natural
+    # way so you don't have to come up with manual heuristics yourself.
+    num_warps = 8
+
+    # Number of software pipelining stages.
+    #num_stages = 4 if SIZE_SMEM > 200000 else 2
+    num_stages = 4
+
+    # Allocate output
+    y = torch.empty_like(x)
+
+    ## pre-compile kernel to get register usage and compute thread occupancy.
+    #kernel = softmax_kernel.warmup(y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE=BLOCK_SIZE,
+    #                               num_stages=num_stages, num_warps=num_warps, grid=(1, ))
+    #kernel._init_handles()
+    #n_regs = kernel.n_regs
+    #size_smem = kernel.metadata.shared
+
+	#occupancy = NUM_REGS // (n_regs * WARP_SIZE * num_warps)
+
+    #occupancy = min(occupancy, SIZE_SMEM // size_smem)
+    #num_programs = NUM_SM * occupancy
+
+    #num_programs = min(num_programs, n_rows)
+
+    num_programs = n_rows
+
+    # Create a number of persistent programs.
+    #kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages)
+    softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages)
+    return y
+
+################################################
+# Softmax ours
+################################################
+
 @triton.jit
 def triton_row_softmax(
     X_ptr,            # pointer to input float32 matrix
@@ -61,6 +154,7 @@ def triton_row_softmax(
         # address for loads: row_ptr_X + idx * stride_col_X
         load_addr = row_ptr_X + idx * stride_col_X
         x = tl.load(load_addr, mask=mask, other=minus_inf)
+        x = tl.cast(x, tl.float32)
 
         # elementwise max across chunks; cur_max is a vector of length BLOCK_SIZE,
         # but we need a scalar max. We'll reduce cur_max later with tl.max(..., axis=0).
@@ -80,6 +174,7 @@ def triton_row_softmax(
 
         load_addr = row_ptr_X + idx * stride_col_X
         x = tl.load(load_addr, mask=mask, other=0.0)
+        x = tl.cast(x, tl.float32)
 
         # compute exp2((x - m) * log2_e) (elementwise)
         shifted = x - m
@@ -103,6 +198,7 @@ def triton_row_softmax(
 
         load_addr = row_ptr_X + idx * stride_col_X
         x = tl.load(load_addr, mask=mask, other=0.0)
+        x = tl.cast(x, tl.float32)
 
         out = tl.exp2((x - m) * log2_e) * inv_sum
 
@@ -119,12 +215,12 @@ def softmax_triton(x: np.ndarray, block_size: int = 128, num_warps: int = 4):
     - num_warps is a Triton tuning parameter (common: 4).
     """
 
-    assert x.dtype == torch.float32, "Only float32 supported in this example"
+    #assert x.dtype == torch.float32, "Only float32 supported in this example"
     assert x.ndim == 2, "Input must be 2D (rows x cols)"
     rows, cols = x.shape
 
     # allocate output
-    y = torch.empty_like(x)
+    y = torch.empty_like(x).to(torch.float32)
 
     # row-major strides in elements
     stride_row_X = x.stride()[0]
@@ -151,10 +247,10 @@ def softmax_triton(x: np.ndarray, block_size: int = 128, num_warps: int = 4):
     return y
 
 def test_softmax():
-    #M = 32*1024
-    #N = 32*1024
-    M = 8192
-    N = 16384
+    M = 32*1024
+    N = 32*1024
+    #M = 8192
+    #N = 16384
     KERNEL="SM"
 
     dtype = cutlass.BFloat16
@@ -172,15 +268,16 @@ def test_softmax():
         # CE
         loss = _cross_entropy(x, target)
         compiled_func_ref = torch.compile(lambda x, target: F.cross_entropy(x, target, reduction='none'))
-        fn = lambda: _cross_entropy(x, target)
+        quack_fn = lambda: _cross_entropy(x, target)
         fn_mem_bytes = lambda: (M * N + M + M) * dtype.width // 8
 
     elif KERNEL == "SM":
         # Softmax
         out = softmax(x)
         compiled_func_ref = torch.compile(lambda x, target: F.softmax(x, dim=-1))
-        fn = lambda: softmax(x)
+        quack_fn = lambda: softmax(x)
         tri_fn = lambda x: softmax_triton(x)
+        tri_fn2 = lambda x: fused_softmax(x)
         fn_mem_bytes = lambda: 2 * x.numel() * dtype.width // 8
 
     ################################################
@@ -194,8 +291,10 @@ def test_softmax():
     ref = ref / ref.sum(axis=1, keepdims=True)
 
     torch_out = compiled_func_ref(x, target).to(torch.float32).cpu().numpy()
-    quack_out = fn().to(torch.float32).cpu().numpy()
-    tri_out = tri_fn(x32).to(torch.float32).cpu().numpy()
+    quack_out = quack_fn().to(torch.float32).cpu().numpy()
+    #tri_out = tri_fn(x32).to(torch.float32).cpu().numpy()
+    #tri_out = tri_fn(x).to(torch.float32).cpu().numpy()
+    tri_out = tri_fn2(x).to(torch.float32).cpu().numpy()
 
     # relative error
     outs = []
@@ -225,13 +324,16 @@ def test_softmax():
     print(f"Torch mem throughput: {mem_bw_ref:.2f} GB/s")
 
     time.sleep(0.5)
+    fn = quack_fn
     avg_time = do_bench(fn, warmup=warmup_iterations, rep=iterations)
     # Memory bandwidth calculation: read x (M*N elements) + read target (M elements) + write loss (M elements)
     mem_bw = round(mem_bytes / (avg_time / 1000) / 1e9)
     print(f"Quack execution time: {avg_time:.4f} ms")
     print(f"Quack mem throughput: {mem_bw:.2f} GB/s")
 
-    fn = lambda: tri_fn(x32)
+    #fn = lambda: tri_fn(x32)
+    #fn = lambda: tri_fn(x)
+    fn = lambda: tri_fn2(x)
     for _ in range(5): fn()  # warm up
     time.sleep(0.5)
     avg_time = do_bench(fn, warmup=warmup_iterations, rep=iterations)

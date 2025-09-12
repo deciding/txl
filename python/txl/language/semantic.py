@@ -256,6 +256,6 @@ class TXLSemantic(TritonSemantic):
             # Load by a tensor of pointers or a pointer of scalar: `block_type<pointer_type<>>` or `pointer_type<>`
             return self._async_load_legacy(mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile)
 
-    def async_load_wait(self, async_token: tl.tensor, num:int) -> TensorTy:
-        x = self.builder.create_async_load_wait(async_token.handle, num)
+    def async_load_wait(self, pendings:int) -> TensorTy:
+        x = self.builder.create_async_load_wait(pendings)
         return self.tensor(x, tl.void)

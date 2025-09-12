@@ -259,11 +259,12 @@ def TXL_AsyncLoadOp : TXL_Op<"async_load", [
 def TXL_AsyncLoadWaitOp : TXL_Op<"async_load_wait", [MemoryEffects<[MemWrite]>]> {
   let summary = "async wait";
 
-  let arguments = (ins Variadic<TT_Tensor>:$asyncToken, I32Attr:$num);
+  //let arguments = (ins Variadic<TT_Tensor>:$asyncToken, I32Attr:$num);
+  let arguments = (ins I32Attr:$num);
 
   let results = (outs TT_Tensor:$retToken);
 
-  let assemblyFormat = "$asyncToken attr-dict `:` functional-type(operands, results)";
+  let assemblyFormat = "attr-dict `:` functional-type(operands, results)";
 
   let extraClassDeclaration = [{
     static bool isSupported(int computeCapability) {

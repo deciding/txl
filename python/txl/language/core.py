@@ -229,6 +229,6 @@ def async_load(mem, pointer, mask=None, other=None, boundary_check=(), padding_o
                          volatile)
 
 @builtin
-def async_load_wait(async_token: tl.tensor, num: int, _semantic=None) -> tl.tensor:
-    num = _unwrap_if_constexpr(num)
-    return _semantic.async_load_wait(async_token, num)
+def async_load_wait(pendings: int, _semantic=None) -> tl.tensor:
+    pendings = _unwrap_if_constexpr(pendings)
+    return _semantic.async_load_wait(pendings)

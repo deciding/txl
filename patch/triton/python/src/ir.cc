@@ -1897,10 +1897,10 @@ void init_triton_ir(py::module &&m) {
            })
       .def("create_async_load_wait",
            [](TritonOpBuilder &self,
-               Value asyncToken, int num) -> void {
+                int num) -> void {
                auto retType = RankedTensorType::get(
-                 {1}, self.getBuilder().getI32Type());
-               self.create<mlir::triton::AsyncLoadWaitOp>(retType, asyncToken, num);
+                   {1}, self.getBuilder().getI32Type());
+               self.create<mlir::triton::AsyncLoadWaitOp>(retType, num);
            })
       .def("create_tma_load",
            [](TritonOpBuilder &self, Value src, Value mbar, Value desc, std::vector<Value> &indices,

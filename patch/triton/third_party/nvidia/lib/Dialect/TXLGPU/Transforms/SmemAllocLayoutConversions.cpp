@@ -98,31 +98,6 @@ struct CvtGetBufferToGetBuffer
   }
 };
 
-// async_load_wait(cvt(ty1), ty2) -> async_load_wait(ty1)
-struct AsyncLoadWaitCvtToAsyncLoadWait
-    : public OpRewritePattern<AsyncLoadWaitOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult
-  matchAndRewrite(AsyncLoadWaitOp op,
-                  PatternRewriter &rewriter) const override {
-
-    bool converted = false;
-    for (auto val : op.getAsyncToken()){
-        Operation *arg = val.getDefiningOp();
-        if (!arg)
-          return failure();
-        if (auto cvtOp = dyn_cast<ConvertLayoutOp>(arg)) {
-            cvtOp.replaceAllUsesWith(cvtOp.getSrc());
-            converted = true;
-        }
-    }
-    if (converted)
-        return success();
-    return failure();
-  }
-};
-
 void canonicalizeGetBufferOp(GetBufferOp getBufferOp){
     if (getBufferOp.getSrc().getType() !=  getBufferOp->getResult(0).getType()){
         OpBuilder builder(getBufferOp);
@@ -144,7 +119,6 @@ public:
     RewritePatternSet smemAllocPatterns(context);
 
     smemAllocPatterns.add<CvtGetBufferToGetBuffer>(context);
-    smemAllocPatterns.add<AsyncLoadWaitCvtToAsyncLoadWait>(context);
 
     if (applyPatternsGreedily(m, std::move(smemAllocPatterns)).failed()) {
       signalPassFailure();

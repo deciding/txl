@@ -691,7 +691,7 @@ def matmul_async_load_txl_kernel(a_ptr, b_ptr, c_ptr,  #
     cur_bB = txl.get_buffer(bB, bufIdxW)
     txl.async_load(cur_bA, a_ptrs, mask=offs_k[None, :] < K, other=0.0)
     #x = tl.load(a_ptrs, mask=offs_k[None, :] < K, other=0.0)
-    token1 = txl.async_load(cur_bB, b_ptrs, mask=offs_k[:, None] < K, other=0.0)
+    txl.async_load(cur_bB, b_ptrs, mask=offs_k[:, None] < K, other=0.0)
     bufIdxW = (bufIdxW + 1) % NUM_STAGES
     a_ptrs += BLOCK_SIZE_K * stride_ak
     b_ptrs += BLOCK_SIZE_K * stride_bk
@@ -699,14 +699,14 @@ def matmul_async_load_txl_kernel(a_ptr, b_ptr, c_ptr,  #
     cur_bA = txl.get_buffer(bA, bufIdxW)
     cur_bB = txl.get_buffer(bB, bufIdxW)
     txl.async_load(cur_bA, a_ptrs, mask=offs_k[None, :] < K- BLOCK_SIZE_K, other=0.0)
-    token2 = txl.async_load(cur_bB, b_ptrs, mask=offs_k[:, None] < K- BLOCK_SIZE_K, other=0.0)
+    txl.async_load(cur_bB, b_ptrs, mask=offs_k[:, None] < K- BLOCK_SIZE_K, other=0.0)
     bufIdxW = (bufIdxW + 1) % NUM_STAGES
     a_ptrs += BLOCK_SIZE_K * stride_ak
     b_ptrs += BLOCK_SIZE_K * stride_bk
 
     bufIdxR = 0
     for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
-        txl.async_load_wait(token1, 2)
+        txl.async_load_wait(2)
         cur_bA = txl.get_buffer(bA, bufIdxR)
         cur_bB = txl.get_buffer(bB, bufIdxR)
 
@@ -716,11 +716,9 @@ def matmul_async_load_txl_kernel(a_ptr, b_ptr, c_ptr,  #
         cur_bA = txl.get_buffer(bA, bufIdxW)
         cur_bB = txl.get_buffer(bB, bufIdxW)
         txl.async_load(cur_bA, a_ptrs, mask=offs_k[None, :] < K - (k+2) * BLOCK_SIZE_K, other=0.0)
-        token = txl.async_load(cur_bB, b_ptrs, mask=offs_k[:, None] < K - (k+2) * BLOCK_SIZE_K, other=0.0)
+        txl.async_load(cur_bB, b_ptrs, mask=offs_k[:, None] < K - (k+2) * BLOCK_SIZE_K, other=0.0)
         a_ptrs += BLOCK_SIZE_K * stride_ak
         b_ptrs += BLOCK_SIZE_K * stride_bk
-        token1 = token2
-        token2 = token
         bufIdxW = (bufIdxW + 1) % NUM_STAGES
 
         bufIdxR = (bufIdxR + 1) % NUM_STAGES

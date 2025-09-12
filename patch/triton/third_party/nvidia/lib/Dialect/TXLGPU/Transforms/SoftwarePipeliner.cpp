@@ -522,10 +522,11 @@ void lowerAsyncLoadOp(tt::AsyncLoadOp &asyncLoad) {
         asyncLoad.getMask(), asyncLoad.getOther(),
         cache, evict,
         asyncLoad.getIsVolatile());
+
     Operation *commit =
         builder.create<ttg::AsyncCommitGroupOp>(loc, copy->getResult(0));
 
-    replaceAsyncLoadUses(asyncLoad, commit->getResult(0));
+    //replaceAsyncLoadUses(asyncLoad, commit->getResult(0));
 
     asyncLoad->erase();
 }
@@ -537,7 +538,6 @@ void lowerAsyncLoadWaitOp(tt::AsyncLoadWaitOp &asyncLoadWait) {
     // TODO: asyncLoad.getSrc() not working, should have an intermediate op with MemDescType
     // workaround: use getOperand instead
     SmallVector<Value> toks;
-    toks.push_back(asyncLoadWait->getOperand(0));
     Operation *wait =
         builder.create<ttg::AsyncWaitOp>(loc, toks, asyncLoadWait.getNum());
 

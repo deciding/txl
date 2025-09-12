@@ -536,8 +536,10 @@ void lowerAsyncLoadWaitOp(tt::AsyncLoadWaitOp &asyncLoadWait) {
 
     // TODO: asyncLoad.getSrc() not working, should have an intermediate op with MemDescType
     // workaround: use getOperand instead
+    SmallVector<Value> toks;
+    toks.push_back(asyncLoadWait->getOperand(0));
     Operation *wait =
-        builder.create<ttg::AsyncWaitOp>(loc, asyncLoadWait->getOperand(0), 0);
+        builder.create<ttg::AsyncWaitOp>(loc, toks, asyncLoadWait.getNum());
 
     asyncLoadWait->erase();
 }
@@ -682,7 +684,7 @@ public:
     pipelineWgmma(m);
 
     // schedule the waits
-    mlir::triton::updateWaits(getOperation());
+    //mlir::triton::updateWaits(getOperation());
 
     // Clean up arithmetic before applying the next level of pipelining to
     // simplify the IR.

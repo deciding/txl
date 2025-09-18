@@ -47,6 +47,82 @@ def TXL_SmemAllocOp : TXL_Op<"smem_alloc", [DeclareOpInterfaceMethods<MemoryEffe
   let assemblyFormat = "attr-dict `:` type($result)";
 }
 
+def TXL_SmemLoadOp : TXL_Op<"smem_load"> {
+  let summary = "Load a buffer from local memory into a distributed tensor";
+
+  let description = [{
+    Load a tensor from the local memory descriptor into a distributed tensor.
+  }];
+  let arguments = (ins
+    Arg<TT_Tensor, "", [MemRead]>:$src,
+    TypeAttr: $regType
+  );
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = [{$src attr-dict `:` type($src) `->` type($result) `(` $regType `)` }];
+}
+
+def TXL_SmemStoreOp : TXL_Op<"smem_store"> {
+  let summary = "Store a distributed tensor into a buffer in local memory";
+
+  let description = [{
+    Store a distributed tensor into a buffer in local memory.
+  }];
+  let arguments = (ins
+    TT_Tensor:$src,
+    Arg<TT_Tensor, "", [MemWrite]>:$dst
+  );
+
+  let assemblyFormat = [{
+    $src `,` $dst attr-dict `:` type($src) `,` type($dst)
+  }];
+}
+
+def TXL_FragSmemLoadOp : TXL_Op<"frag_smem_load"> {
+  let summary = "Load a distributed tensor from a buffer in local memory";
+
+  let description = [{
+    Load a distributed tensor from a buffer in local memory.
+  }];
+  let arguments = (ins
+    Arg<TT_Tensor, "", [MemRead]>:$src,
+    TypeAttr: $regType,
+    BoolAttr: $broadcast
+  );
+
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = [{$src attr-dict `:` type($src) `->` type($result) `(` $regType `)`}];
+}
+
+def TXL_FragSmemStoreOp : TXL_Op<"frag_smem_store"> {
+  let summary = "Store a distributed tensor into a buffer in local memory";
+
+  let description = [{
+    Store a distributed tensor into a buffer in local memory.
+  }];
+  let arguments = (ins
+    TT_Tensor:$src,
+    Arg<TT_Tensor, "", [MemWrite]>:$dst,
+    TypeAttr: $regType
+  );
+
+  let assemblyFormat = [{
+    $src `,` $dst attr-dict `:` type($src) `(` $regType `)` `,` type($dst)
+  }];
+}
+
+def TXL_SubLayoutOp : TXL_Op<"sub_layout",
+                                 [Pure]> {
+  let summary = "convert layout";
+
+  let arguments = (ins TT_Tensor:$src);
+
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = "$src attr-dict `:` type($src) `->` type($result)";
+}
+
 def TXL_MbarAllocOp : TXL_Op<"mbar_alloc", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "shared mem alloc";
   let description = [{

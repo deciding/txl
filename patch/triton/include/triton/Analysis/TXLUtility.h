@@ -13,4 +13,12 @@ void setOpAttrWgId(Operation* op, int32_t wgid);
 
 int getOpAttrWgId(Operation* op);
 
+void setOpAttrWarpReduce(Operation* op);
+
+bool getOpAttrWarpReduce(Operation* op);
+
+void setOpRegType(Operation* op, Type type);
+
+Type getOpRegType(Operation* op);
+
 }

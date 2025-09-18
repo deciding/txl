@@ -580,6 +580,11 @@ void populateTritonPatterns(TritonGPUTypeConverter &typeConverter,
       GenericOpPattern<triton::LoadOp>,
       GenericOpPattern<triton::AsyncLoadOp>, //txl
       GenericOpPattern<triton::AsyncLoadWaitOp>, //txl
+      GenericOpPattern<triton::SmemLoadOp>, //txl
+      GenericOpPattern<triton::SmemStoreOp>, //txl
+      GenericOpPattern<triton::FragSmemLoadOp>, //txl
+      GenericOpPattern<triton::FragSmemStoreOp>, //txl
+      GenericOpPattern<triton::SubLayoutOp>, //txl
       GenericOpPattern<triton::StoreOp>,
       GenericOpPattern<triton::HistogramOp>,
       GenericOpPattern<triton::GatherOp>,

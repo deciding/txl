@@ -17,8 +17,8 @@ def txl_kernel(
         BLOCK_SIZE_N: tl.constexpr,
        ):
 
-    #if txl.tid(0) == 0:
-    #    txl.print('hello t0')
+    if txl.tid(0) == 0:
+        txl.print('hello t0')
     #if txl.warp_id() == 0:
     #    txl.print('hello w0', txl.tidx.x())
     #if txl.warpgroup_id() == 0:

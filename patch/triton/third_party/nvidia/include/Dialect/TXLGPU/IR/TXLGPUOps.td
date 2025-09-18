@@ -6,12 +6,18 @@ include "mlir/IR/EnumAttr.td"
 include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
 include "TXLGPUDialect.td"
 include "TXLGPUAttrDefs.td"
+include "triton/Dialect/Triton/IR/TritonTypes.td"
 include "triton/Dialect/TritonGPU/IR/TritonGPUTypes.td"
 
 class TXLGPU_Op<string mnemonic, list<Trait> traits = []> :
     LLVM_OpBase<TXLGPU_Dialect, mnemonic, traits>;
 
 def TXLGPU_CanonicalWarpgroupIdOp : TXLGPU_Op<"canonical_warpgroup_id", [Pure]> {
+  let results = (outs I32:$result);
+  let assemblyFormat = "attr-dict";
+}
+
+def TXLGPU_LaneIdOp : TXLGPU_Op<"lane_id", [Pure]> {
   let results = (outs I32:$result);
   let assemblyFormat = "attr-dict";
 }
@@ -87,6 +93,40 @@ def TXLGPU_SaveCtxOp : TXLGPU_Op<"save_ctx", [
   }];
 
   let assemblyFormat = "attr-dict";
+}
+
+def TXLGPU_FragLocalLoadOp : TXLGPU_Op<"frag_local_load"> {
+  let summary = "Load a distributed tensor from a buffer in local memory";
+
+  let description = [{
+    Load a distributed tensor from a buffer in local memory.
+  }];
+  let arguments = (ins
+    Arg<TTG_MemDescType, "", [MemRead]>:$src,
+    TypeAttr: $regType,
+    BoolAttr: $broadcast
+  );
+
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = [{$src attr-dict `:` type($src) `->` type($result) `(` $regType `)`}];
+}
+
+def TXLGPU_FragLocalStoreOp : TXLGPU_Op<"frag_local_store"> {
+  let summary = "Store a distributed tensor into a buffer in local memory";
+
+  let description = [{
+    Store a distributed tensor into a buffer in local memory.
+  }];
+  let arguments = (ins
+    TT_Tensor:$src,
+    Arg<TTG_MemDescType, "", [MemWrite]>:$dst,
+    TypeAttr: $regType
+  );
+
+  let assemblyFormat = [{
+    $src `,` $dst attr-dict `:` type($src) `(` $regType `)` `->` type($dst)
+  }];
 }
 
 #endif

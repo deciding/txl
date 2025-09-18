@@ -11,6 +11,9 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LogicalResult.h"
 
+#include "triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h"
+#include "mlir/Conversion/LLVMCommon/TypeConverter.h"
+
 namespace mlir {
 
 class ModuleOp;
@@ -21,6 +24,10 @@ namespace triton {
 std::unique_ptr<OperationPass<ModuleOp>> createConvertTXLGPUToLLVMPass();
 
 std::unique_ptr<OperationPass<ModuleOp>> createInheritWGIdPass();
+
+void populateTXLGPUToLLVMPatterns(
+    LLVMTypeConverter &typeConverter, const TargetInfoBase &targetInfo,
+    RewritePatternSet &patterns, PatternBenefit benefit);
 
 } // namespace triton
 

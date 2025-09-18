@@ -22,6 +22,7 @@
 #include "triton/Tools/Sys/GetEnv.hpp"
 #include "llvm/Support/Debug.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.h"
+#include "triton/Analysis/TXLUtility.h" // txl
 
 using namespace mlir;
 using namespace mlir::triton::gpu;
@@ -29,6 +30,7 @@ using namespace mlir::triton::gpu;
 namespace tt = mlir::triton;
 namespace ttg = mlir::triton::gpu;
 namespace ttng = mlir::triton::nvidia_gpu;
+namespace ttx = mlir::triton::txlgpu;
 
 namespace mlir {
 namespace triton {
@@ -238,7 +240,12 @@ void replaceSmemBufferUses(
       // TmaLoadOp skipped local_load op wrappings
       // If there are some uses that were not local_allocs, we need to create a
       // local_load for them.
-      for (Operation* user : oldViewOp->getUsers()){
+      auto users = oldViewOp->getUsers();
+      SmallVector<Operation*> ops;
+      for (Operation* user : users){
+          ops.push_back(user);
+      }
+      for (Operation* user : ops){
         if (auto asyncLoadOp = dyn_cast<tt::AsyncLoadOp>(user)) {
             asyncLoadOp->setOperand(0, newView);
         }
@@ -247,6 +254,18 @@ void replaceSmemBufferUses(
         }
         else if (auto tmaGatherOp = dyn_cast<tt::TmaGatherOp>(user)) {
             tmaGatherOp->setOperand(0, newView);
+        }
+        else if (auto smemLoadOp = dyn_cast<tt::SmemLoadOp>(user)) {
+            smemLoadOp->setOperand(0, newView);
+        }
+        else if (auto smemStoreOp = dyn_cast<tt::SmemStoreOp>(user)) {
+            smemStoreOp->setOperand(1, newView);
+        }
+        else if (auto fragSmemLoadOp = dyn_cast<tt::FragSmemLoadOp>(user)) {
+            fragSmemLoadOp->setOperand(0, newView);
+        }
+        else if (auto fragSmemStoreOp = dyn_cast<tt::FragSmemStoreOp>(user)) {
+            fragSmemStoreOp->setOperand(1, newView);
         }
         else {
             auto sharedLoad = builder.create<ttg::LocalLoadOp>(
@@ -376,6 +395,106 @@ void lowerMbar(tt::MbarAllocOp& op) {
     //  builder.create<ttng::InvalBarrierOp>(loc, barrierView);
     //}
     //builder.create<ttg::LocalDeallocOp>(loc, barrierAlloc);
+}
+
+void lowerSmemLoad(tt::SmemLoadOp& op) {
+    OpBuilder builder(op);
+    Value localLoad = builder.create<ttg::LocalLoadOp>(
+            op->getLoc(),
+            //op.getResult().getType(),
+            op.getRegType(),
+            op->getOperand(0) // changed to memdesc
+    );
+    tt::replaceUsesAndPropagateType(builder, op, localLoad);
+    op->erase();
+}
+
+void lowerSmemStore(tt::SmemStoreOp& op) {
+    OpBuilder builder(op);
+    ttg::LocalStoreOp local_store = builder.create<ttg::LocalStoreOp>(
+            op->getLoc(),
+            //newSrc,
+            op->getOperand(0),
+            op->getOperand(1) // changed to memdesc
+    );
+    op->erase();
+}
+
+bool sameShapeAndElementType(Type a, Type b) {
+  auto ra = dyn_cast<RankedTensorType>(a);
+  auto rb = dyn_cast<RankedTensorType>(b);
+  if (!ra || !rb)
+    return false;
+  return ra != rb && ra.getShape() == rb.getShape() &&
+         ra.getElementType() == rb.getElementType();
+}
+void propagateTypeRecursively(Value val, Type newType) {
+  for (Operation *user : val.getUsers()) {
+    if (user->getNumResults()){
+        Value userResult = user->getResult(0);
+        Type oldType = userResult.getType();
+
+        if (oldType != newType && sameShapeAndElementType(oldType, newType)) {
+          userResult.setType(newType);
+          // Recurse on this user's result
+          propagateTypeRecursively(userResult, newType);
+        }
+    }
+  }
+}
+void replaceAndPropagate(Operation *srcOp, Value newValue) {
+  assert(srcOp->getNumResults() == 1 &&
+         "Expected single-result operation");
+
+  Value oldResult = srcOp->getResult(0);
+  Type newType = newValue.getType();
+
+  // Replace all uses of old result
+  oldResult.replaceAllUsesWith(newValue);
+
+  // Start recursive propagation from the newValue
+  propagateTypeRecursively(newValue, newType);
+}
+
+void lowerFragSmemLoad(tt::FragSmemLoadOp& op) {
+    OpBuilder builder(op);
+    Value frag_local_load = builder.create<ttx::FragLocalLoadOp>(
+            op->getLoc(),
+            //op.getResult().getType(),
+            op.getRegType(),
+            op->getOperand(0),
+            op.getRegType(),
+            op.getBroadcast()
+    );
+    //tt::replaceUsesAndPropagateType(builder, op, frag_local_load);
+    replaceAndPropagate(op, frag_local_load);
+    op->erase();
+}
+
+void lowerFragSmemStore(tt::FragSmemStoreOp& op) {
+    OpBuilder builder(op);
+    ttx::FragLocalStoreOp frag_local_store = builder.create<ttx::FragLocalStoreOp>(
+            op->getLoc(),
+            op->getOperand(0),
+            op->getOperand(1), // changed to memdesc
+            op.getRegType()
+    );
+    op->erase();
+}
+
+void lowerSmemLoadStores(ModuleOp moduleOp) {
+  moduleOp->walk([&](tt::SmemLoadOp op) {
+      lowerSmemLoad(op);
+  });
+  moduleOp->walk([&](tt::SmemStoreOp op) {
+      lowerSmemStore(op);
+  });
+  moduleOp->walk([&](tt::FragSmemLoadOp op) {
+      lowerFragSmemLoad(op);
+  });
+  moduleOp->walk([&](tt::FragSmemStoreOp op) {
+      lowerFragSmemStore(op);
+  });
 }
 
 #if 0
@@ -680,6 +799,7 @@ public:
     lowerSmemAllocs(m);
     lowerMbars(m);
     lowerLoads(m);
+    lowerSmemLoadStores(m);
 
     pipelineWgmma(m);
 

@@ -27,6 +27,8 @@
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Transforms/LocationSnapshot.h"
 
+#include "triton/Analysis/TXLUtility.h"
+
 #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
 #include "triton/Dialect/Gluon/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -35,6 +37,11 @@
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonInstrument/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.h"
+
+#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
+#include "third_party/amd/include/Dialect/TritonAMDGPU/IR/Dialect.h"
+#include "triton/Tools/LayoutUtils.h"
+#include "triton/Tools/LinearLayout.h"
 
 // txl
 #include "txl/Dialect/TXL/IR/Dialect.h"
@@ -1677,6 +1684,13 @@ void init_triton_ir(py::module &&m) {
       .def("create_reduce",
            [](TritonOpBuilder &self, std::vector<Value> operands, int axis)
                -> OpState { return self.create<ReduceOp>(operands, axis); })
+      .def("create_warp_reduce",
+           [](TritonOpBuilder &self, std::vector<Value> operands, int axis)
+               -> OpState {
+               auto op = self.create<ReduceOp>(operands, axis);
+               setOpAttrWarpReduce(op);
+               return op;
+           })
       .def("create_reduce_ret",
            [](TritonOpBuilder &self, py::args args) -> OpState {
              llvm::SmallVector<Value> return_values;
@@ -1814,11 +1828,152 @@ void init_triton_ir(py::module &&m) {
            [](TritonOpBuilder &self, Value &val, Type &type) -> Value {
              return self.create<arith::IndexCastOp>(type, val);
            })
+      .def("get_distributed_ty",
+           [](TritonOpBuilder &self, Type &elementType,
+              std::vector<int64_t> &shape, Attribute layout) -> Type {
+             return RankedTensorType::get(shape, elementType,
+                                                      layout);
+           })
+      .def("get_shared_mem_desc_ty",
+           [](TritonOpBuilder &self, Type &elementType,
+              std::vector<int64_t> &shape, Attribute layout,
+              std::vector<int64_t> &allocShape) -> Type {
+             auto ctx = self.getContext();
+             return ttg::MemDescType::get(
+                 shape, elementType, layout,
+                 ttg::SharedMemorySpaceAttr::get(ctx),
+                 /*mutableMemory=*/true,
+                 /*allocShape=*/allocShape);
+           })
+      .def("get_tensor_mem_desc_ty",
+           [](TritonOpBuilder &self, Type &elementType,
+              std::vector<int64_t> &shape, Attribute layout,
+              std::vector<int64_t> &allocShape) -> Type {
+             auto ctx = self.getContext();
+             return ttg::MemDescType::get(
+                 shape, elementType, layout,
+                 ttng::TensorMemorySpaceAttr::get(ctx),
+                 /*mutableMemory=*/true,
+                 /*allocShape=*/allocShape);
+           })
+      .def("get_blocked_layout",
+           [](TritonOpBuilder &self, std::vector<unsigned> &sizePerThread,
+              std::vector<unsigned> &threadsPerWarp,
+              std::vector<unsigned> &warpsPerCta, std::vector<unsigned> &order,
+              std::vector<unsigned> &ctasPerCga,
+              std::vector<unsigned> &ctaSplitNum,
+              std::vector<unsigned> &ctaOrder) -> Attribute {
+             auto ctx = self.getContext();
+             auto ctaLayout = ttg::CTALayoutAttr::get(
+                 ctx, ctasPerCga, ctaSplitNum, ctaOrder);
+             return ttg::BlockedEncodingAttr::get(
+                 ctx, sizePerThread, threadsPerWarp, warpsPerCta, order,
+                 ctaLayout);
+           })
+      .def("get_slice_layout",
+           [](TritonOpBuilder &self, unsigned dim,
+              Attribute parent) -> Attribute {
+             auto ctx = self.getContext();
+             auto dist = cast<ttg::DistributedEncodingTrait>(parent);
+             return ttg::SliceEncodingAttr::get(ctx, dim, dist);
+           })
+      .def("get_distributed_linear_layout",
+           [](TritonOpBuilder &self, std::vector<std::vector<int>> regBases,
+              std::vector<std::vector<int>> laneBases,
+              std::vector<std::vector<int>> warpBases,
+              std::vector<std::vector<int>> blockBases,
+              std::vector<int64_t> shape) -> Attribute {
+             auto ctx = self.getContext();
+             auto kReg = mlir::StringAttr::get(ctx, "register");
+             auto kLane = mlir::StringAttr::get(ctx, "lane");
+             auto kWarp = mlir::StringAttr::get(ctx, "warp");
+             auto kBlock = mlir::StringAttr::get(ctx, "block");
+             auto outDims = tt::standardOutDimPairs(ctx, shape);
+             auto ll = tt::LinearLayout({{kReg, regBases},
+                                         {kLane, laneBases},
+                                         {kWarp, warpBases},
+                                         {kBlock, blockBases}},
+                                        outDims,
+                                        /*requiresSurjective=*/true);
+             return ttg::LinearEncodingAttr::get(ctx, ll);
+           })
+      .def("get_dot_operand_layout",
+           [](TritonOpBuilder &self, unsigned opIdx, Attribute parent,
+              unsigned kWidth) -> Attribute {
+             return ttg::DotOperandEncodingAttr::get(
+                 self.getContext(), opIdx, parent, kWidth);
+           })
+      .def("get_mma_layout",
+           [](TritonOpBuilder &self, std::vector<unsigned> &version,
+              std::vector<unsigned> &warpsPerCta,
+              std::vector<unsigned> &ctasPerCga,
+              std::vector<unsigned> &ctaSplitNum,
+              std::vector<unsigned> &ctaOrder,
+              std::vector<unsigned> &instrShape) -> Attribute {
+             auto ctx = self.getContext();
+             auto ctaLayout = ttg::CTALayoutAttr::get(
+                 ctx, ctasPerCga, ctaSplitNum, ctaOrder);
+             return ttg::NvidiaMmaEncodingAttr::get(
+                 ctx, version[0], version[1], warpsPerCta, ctaLayout,
+                 instrShape);
+           })
+      .def("get_amd_mfma_layout",
+           [](TritonOpBuilder &self, unsigned version,
+              std::vector<unsigned> &instrShape, bool transposed,
+              std::vector<unsigned> &warpsPerCta, mlir::Type elemType,
+              std::vector<unsigned> &tilesPerWarp,
+              std::vector<unsigned> &ctasPerCga,
+              std::vector<unsigned> &ctaSplitNum,
+              std::vector<unsigned> &ctaOrder) -> Attribute {
+             auto ctx = self.getContext();
+             auto ctaLayout = ttg::CTALayoutAttr::get(
+                 ctx, ctasPerCga, ctaSplitNum, ctaOrder);
+             return ttg::AMDMfmaEncodingAttr::get(
+                 ctx, version, warpsPerCta, tilesPerWarp, instrShape[0],
+                 instrShape[1], transposed, ctaLayout, elemType);
+           })
+      .def("get_nvmma_shared_layout",
+           [](TritonOpBuilder &self, unsigned swizzleByteWidth,
+              unsigned elementBitwidth, bool transposed, bool fp4Padded,
+              std::vector<unsigned> &ctasPerCga,
+              std::vector<unsigned> &ctaSplitNum,
+              std::vector<unsigned> &ctaOrder) -> Attribute {
+             auto ctx = self.getContext();
+             auto ctaLayout = ttg::CTALayoutAttr::get(
+                 ctx, ctasPerCga, ctaSplitNum, ctaOrder);
+             return ttg::NVMMASharedEncodingAttr::get(
+                 ctx, swizzleByteWidth, transposed, elementBitwidth, fp4Padded,
+                 ctaLayout);
+           })
       .def("create_smem_alloc",
            [](TritonOpBuilder &self,
                std::vector<int64_t> &shape, Type &elementType, int32_t numStages, bool isMutable) -> Value {
                auto tensorType = RankedTensorType::get(shape, elementType);
                return self.create<mlir::triton::SmemAllocOp>(tensorType, numStages, isMutable);
+           })
+      .def("create_smem_load",
+           [](TritonOpBuilder &self, Type resultTy, Value smem, Type regType) -> Value {
+             return self.create<tt::SmemLoadOp>(resultTy, smem, regType);
+           })
+      .def("create_smem_store",
+           [](TritonOpBuilder &self, Value smem, Value value) {
+             self.create<tt::SmemStoreOp>(value, smem);
+           })
+      .def("create_frag_smem_load",
+           [](TritonOpBuilder &self, Type resultTy, Value smem, Type regType, bool broadcast) -> Value {
+             return self.create<tt::FragSmemLoadOp>(resultTy, smem, regType, broadcast);
+           })
+      .def("create_frag_smem_store",
+           [](TritonOpBuilder &self, Value smem, Value value, Type regType) {
+             self.create<tt::FragSmemStoreOp>(value, smem, regType);
+           })
+      .def("create_convert_layout",
+           [](TritonOpBuilder &self, Type resultTy, Value value) -> Value {
+             return self.create<ttg::ConvertLayoutOp>(resultTy, value);
+           })
+      .def("create_sub_layout",
+           [](TritonOpBuilder &self, Type resultTy, Value value) -> Value {
+             return self.create<tt::SubLayoutOp>(resultTy, value);
            })
       .def("create_mbar_alloc",
            [](TritonOpBuilder &self,
@@ -1940,7 +2095,7 @@ void init_triton_ir(py::module &&m) {
                auto dim = static_cast<mlir::gpu::Dimension>(axis);
                return self.create<mlir::gpu::BlockDimOp>(dim);
            })
-      .def("create_get_canonical_wrap_id",
+      .def("create_get_canonical_warp_id",
            [](TritonOpBuilder& self) -> Value{
                //return self.create<mlir::triton::nvidia_gpu::GetCanonicalWarpIdOp>();
                return self.create<mlir::triton::nvgpu::WarpIdOp>(self.getBuilder().getI32Type());
@@ -1952,6 +2107,10 @@ void init_triton_ir(py::module &&m) {
       .def("create_get_canonical_wrapgroup_id",
            [](TritonOpBuilder& self) -> Value{
                return self.create<mlir::triton::txlgpu::CanonicalWarpgroupIdOp>(self.getBuilder().getI32Type());
+           })
+      .def("create_get_lane_id",
+           [](TritonOpBuilder& self) -> Value{
+               return self.create<mlir::triton::txlgpu::LaneIdOp>(self.getBuilder().getI32Type());
            })
       .def("create_reg_alloc",
            [](TritonOpBuilder& self, int32_t count) -> void{

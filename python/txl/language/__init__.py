@@ -6,10 +6,16 @@ from .core import (
     thread0,
     wg_thread0,
     warp_id,
+    lane_id,
     is_warpgroup,
     reg_alloc,
     reg_dealloc,
     smem_alloc,
+    smem_load,
+    smem_store,
+    frag_smem_load,
+    frag_smem_store,
+    sub_layout,
     mbar_alloc,
     mbar_expect,
     mbar_wait,
@@ -22,8 +28,11 @@ from .core import (
     dot_wait,
     async_load,
     async_load_wait,
+    warp_max,
+    warp_sum,
     print,
 )
+from ._layouts import *  # NOQA: F403
 
 #from .layout import (
 #    Layout,

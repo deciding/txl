@@ -1,7 +1,8 @@
 from triton._C.libtriton import ir
 from triton.language import core as tl
 from triton.language.semantic import TritonSemantic, TensorTy
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Sequence
+from .core import distributed_type
 
 class TXLSemantic(TritonSemantic):
 
@@ -69,6 +70,9 @@ class TXLSemantic(TritonSemantic):
     def warpgroup_id(self) -> TensorTy:
         return self.tensor(self.builder.create_get_canonical_wrapgroup_id(), tl.int32)
 
+    def lane_id(self) -> TensorTy:
+        return self.tensor(self.builder.create_get_lane_id(), tl.int32)
+
     def is_warpgroup(self, ids) -> TensorTy:
         return self.tensor(self.builder.create_is_warpgroup(ids), tl.int1)
 
@@ -83,6 +87,35 @@ class TXLSemantic(TritonSemantic):
         dtype = dtype.to_ir(self.builder)
         return self.tensor(
             self.builder.create_smem_alloc(shape, dtype, num_stages, mutable), block_type)
+
+    def smem_load(self, mem_desc, layout):
+        ret_ty = tl.block_type(mem_desc.dtype, mem_desc.shape)
+        reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
+        handle = self.builder.create_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, reg_ty.to_ir(self.builder))
+        return self.tensor(handle, ret_ty)
+
+    def smem_store(self, mem_desc, value):
+        assert value.shape == mem_desc.shape, f"source shape {value.shape} and destination shape {mem_desc.shape} must match"
+        assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
+        self.builder.create_smem_store(mem_desc.handle, value.handle)
+
+    def frag_smem_load(self, mem_desc, layout, broadcast):
+        ret_ty = tl.block_type(mem_desc.dtype, mem_desc.shape)
+        reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
+        handle = self.builder.create_frag_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, reg_ty.to_ir(self.builder), broadcast)
+        return self.tensor(handle, ret_ty)
+
+    def frag_smem_store(self, mem_desc, value, layout):
+        reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
+        #assert value.shape == mem_desc.shape, f"source shape {value.shape} and destination shape {mem_desc.shape} must match"
+        assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
+        self.builder.create_frag_smem_store(mem_desc.handle, value.handle, reg_ty.to_ir(self.builder))
+
+    def sub_layout(self, mem_desc, value, layout):
+        ret_ty = tl.block_type(mem_desc.dtype, mem_desc.shape)
+        reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
+        handle = self.builder.create_sub_layout(reg_ty.to_ir(self.builder), value.handle)
+        return self.tensor(handle, ret_ty)
 
     def mbar_alloc(self, arr_count: int, num_stages:int=1) -> TensorTy:
         block_type = tl.block_type(tl.int64, [1])
@@ -259,3 +292,21 @@ class TXLSemantic(TritonSemantic):
     def async_load_wait(self, pendings:int) -> TensorTy:
         x = self.builder.create_async_load_wait(pendings)
         return self.tensor(x, tl.void)
+
+    def warp_reduction(self, inputs: Sequence[TensorTy], axis: int, region_builder_fn) -> Tuple[TensorTy, ...]:
+        if axis is None:
+            inputs = tuple(self.reshape(t, [t.numel.value], can_reorder=True) for t in inputs)
+            axis = 0
+        # get result shape
+        shape = inputs[0].type.shape
+        rank = len(shape)
+        assert axis < rank, f"reduction axis must be < inputs rank ({rank})"
+        ret_shape = [s for i, s in enumerate(shape) if i != axis]
+        assert all(t.type.shape == shape for t in inputs), "all reduction inputs must have the same shape"
+
+        reduce_op = self.builder.create_warp_reduce([t.handle for t in inputs], axis)
+        region_builder_fn(reduce_op)
+        assert reduce_op.verify()
+
+        return tuple(
+            self.wrap_tensor(reduce_op.get_result(i), inputs[i].type.scalar, ret_shape) for i in range(len(inputs)))

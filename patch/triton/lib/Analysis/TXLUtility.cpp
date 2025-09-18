@@ -25,4 +25,28 @@ int getOpAttrWgId(Operation* op){
     return -1;
 }
 
+void setOpAttrWarpReduce(Operation* op){
+    op->setAttr("ttxg.warp_reduce", BoolAttr::get(op->getContext(), true));
+}
+
+bool getOpAttrWarpReduce(Operation* op){
+    auto attr = op->getAttrOfType<BoolAttr>("ttxg.warp_reduce");
+    if (attr) {
+        return  attr.getValue();
+    }
+    return false;
+}
+
+void setOpRegType(Operation* op, Type type) {
+    op->setAttr("ttxg.reg_type", TypeAttr::get(type));
+}
+
+Type getOpRegType(Operation* op) {
+    auto attr = op->getAttrOfType<TypeAttr>("ttxg.reg_type");
+    if (attr) {
+        return attr.getValue();
+    }
+    return Type(); // returns a null Type if not set
+}
+
 }

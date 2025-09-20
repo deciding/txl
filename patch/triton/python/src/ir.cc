@@ -1960,8 +1960,10 @@ void init_triton_ir(py::module &&m) {
              self.create<tt::SmemStoreOp>(value, smem);
            })
       .def("create_frag_smem_load",
-           [](TritonOpBuilder &self, Type resultTy, Value smem, Type regType, bool broadcast) -> Value {
-             return self.create<tt::FragSmemLoadOp>(resultTy, smem, regType, broadcast);
+           [](TritonOpBuilder &self, Type resultTy, Value smem, std::optional<Value>& other, Type regType, bool broadcast) -> Value {
+             Value otherVal = other.value_or(Value());
+             auto res = self.create<tt::FragSmemLoadOp>(resultTy, smem, otherVal, regType, broadcast);
+             return res;
            })
       .def("create_frag_smem_store",
            [](TritonOpBuilder &self, Value smem, Value value, Type regType) {

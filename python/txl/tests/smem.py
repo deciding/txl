@@ -5,6 +5,8 @@ import triton.language as tl
 from triton.tools.tensor_descriptor import TensorDescriptor
 
 import txl
+import os; print(os.getpid())
+
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
@@ -77,7 +79,6 @@ def test_smem_txl():
     print("output:", y)
 
 @txl.jit
-#@txl.jit(diff_mode='llir')
 def txl_smem_kernel2(
         in_ptr,
         out_ptr,
@@ -97,32 +98,17 @@ def txl_smem_kernel2(
 
     layout_c: tl.constexpr = txl.BlockedLayout(size_per_thread=[4], threads_per_warp=[1], warps_per_cta=[1], order=[0])
 
-    layout_sum_c: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[1], order=[0])
-
     txl.frag_smem_store(view, x, layout_b) # TODO: make layout_a not necessary
 
     if txl.lane_id() == 0:
         b = txl.frag_smem_load(view, layout_b)
         txl.print("b:", b)
 
-    buf1 = txl.smem_alloc([1], dtype=tl.float32)
-    view1 = txl.get_buffer(buf1, 0)
-
     if txl.tid(0) == 0:
         c = txl.frag_smem_load(view, layout_c)
         sum_c = txl.sum(c)
         txl.print("c:", c)
         txl.print("sum_c", sum_c)
-
-        sum_c = tl.full((1,), sum_c, tl.float32)
-        txl.frag_smem_store(view1, sum_c, layout_sum_c) # TODO: make layout_a not necessary
-
-    a = txl.frag_smem_load(view1, layout_a)
-    if txl.tid(0) == 33:
-        txl.print("a:", a)
-
-
-
 
 def test_smem_txl2():
     # Example usage
@@ -143,41 +129,75 @@ def txl_smem_kernel3(
         BLOCK_SIZE: tl.constexpr,
        ):
 
-    offsets = tl.arange(0, BLOCK_SIZE)
-    x = tl.load(in_ptr + offsets)
+    layout_a: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[32], warps_per_cta=[4], order=[0])
+    layout_sum_c: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[1], order=[0])
 
-    buf = txl.smem_alloc([4], dtype=tl.float32)
-    view = txl.get_buffer(buf, 0)
-    x = x + 1
+    buf1 = txl.smem_alloc([1], dtype=tl.float32)
+    view1 = txl.get_buffer(buf1, 0)
 
-    lane_id = txl.lane_id()
-    mask = lane_id == 0
+    if txl.tid(0) == 0:
+        sum_c = tl.full((1,), 3.0, tl.float32)
+        txl.frag_smem_store(view1, sum_c, layout_sum_c) # TODO: make layout_a not necessary
 
-    layout_b: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[4], order=[0])
+    a = txl.frag_smem_load(view1, layout_a)
+    if txl.tid(0) == 33:
+        txl.print("a:", a)
 
-    txl.smem_store(view, x, layout_b) # TODO: make layout_a not necessary
-    tl.inline_asm_elementwise(
-        asm="""
-        {@mask bra END; }            // skip if not lane0
-        st.shared.f32 [{smem}], {val};
-        END:
-        """,
-        constraints="r,r,r",  # smem address, value, mask
-        args=[smem_ptr, val, mask],
-    )
-
-    #if txl.lane_id() == 0:
-    #    a = txl.smem_load(view, layout_b)
-    #    txl.print("hello", a)
-
-def test_smem_txl2():
+def test_smem_txl3():
     # Example usage
     BLOCK_SIZE = 128
     x = torch.arange(BLOCK_SIZE, dtype=torch.float32, device='cuda')
     y = torch.empty_like(x)
 
     # Launch kernel: 1 block, 1 warp (BLOCK=32)
-    txl_smem_kernel2[(1,)](x, y, BLOCK_SIZE=BLOCK_SIZE, num_warps=4)
+    txl_smem_kernel3[(1,)](x, y, BLOCK_SIZE=BLOCK_SIZE, num_warps=4)
+
+    print("input :", x)
+    print("output:", y)
+
+@txl.jit
+#@txl.jit(src_file='dump/smem4/txl_smem_kernel4.ptx')
+def txl_smem_kernel4(
+        in_ptr,
+        out_ptr,
+        BLOCK_SIZE: tl.constexpr,
+       ):
+
+    offsets = tl.arange(0, BLOCK_SIZE)
+    x = tl.load(in_ptr + offsets)
+
+    buf = txl.smem_alloc([4], dtype=tl.float32)
+    view = txl.get_buffer(buf, 0)
+    buf1 = txl.smem_alloc([1], dtype=tl.float32)
+    view1 = txl.get_buffer(buf1, 0)
+
+    x = x + 1
+
+    layout_b: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[4], order=[0])
+    layout_c: tl.constexpr = txl.BlockedLayout(size_per_thread=[4], threads_per_warp=[1], warps_per_cta=[1], order=[0])
+    layout_sum_c: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[1], order=[0])
+    layout_a: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[32], warps_per_cta=[4], order=[0])
+
+    txl.frag_smem_store(view, x, layout_b) # TODO: make layout_a not necessary
+
+    c = txl.frag_smem_load(view, layout_c) # should never put into threadlevel if
+    if txl.tid(0) == 0:
+        sum_c = txl.sum(c)
+        #sum_c = tl.full((1,), sum_c, tl.float32)
+        txl.frag_smem_store(view1, sum_c, layout_sum_c) # TODO: make layout_a not necessary
+
+    a = txl.frag_smem_load(view1, layout_a)
+    if txl.tid(0) == 33:
+        txl.print("a:", a)
+
+def test_smem_txl4():
+    # Example usage
+    BLOCK_SIZE = 128
+    x = torch.arange(BLOCK_SIZE, dtype=torch.float32, device='cuda')
+    y = torch.empty_like(x)
+
+    # Launch kernel: 1 block, 1 warp (BLOCK=32)
+    txl_smem_kernel4[(1,)](x, y, BLOCK_SIZE=BLOCK_SIZE, num_warps=4)
 
     print("input :", x)
     print("output:", y)
@@ -223,5 +243,7 @@ def test_smem_triton():
 
 #test_txl()
 #test_smem_txl()
-test_smem_txl2()
+#test_smem_txl2()
+#test_smem_txl3()
+test_smem_txl4()
 #test_smem_triton()

@@ -59,7 +59,7 @@ public:
     auto smemShape = helper.getScratchRepShape();
     // txl hint
     if (isWarpReduce){
-        llvm::outs() << "[txl] WarpReduce is not sufficient, you might need following smem\n";
+        llvm::outs() << "\n [txl] WarpReduce is not sufficient, you might need following smem\n";
         llvm::outs() << "[" 
                      << llvm::join(llvm::map_range(smemShape, [](int x) { return std::to_string(x); }), ", ") 
                      << "]\n";

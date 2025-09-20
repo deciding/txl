@@ -103,13 +103,14 @@ def TXLGPU_FragLocalLoadOp : TXLGPU_Op<"frag_local_load"> {
   }];
   let arguments = (ins
     Arg<TTG_MemDescType, "", [MemRead]>:$src,
+    Optional<TT_Type>:$other,
     TypeAttr: $regType,
     BoolAttr: $broadcast
   );
 
   let results = (outs TT_Tensor:$result);
 
-  let assemblyFormat = [{$src attr-dict `:` type($src) `->` type($result) `(` $regType `)`}];
+  let assemblyFormat = [{$src `,` $other attr-dict `:` type($src) `,` type($other) `->` type($result) `(` $regType `)`}];
 }
 
 def TXLGPU_FragLocalStoreOp : TXLGPU_Op<"frag_local_store"> {

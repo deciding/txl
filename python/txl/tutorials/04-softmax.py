@@ -3,12 +3,19 @@ import time
 import torch
 import torch.nn.functional as F
 from triton.testing import do_bench
+import txl
 
 import cutlass
 import cutlass.torch as cutlass_torch
 
-from quack.cross_entropy import _cross_entropy, cross_entropy
-from quack.softmax import softmax
+try:
+    from quack.cross_entropy import _cross_entropy, cross_entropy
+    from quack.softmax import softmax
+    print("Quack detected")
+    HAS_QUACK=True
+except:
+    print("No quack")
+    HAS_QUACK=False
 
 
 ## Triton
@@ -20,6 +27,8 @@ import triton.language as tl
 
 # log2(e) constant (can be passed in instead)
 LOG2_E = 1.0 / math.log(2.0)  # ~1.4426950408889634
+
+import os;print(os.getpid())
 
 
 def naive_softmax(x):
@@ -58,19 +67,153 @@ def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n
         mask = col_offsets < n_cols
         row = tl.load(input_ptrs, mask=mask, other=-float('inf'))
         row = tl.cast(row, tl.float32)
+
         # Subtract maximum for numerical stability
         row_minus_max = row - tl.max(row, axis=0)
         # Note that exponentiation in Triton is fast but approximate (i.e., think __expf in CUDA)
         numerator = tl.exp(row_minus_max)
         denominator = tl.sum(numerator, axis=0)
+
         softmax_output = numerator / denominator
         # Write back output to DRAM
         output_row_start_ptr = output_ptr + row_idx * output_row_stride
         output_ptrs = output_row_start_ptr + col_offsets
         tl.store(output_ptrs, softmax_output, mask=mask)
 
+@txl.jit
+#@txl.jit(diff_mode='ttir')
+def softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
+        num_stages: tl.constexpr, num_warps: tl.constexpr):
+    # starting row of the program
+    row_start = tl.program_id(0)
+    row_step = tl.num_programs(0)
 
-def fused_softmax(x):
+    #lid = txl.lane_id()
+    tid = txl.tid(0)
+
+    smem_buf = txl.smem_alloc([num_warps], dtype=tl.float32)
+    reduction_smem = txl.get_buffer(smem_buf, 0)
+
+    smem_buf = txl.smem_alloc([1], dtype=tl.float32)
+    scalar_smem = txl.get_buffer(smem_buf, 0)
+
+    layout_warp_reduce: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[num_warps], order=[0])
+    #layout_all_reduce: tl.constexpr = txl.BlockedLayout(size_per_thread=[num_warps], threads_per_warp=[1], warps_per_cta=[1], order=[0])
+    layout_all_reduce: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[num_warps], warps_per_cta=[1], order=[0])
+    layout_sum: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[1], order=[0]) # TODO: infer from reduced shape
+    layout_full: tl.constexpr = txl.BlockedLayout(size_per_thread=[BLOCK_SIZE//32//num_warps//16], threads_per_warp=[32], warps_per_cta=[num_warps], order=[0]) # TODO: use default
+
+    for row_idx in tl.range(row_start, n_rows, row_step):
+        # The stride represents how much we need to increase the pointer to advance 1 row
+        row_start_ptr = input_ptr + row_idx * input_row_stride
+        # The block size is the next power of two greater than n_cols, so we can fit each
+        # row in a single block
+        col_offsets = tl.arange(0, BLOCK_SIZE)
+        input_ptrs = row_start_ptr + col_offsets
+        # Load the row into SRAM, using a mask since BLOCK_SIZE may be > than n_cols
+        mask = col_offsets < n_cols
+        row = tl.load(input_ptrs, mask=mask, other=-float('inf'))
+        row = tl.cast(row, tl.float32)
+
+        # Subtract maximum for numerical stability
+
+        # REPLACE with warp reduce
+        #cur_max = tl.max(row, axis=0)
+        cur_max = txl.warp_max(row, axis=0)
+        txl.frag_smem_store(reduction_smem, cur_max, layout_warp_reduce)
+        cur_max = txl.frag_smem_load(reduction_smem, layout_all_reduce)
+        all_max = txl.warp_max(cur_max, axis=0)
+        if  tid < num_warps:
+            txl.frag_smem_store(scalar_smem, all_max, layout_sum)
+        cur_max = txl.frag_smem_load(scalar_smem, layout_full)
+
+        row_minus_max = row - cur_max
+        # Note that exponentiation in Triton is fast but approximate (i.e., think __expf in CUDA)
+        numerator = tl.exp(row_minus_max)
+
+        # REPLACE with warp reduce
+        #denominator = tl.sum(numerator, axis=0)
+        cur_denom = txl.warp_sum(numerator, axis=0)
+        txl.frag_smem_store(reduction_smem, cur_denom, layout_warp_reduce)
+        cur_denom = txl.frag_smem_load(reduction_smem, layout_all_reduce)
+        all_denom = txl.warp_sum(cur_denom, axis=0)
+        if  tid < num_warps:
+            txl.frag_smem_store(scalar_smem, all_denom, layout_sum)
+        denominator = txl.frag_smem_load(scalar_smem, layout_full)
+
+        softmax_output = numerator / denominator
+        # Write back output to DRAM
+        output_row_start_ptr = output_ptr + row_idx * output_row_stride
+        output_ptrs = output_row_start_ptr + col_offsets
+        tl.store(output_ptrs, softmax_output, mask=mask)
+
+@txl.jit
+def online_softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
+        num_stages: tl.constexpr, num_warps: tl.constexpr):
+    # starting row of the program
+    row_start = tl.program_id(0)
+    row_step = tl.num_programs(0)
+
+    lid = txl.lane_id()
+    tid = txl.tid(0)
+
+    max_smem_buf = txl.smem_alloc([num_warps], dtype=tl.float32)
+    max_smem = txl.get_buffer(max_smem_buf, 0)
+    sum_smem_buf = txl.smem_alloc([num_warps], dtype=tl.float32)
+    sum_smem = txl.get_buffer(sum_smem_buf, 0)
+
+    smem_buf = txl.smem_alloc([1], dtype=tl.float32)
+    scalar_smem = txl.get_buffer(smem_buf, 0)
+
+    layout_warp_reduce: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[num_warps], order=[0])
+    #layout_all_reduce: tl.constexpr = txl.BlockedLayout(size_per_thread=[num_warps], threads_per_warp=[1], warps_per_cta=[1], order=[0])
+    layout_all_reduce: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[num_warps], warps_per_cta=[num_warps], order=[0])
+    layout_sum: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[32], warps_per_cta=[num_warps], order=[0]) # TODO: infer from reduced shape
+    #layout_full: tl.constexpr = txl.BlockedLayout(size_per_thread=[BLOCK_SIZE//32//num_warps//16], threads_per_warp=[32], warps_per_cta=[num_warps], order=[0]) # TODO: use default
+
+    for row_idx in tl.range(row_start, n_rows, row_step):
+        # The stride represents how much we need to increase the pointer to advance 1 row
+        row_start_ptr = input_ptr + row_idx * input_row_stride
+        # The block size is the next power of two greater than n_cols, so we can fit each
+        # row in a single block
+        col_offsets = tl.arange(0, BLOCK_SIZE)
+        input_ptrs = row_start_ptr + col_offsets
+        # Load the row into SRAM, using a mask since BLOCK_SIZE may be > than n_cols
+        mask = col_offsets < n_cols
+        row = tl.load(input_ptrs, mask=mask, other=-float('inf'))
+        row = tl.cast(row, tl.float32)
+
+        # Subtract maximum for numerical stability
+
+        cur_max = txl.warp_max(row, axis=0)
+        row_minus_max = row - cur_max
+        numerator = tl.exp(row_minus_max)
+        cur_denom = txl.warp_sum(numerator, axis=0)
+
+        txl.frag_smem_store(max_smem, cur_max, layout_warp_reduce)
+        txl.frag_smem_store(sum_smem, cur_denom, layout_warp_reduce)
+
+        warp_max = txl.frag_smem_load(max_smem, layout_all_reduce, -float('inf'), layout_sum)
+        warp_denom = txl.frag_smem_load(sum_smem, layout_all_reduce, 0.0, layout_sum)
+        #if lid >= num_warps: # shape problem
+        #    warp_max = -float('inf')
+        #    warp_denom = 0.0
+        all_max = txl.warp_max(warp_max, axis=0) # 3rd, might have problem
+        warp_max_minus_max = warp_max - all_max
+        sum_scale = tl.exp(warp_max_minus_max)
+        warp_denom *= sum_scale
+        all_denom = txl.warp_sum(warp_denom, axis=0)
+
+        numerator *= tl.exp(cur_max - all_max)
+        softmax_output = numerator / all_denom
+
+        # Write back output to DRAM
+        output_row_start_ptr = output_ptr + row_idx * output_row_stride
+        output_ptrs = output_row_start_ptr + col_offsets
+        tl.store(output_ptrs, softmax_output, mask=mask)
+
+
+def fused_softmax(x, num_programs):
     n_rows, n_cols = x.shape
 
     # The block size of each loop iteration is the smallest power of two greater than the number of columns in `x`
@@ -84,7 +227,7 @@ def fused_softmax(x):
 
     # Number of software pipelining stages.
     #num_stages = 4 if SIZE_SMEM > 200000 else 2
-    num_stages = 4
+    num_stages = 1
 
     # Allocate output
     y = torch.empty_like(x)
@@ -107,150 +250,71 @@ def fused_softmax(x):
 
     # Create a number of persistent programs.
     #kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages)
-    softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages)
+
+    #softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages)
+    #softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages, num_warps=4)
+    online_softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages, num_warps=4)
     return y
 
+
 ################################################
-# Softmax ours
+# TEST
 ################################################
 
-@triton.jit
-def triton_row_softmax(
-    X_ptr,            # pointer to input float32 matrix
-    Y_ptr,            # pointer to output float32 matrix
-    N_COLS,           # number of columns in each row
-    stride_row_X,     # row stride (elements) for input
-    stride_col_X,     # column stride (elements) for input (usually 1)
-    stride_row_Y,     # row stride for output
-    stride_col_Y,     # col stride for output
-    log2_e: tl.constexpr,           # constant: log2(e)
-    BLOCK_SIZE: tl.constexpr,  # number of columns handled by a single block's vector
-):
-    """
-    A Triton kernel where each program (program_id(0)) processes a single row.
-    BLOCK_SIZE is a compile-time constant controlling how many columns we process per vectorized load.
-    """
+DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
-    row = tl.program_id(0)          # each program instance handles one row
-    # offsets inside the row for the current vectorized block
-    offs = tl.arange(0, BLOCK_SIZE)
+def meta_fn(kernel_fn, x):
+    properties = triton.runtime.driver.active.utils.get_device_properties(DEVICE.index)
+    NUM_SM = properties["multiprocessor_count"]
+    NUM_REGS = properties["max_num_regs"]
+    SIZE_SMEM = properties["max_shared_mem"]
+    WARP_SIZE = properties["warpSize"]
 
-    # pointer to beginning of this row in X and Y
-    row_ptr_X = X_ptr + row * stride_row_X
-    row_ptr_Y = Y_ptr + row * stride_row_Y
+    n_rows, n_cols = x.shape
+    BLOCK_SIZE = triton.next_power_of_2(n_cols)
+    num_warps = 8
+    num_stages = 4 if SIZE_SMEM > 200000 else 2
+    y = torch.empty_like(x)
+    kernel = kernel_fn.warmup(y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE=BLOCK_SIZE,
+                                   num_stages=num_stages, num_warps=num_warps, grid=(1, ))
+    kernel._init_handles()
+    n_regs = kernel.n_regs
+    n_spills = kernel.n_spills
+    size_smem = kernel.metadata.shared
 
-    # ---------- 1) compute max over the row (numerical stability) ----------
-    # initialize max with -inf
-    #minus_inf = tl.constant(-1e30, dtype=tl.float32)
-    minus_inf = -1e30
-    cur_max = minus_inf + tl.zeros([BLOCK_SIZE], dtype=tl.float32)
+    occupancy = NUM_REGS // (n_regs * WARP_SIZE * num_warps)
+    occupancy = min(occupancy, SIZE_SMEM // size_smem)
+    num_programs = NUM_SM * occupancy
+    num_programs = min(num_programs, n_rows)
 
-    # iterate over the row in chunks of BLOCK_SIZE
-    col_start = 0
-    while col_start < N_COLS:
-        idx = col_start + offs                     # absolute column indices
-        mask = idx < N_COLS                        # valid columns mask
+    print("META:")
+    print(f"NUM_SM: {NUM_SM}")
+    print(f"NUM_REGS: {NUM_REGS}")
+    print(f"SIZE_SMEM: {SIZE_SMEM}")
+    print(f"WARP_SIZE: {WARP_SIZE}")
+    print()
 
-        # address for loads: row_ptr_X + idx * stride_col_X
-        load_addr = row_ptr_X + idx * stride_col_X
-        x = tl.load(load_addr, mask=mask, other=minus_inf)
-        x = tl.cast(x, tl.float32)
+    print(f"x.shape: {x.shape}")
+    print(f"BLOCK_SIZE: {BLOCK_SIZE}")
+    print(f"num_warps: {num_warps}")
+    print(f"num_stages: {num_stages}")
+    print()
 
-        # elementwise max across chunks; cur_max is a vector of length BLOCK_SIZE,
-        # but we need a scalar max. We'll reduce cur_max later with tl.max(..., axis=0).
-        cur_max = tl.maximum(cur_max, x)
-        col_start += BLOCK_SIZE
+    print(f"n_regs: {n_regs}")
+    print(f"n_spills: {n_spills}")
+    print(f"size_smem: {size_smem}")
+    print()
 
-    # reduce vector cur_max to single scalar m
-    m = tl.max(cur_max, axis=0)   # scalar
+    print(f"occupancy: {occupancy}")
+    print(f"num_programs: {num_programs}")
 
-    # ---------- 2) compute sum of exp2((x - m) * log2_e) ----------
-    sum_exp = tl.zeros([BLOCK_SIZE], dtype=tl.float32)  # will reduce later
+    return num_programs, BLOCK_SIZE, num_warps, num_stages
 
-    col_start = 0
-    while col_start < N_COLS:
-        idx = col_start + offs
-        mask = idx < N_COLS
-
-        load_addr = row_ptr_X + idx * stride_col_X
-        x = tl.load(load_addr, mask=mask, other=0.0)
-        x = tl.cast(x, tl.float32)
-
-        # compute exp2((x - m) * log2_e) (elementwise)
-        shifted = x - m
-        val = tl.exp2(shifted * log2_e)   # vector
-        # masked store into sum accumulator vector
-        val = tl.where(mask, val, tl.zeros([BLOCK_SIZE], dtype=tl.float32))
-        sum_exp = sum_exp + val
-        col_start += BLOCK_SIZE
-
-    # reduce sum_exp vector to scalar
-    sum_exp_scalar = tl.sum(sum_exp, axis=0)  # scalar
-
-    # compute reciprocal once
-    inv_sum = 1.0 / sum_exp_scalar
-
-    # ---------- 3) write final softmax values ----------
-    col_start = 0
-    while col_start < N_COLS:
-        idx = col_start + offs
-        mask = idx < N_COLS
-
-        load_addr = row_ptr_X + idx * stride_col_X
-        x = tl.load(load_addr, mask=mask, other=0.0)
-        x = tl.cast(x, tl.float32)
-
-        out = tl.exp2((x - m) * log2_e) * inv_sum
-
-        store_addr = row_ptr_Y + idx * stride_col_Y
-        tl.store(store_addr, out, mask=mask)
-        col_start += BLOCK_SIZE
-
-
-# Python wrapper
-def softmax_triton(x: np.ndarray, block_size: int = 128, num_warps: int = 4):
-    """
-    Compute row-wise softmax of 2D numpy array x using Triton kernel.
-    - block_size should be tuned for your hardware (common: 64, 128, 256).
-    - num_warps is a Triton tuning parameter (common: 4).
-    """
-
-    #assert x.dtype == torch.float32, "Only float32 supported in this example"
-    assert x.ndim == 2, "Input must be 2D (rows x cols)"
-    rows, cols = x.shape
-
-    # allocate output
-    y = torch.empty_like(x).to(torch.float32)
-
-    # row-major strides in elements
-    stride_row_X = x.stride()[0]
-    stride_col_X = x.stride()[1]
-    stride_row_Y = y.stride()[0]
-    stride_col_Y = y.stride()[1]
-
-    # Launch Triton kernel: each program_id(0) -> one row -> grid=(rows,)
-    grid = (rows,)
-
-    # note: pass BLOCK_SIZE as a python integer into the kernel as a compile-time constexpr
-    triton_row_softmax[grid](
-        x,                           # X_ptr (numpy supports buffer protocol)
-        y,                           # Y_ptr
-        (cols),              # N_COLS
-        (stride_row_X),      # stride_row_X
-        (stride_col_X),      # stride_col_X
-        (stride_row_Y),      # stride_row_Y
-        (stride_col_Y),      # stride_col_Y
-        (LOG2_E),          # log2_e constant
-        block_size,                  # BLOCK_SIZE as constexpr
-        num_warps=num_warps
-    )
-    return y
-
-def test_softmax():
-    M = 32*1024
-    N = 32*1024
-    #M = 8192
-    #N = 16384
+def test_softmax(dump_dir=None):
+    #M = 32*1024
+    #N = 32*1024
+    M = 8192
+    N = 16384
     KERNEL="SM"
 
     dtype = cutlass.BFloat16
@@ -273,16 +337,24 @@ def test_softmax():
 
     elif KERNEL == "SM":
         # Softmax
-        out = softmax(x)
         compiled_func_ref = torch.compile(lambda x, target: F.softmax(x, dim=-1))
-        quack_fn = lambda: softmax(x)
-        tri_fn = lambda x: softmax_triton(x)
-        tri_fn2 = lambda x: fused_softmax(x)
+        if HAS_QUACK:
+            quack_fn = lambda: softmax(x)
+
+        num_programs, BLOCK_SIZE, num_warps, num_stages = meta_fn(softmax_kernel, x)
+        txl_fn = lambda x: fused_softmax(x, num_programs)
+
         fn_mem_bytes = lambda: 2 * x.numel() * dtype.width // 8
 
     ################################################
     # Validate
     ################################################
+    from triton import knobs
+    knobs.autotuning.print=True
+    knobs.compilation.always_compile=True
+    if dump_dir:
+        knobs.compilation.dump_ir=True
+        knobs.cache.dump_dir=dump_dir
 
     # NumPy reference
     a = x32.cpu().numpy()
@@ -291,19 +363,18 @@ def test_softmax():
     ref = ref / ref.sum(axis=1, keepdims=True)
 
     torch_out = compiled_func_ref(x, target).to(torch.float32).cpu().numpy()
-    quack_out = quack_fn().to(torch.float32).cpu().numpy()
-    #tri_out = tri_fn(x32).to(torch.float32).cpu().numpy()
-    #tri_out = tri_fn(x).to(torch.float32).cpu().numpy()
-    tri_out = tri_fn2(x).to(torch.float32).cpu().numpy()
+    if HAS_QUACK:
+        quack_out = quack_fn().to(torch.float32).cpu().numpy()
+    txl_out = txl_fn(x).to(torch.float32).cpu().numpy()
 
     # relative error
     outs = []
-    outs.append(torch_out)
-    outs.append(quack_out)
-    outs.append(tri_out)
-    names = ['torch', 'quack', 'triton']
+    outs.append(('torch', torch_out))
+    if HAS_QUACK:
+        outs.append(('quack', quack_out))
+    outs.append(('txl', txl_out))
 
-    for name, out in zip(names, outs):
+    for name, out in outs:
         max_rel_err = np.max(np.abs(out - ref) / (ref + 1e-20))
         print("max relative error:", max_rel_err)
         print("sum per row -1 (should be 0):", np.max(np.abs(out.sum(axis=1) - 1.0)))
@@ -323,20 +394,22 @@ def test_softmax():
     print(f"Torch kernel execution time: {avg_time:.4f} ms")
     print(f"Torch mem throughput: {mem_bw_ref:.2f} GB/s")
 
-    time.sleep(0.5)
-    fn = quack_fn
-    avg_time = do_bench(fn, warmup=warmup_iterations, rep=iterations)
-    # Memory bandwidth calculation: read x (M*N elements) + read target (M elements) + write loss (M elements)
-    mem_bw = round(mem_bytes / (avg_time / 1000) / 1e9)
-    print(f"Quack execution time: {avg_time:.4f} ms")
-    print(f"Quack mem throughput: {mem_bw:.2f} GB/s")
+    if HAS_QUACK:
+        time.sleep(0.5)
+        fn = quack_fn
+        avg_time = do_bench(fn, warmup=warmup_iterations, rep=iterations)
+        # Memory bandwidth calculation: read x (M*N elements) + read target (M elements) + write loss (M elements)
+        mem_bw = round(mem_bytes / (avg_time / 1000) / 1e9)
+        print(f"Quack execution time: {avg_time:.4f} ms")
+        print(f"Quack mem throughput: {mem_bw:.2f} GB/s")
 
-    #fn = lambda: tri_fn(x32)
-    #fn = lambda: tri_fn(x)
-    fn = lambda: tri_fn2(x)
+    fn = lambda: txl_fn(x)
     for _ in range(5): fn()  # warm up
     time.sleep(0.5)
     avg_time = do_bench(fn, warmup=warmup_iterations, rep=iterations)
     mem_bw_ref = round(mem_bytes / (avg_time / 1000) / 1e9)
     print(f"Triton kernel execution time: {avg_time:.4f} ms")
     print(f"Triton mem throughput: {mem_bw_ref:.2f} GB/s")
+
+if __name__ == "__main__":
+    test_softmax()

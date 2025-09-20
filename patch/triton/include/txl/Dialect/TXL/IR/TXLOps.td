@@ -86,13 +86,14 @@ def TXL_FragSmemLoadOp : TXL_Op<"frag_smem_load"> {
   }];
   let arguments = (ins
     Arg<TT_Tensor, "", [MemRead]>:$src,
+    Optional<TT_Type>:$other,
     TypeAttr: $regType,
     BoolAttr: $broadcast
   );
 
   let results = (outs TT_Tensor:$result);
 
-  let assemblyFormat = [{$src attr-dict `:` type($src) `->` type($result) `(` $regType `)`}];
+  let assemblyFormat = [{$src `,` $other attr-dict `:` type($src) `,` type($other) `->` type($result) `(` $regType `)`}];
 }
 
 def TXL_FragSmemStoreOp : TXL_Op<"frag_smem_store"> {

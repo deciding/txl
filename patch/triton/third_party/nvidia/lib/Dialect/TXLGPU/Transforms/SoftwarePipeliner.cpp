@@ -458,11 +458,16 @@ void replaceAndPropagate(Operation *srcOp, Value newValue) {
 
 void lowerFragSmemLoad(tt::FragSmemLoadOp& op) {
     OpBuilder builder(op);
+    Value other = op.getOther();
+    Type resultTy = op.getRegType();
+    if(other){
+        resultTy = op.getResult().getType();
+    }
     Value frag_local_load = builder.create<ttx::FragLocalLoadOp>(
             op->getLoc(),
-            //op.getResult().getType(),
-            op.getRegType(),
+            resultTy,
             op->getOperand(0),
+            other,
             op.getRegType(),
             op.getBroadcast()
     );

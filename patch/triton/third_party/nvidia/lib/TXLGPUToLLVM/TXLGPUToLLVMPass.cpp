@@ -113,9 +113,10 @@ public:
     auto *ctx = op.getContext();
     auto memDescVal = op.getSrc();
     auto regVal = op.getResult();
+    auto otherVal = op.getOther();
     auto memDescTy = cast<MemDescType>(memDescVal.getType());
-    auto regTy = cast<RankedTensorType>(regVal.getType());
-    //auto regTy = cast<RankedTensorType>(op.getRegType());
+    auto fullRegTy = cast<RankedTensorType>(regVal.getType());
+    auto regTy = cast<RankedTensorType>(op.getRegType());
     auto typeConverter = getTypeConverter();
 
     auto llvmElemTy = typeConverter->convertType(memDescTy.getElementType());
@@ -145,8 +146,7 @@ public:
     cvt = cvt.sublayout({kReg, kLane, kWarp}, {kOffset});
 
     auto outVals = lowerLocalLdSt(loc, ctx, cvt, {}, llvmElemTy, memDescTy,
-                                  smemObj, rewriter, targetInfo, op);
-
+                                  smemObj, rewriter, targetInfo, op, otherVal);
     Value result = packLLElements(loc, typeConverter, outVals, rewriter, regTy);
     rewriter.replaceOp(op, result);
 

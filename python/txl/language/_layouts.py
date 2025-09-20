@@ -84,6 +84,16 @@ class BlockedLayout(DistributedLayout):
         assert len(self.cta_split_num) == rank
         assert len(self.cta_order) == rank
 
+    def shape(self):
+        rank = len(self.size_per_thread)
+        s = [1] * rank
+        for i in range(rank):
+            s[i] *= self.size_per_thread[i]
+            s[i] *= self.threads_per_warp[i]
+            s[i] *= self.warps_per_cta[i]
+            s[i] *= self.cta_split_num[i]
+        return s
+
     def _to_ir(self, builder):
         return builder.get_blocked_layout(
             self.size_per_thread,

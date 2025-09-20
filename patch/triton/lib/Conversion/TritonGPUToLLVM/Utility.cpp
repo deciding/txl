@@ -564,6 +564,7 @@ largestVectorisation(MLIRContext *ctx, const LinearLayout &cvt, int bitwidth,
 SmallVector<Value> lowerLdStPred(
     Location loc, MLIRContext *ctx, LinearLayout cvt,
     ArrayRef<Value> valsArray, // Input for store, output for load
+    Value otherVal,
     Type llvmElemTy, Value smemBase,
     std::function<Value(Value)> calcPaddedOffset, Value affineOffset,
     uint64_t maskSpanAffineOffset, Value laneId, Value warpId,
@@ -613,6 +614,7 @@ SmallVector<Value> lowerLdStPred(
       zerosLike(LinearLayout::identity1D(bitwidth / 8, kReg, kOffset));
   auto i8AddrLayout = i8Tile * addrLayout;
 
+  // txl pred
   Operation *lookupPt = &rewriter.getInsertionBlock()->front();
   int threadsPerWarp = triton::gpu::lookupThreadsPerWarp(rewriter);
   int numWarps = triton::gpu::lookupNumWarps(lookupPt);
@@ -668,6 +670,13 @@ SmallVector<Value> lowerLdStPred(
     outVals = invPermStrides.apply(outVals);
     auto invPerm = permutation.inverse();
     outVals = invPerm.apply(outVals);
+    if (otherVal){
+        SmallVector<Value> newVals;
+        for (auto val : outVals){
+            newVals.push_back(b.select(pred, val, otherVal));
+        }
+        outVals = newVals;
+    }
   }
   return outVals;
 }
@@ -679,7 +688,7 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
                 std::function<Value(Value)> calcPaddedOffset,
                 Value affineOffset, uint64_t maskSpanAffineOffset,
                 RewriterBase &rewriter, const TargetInfoBase &targetInfo,
-                Operation *localLoadOp) {
+                Operation *localLoadOp, Value otherVal) {
 
   bool isStore = !valsArray.empty();
   auto b = TritonLLVMOpBuilder(loc, rewriter);
@@ -704,7 +713,7 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
     }
   };
   auto [laneId, warpId] = getLaneAndWarpId(rewriter, loc);
-  return lowerLdStPred(loc, ctx, cvt, valsArray, llvmElemTy, smemBase,
+  return lowerLdStPred(loc, ctx, cvt, valsArray, otherVal, llvmElemTy, smemBase,
                    calcPaddedOffset, affineOffset, maskSpanAffineOffset, laneId,
                    warpId, rewriter, targetInfo, {}, emitLdSt);
 }
@@ -807,7 +816,7 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
                ArrayRef<Value> valsArray, // Input for store, empty for load
                Type llvmElemTy, triton::gpu::MemDescType srcTy,
                SharedMemoryObject smemObj, RewriterBase &rewriter,
-               const TargetInfoBase &targetInfo, Operation *localLoadOp) {
+               const TargetInfoBase &targetInfo, Operation *localLoadOp, Value otherVal) {
   assert(cvt.getNumOutDims() == 1);
   assert(*cvt.getOutDimNames().begin() == str_attr("offset"));
   auto calcPaddedOffset = [&](Value smemOffset) {
@@ -842,7 +851,7 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
   auto maskSpanAffineOffset = smemObj.getMaskSpanOffsets(srcTy);
   return lowerLdStShared(
       loc, ctx, cvt, valsArray, llvmElemTy, smemObj.getBase(), calcPaddedOffset,
-      affineOffset, maskSpanAffineOffset, rewriter, targetInfo, localLoadOp);
+      affineOffset, maskSpanAffineOffset, rewriter, targetInfo, localLoadOp, otherVal);
 }
 
 bool emitTransferBetweenRegistersAndShared(

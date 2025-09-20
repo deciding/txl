@@ -11,6 +11,7 @@ cp ${FROM_DIR}/include/triton/Analysis/Allocation.h ${TO_DIR}/include/triton/Ana
 
 cp ${FROM_DIR}/include/triton/Analysis/TXLUtility.h ${TO_DIR}/include/triton/Analysis/
 
+cp ${FROM_DIR}/include/triton/Conversion/TritonGPUToLLVM/Utility.h ${TO_DIR}/include/triton/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/include/triton/Conversion/TritonToTritonGPU/Passes.td ${TO_DIR}/include/triton/Conversion/TritonToTritonGPU/
 
 #include/txl

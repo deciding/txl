@@ -148,7 +148,7 @@ def softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_strid
         tl.store(output_ptrs, softmax_output, mask=mask)
 
 @txl.jit
-def online_softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
+def online_softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr, LOG2_E: tl.constexpr,
         num_stages: tl.constexpr, num_warps: tl.constexpr):
     # starting row of the program
     row_start = tl.program_id(0)
@@ -186,8 +186,12 @@ def online_softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_ro
         # Subtract maximum for numerical stability
 
         cur_max = txl.warp_max(row, axis=0)
-        row_minus_max = row - cur_max
-        numerator = tl.exp(row_minus_max)
+
+        #row_minus_max = row - cur_max
+        #numerator = tl.exp(row_minus_max)
+        cur_max_scaled = cur_max * LOG2_E
+        numerator = tl.exp2(row * LOG2_E - cur_max_scaled)
+
         cur_denom = txl.warp_sum(numerator, axis=0)
 
         txl.frag_smem_store(max_smem, cur_max, layout_warp_reduce)
@@ -213,7 +217,7 @@ def online_softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_ro
         tl.store(output_ptrs, softmax_output, mask=mask)
 
 
-def fused_softmax(x, num_programs):
+def fused_softmax(x, num_programs, LOG2_E):
     n_rows, n_cols = x.shape
 
     # The block size of each loop iteration is the smallest power of two greater than the number of columns in `x`
@@ -253,7 +257,7 @@ def fused_softmax(x, num_programs):
 
     #softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages)
     #softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages, num_warps=4)
-    online_softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages, num_warps=4)
+    online_softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
     return y
 
 
@@ -336,13 +340,14 @@ def test_softmax(dump_dir=None):
         fn_mem_bytes = lambda: (M * N + M + M) * dtype.width // 8
 
     elif KERNEL == "SM":
+        LOG2_E = math.log2(math.e)
         # Softmax
         compiled_func_ref = torch.compile(lambda x, target: F.softmax(x, dim=-1))
         if HAS_QUACK:
             quack_fn = lambda: softmax(x)
 
-        num_programs, BLOCK_SIZE, num_warps, num_stages = meta_fn(softmax_kernel, x)
-        txl_fn = lambda x: fused_softmax(x, num_programs)
+        #num_programs, BLOCK_SIZE, num_warps, num_stages = meta_fn(softmax_kernel, x)
+        txl_fn = lambda x: fused_softmax(x, num_programs, LOG2_E)
 
         fn_mem_bytes = lambda: 2 * x.numel() * dtype.width // 8
 

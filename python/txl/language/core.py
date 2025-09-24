@@ -130,14 +130,14 @@ def smem_store(smem, value, _semantic=None) -> None:
     return _semantic.smem_store(smem, value)
 
 @builtin
-def frag_smem_load(smem, layout, other=None, layout_full=None, broadcast=False, _semantic=None) -> tl.tensor:
+def frag_smem_load(smem, layout, layout_full=None, other=None, _semantic=None) -> tl.tensor:
     layout = _unwrap_if_constexpr(layout)
-    broadcast = _unwrap_if_constexpr(broadcast)
+    if layout_full is not None:
+        layout_full = _unwrap_if_constexpr(layout_full)
     if other is not None:
         assert layout_full is not None, 'other need specify layout_full'
         other = _semantic.to_tensor(other)
-        layout_full = _unwrap_if_constexpr(layout_full)
-    return _semantic.frag_smem_load(smem, layout, other, layout_full, broadcast)
+    return _semantic.frag_smem_load(smem, layout, layout_full, other)
 
 @builtin
 def frag_smem_store(smem, value, layout, _semantic=None) -> None:

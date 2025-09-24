@@ -88,7 +88,7 @@ def TXL_FragSmemLoadOp : TXL_Op<"frag_smem_load"> {
     Arg<TT_Tensor, "", [MemRead]>:$src,
     Optional<TT_Type>:$other,
     TypeAttr: $regType,
-    BoolAttr: $broadcast
+    BoolAttr: $fullLayout
   );
 
   let results = (outs TT_Tensor:$result);

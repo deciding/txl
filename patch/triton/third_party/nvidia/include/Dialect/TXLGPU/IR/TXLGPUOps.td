@@ -105,7 +105,7 @@ def TXLGPU_FragLocalLoadOp : TXLGPU_Op<"frag_local_load"> {
     Arg<TTG_MemDescType, "", [MemRead]>:$src,
     Optional<TT_Type>:$other,
     TypeAttr: $regType,
-    BoolAttr: $broadcast
+    BoolAttr: $fullLayout
   );
 
   let results = (outs TT_Tensor:$result);

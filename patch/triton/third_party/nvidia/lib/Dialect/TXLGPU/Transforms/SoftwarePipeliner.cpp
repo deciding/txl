@@ -428,11 +428,15 @@ bool sameShapeAndElementType(Type a, Type b) {
   return ra != rb && ra.getShape() == rb.getShape() &&
          ra.getElementType() == rb.getElementType();
 }
-void propagateTypeRecursively(Value val, Type newType) {
+void propagateTypeRecursively(Value &val, Type newType) {
   for (Operation *user : val.getUsers()) {
     if (user->getNumResults()){
         Value userResult = user->getResult(0);
         Type oldType = userResult.getType();
+        if (user->hasTrait<mlir::OpTrait::Elementwise>()){
+            val.setType(oldType);
+            return;
+        }
 
         if (oldType != newType && sameShapeAndElementType(oldType, newType)) {
           userResult.setType(newType);
@@ -460,7 +464,8 @@ void lowerFragSmemLoad(tt::FragSmemLoadOp& op) {
     OpBuilder builder(op);
     Value other = op.getOther();
     Type resultTy = op.getRegType();
-    if(other){
+    bool fullLayout = op.getFullLayout();
+    if(fullLayout){
         resultTy = op.getResult().getType();
     }
     Value frag_local_load = builder.create<ttx::FragLocalLoadOp>(
@@ -469,7 +474,7 @@ void lowerFragSmemLoad(tt::FragSmemLoadOp& op) {
             op->getOperand(0),
             other,
             op.getRegType(),
-            op.getBroadcast()
+            op.getFullLayout()
     );
     //tt::replaceUsesAndPropagateType(builder, op, frag_local_load);
     replaceAndPropagate(op, frag_local_load);

@@ -1,3 +1,4 @@
+import math
 from triton._C.libtriton import ir
 from triton.language import core as tl
 from triton.language.semantic import TritonSemantic, TensorTy
@@ -99,14 +100,21 @@ class TXLSemantic(TritonSemantic):
         assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
         self.builder.create_smem_store(mem_desc.handle, value.handle)
 
-    def frag_smem_load(self, mem_desc, layout, other, layout_full, broadcast):
+    def frag_smem_load(self, mem_desc, layout, layout_full, other):
+        full_layout = False
         if other is not None:
+            assert layout_full
             shape = layout_full.shape()
+            full_layout = True
+        elif layout_full: # broadcast to shape_full
+            shape = layout_full.shape()
+            full_layout = True
         else:
-            shape = mem_desc.shape
+            shape = layout.shape() # partial shape, only allow reduce to scalar, or just store to smem
+            full_layout = False
         ret_ty = tl.block_type(mem_desc.dtype, shape)
-        reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout) # loading reg should keep the partial shape and layout
-        handle = self.builder.create_frag_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, other.handle if other else None, reg_ty.to_ir(self.builder), broadcast)
+        reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout) # loading reg should keep smem shape
+        handle = self.builder.create_frag_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, other.handle if other else None, reg_ty.to_ir(self.builder), full_layout)
         return self.tensor(handle, ret_ty)
 
     def frag_smem_store(self, mem_desc, value, layout):

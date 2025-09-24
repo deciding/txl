@@ -98,6 +98,35 @@ struct CvtGetBufferToGetBuffer
   }
 };
 
+// cvt(frag_smem_load(ty1), ty2) -> frag_smem_load(ty2)
+struct CvtFragSmemLoadToFragSmemLoad
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(ConvertLayoutOp op,
+                  PatternRewriter &rewriter) const override {
+    Operation *arg = op.getSrc().getDefiningOp();
+    if (!arg)
+      return failure();
+
+    if (auto fragSmemLoad = dyn_cast<FragSmemLoadOp>(arg)) {
+      rewriter.setInsertionPoint(arg);
+      auto newFragSmemLoad = rewriter.replaceOpWithNewOp<FragSmemLoadOp>(op, op->getResult(0).getType(),
+                                               fragSmemLoad.getSrc(),
+                                               fragSmemLoad.getOther(),
+                                               fragSmemLoad.getRegType(),
+                                               fragSmemLoad.getFullLayout()
+                                               );
+
+      fragSmemLoad->replaceAllUsesWith(newFragSmemLoad->getResults());
+
+      return success();
+    }
+    return failure();
+  }
+};
+
 void canonicalizeGetBufferOp(GetBufferOp getBufferOp){
     if (getBufferOp.getSrc().getType() !=  getBufferOp->getResult(0).getType()){
         OpBuilder builder(getBufferOp);
@@ -119,6 +148,7 @@ public:
     RewritePatternSet smemAllocPatterns(context);
 
     smemAllocPatterns.add<CvtGetBufferToGetBuffer>(context);
+    smemAllocPatterns.add<CvtFragSmemLoadToFragSmemLoad>(context);
 
     if (applyPatternsGreedily(m, std::move(smemAllocPatterns)).failed()) {
       signalPassFailure();

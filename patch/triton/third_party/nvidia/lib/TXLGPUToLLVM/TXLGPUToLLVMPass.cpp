@@ -129,7 +129,9 @@ public:
     auto kLane = str_attr("lane");
     auto kWarp = str_attr("warp");
     auto kOffset = str_attr("offset");
-    auto regLayout = toLinearLayout(regTy);
+    LinearLayout regLayout = toLinearLayout(regTy);
+    LinearLayout fullRegLayout = toLinearLayout(fullRegTy);
+
     auto paddedEnc = dyn_cast<triton::gpu::PaddedSharedEncodingAttr>(sharedEnc);
     LinearLayout cvt = LinearLayout::empty();
     if (paddedEnc) {
@@ -147,7 +149,49 @@ public:
 
     auto outVals = lowerLocalLdSt(loc, ctx, cvt, {}, llvmElemTy, memDescTy,
                                   smemObj, rewriter, targetInfo, op, otherVal);
-    Value result = packLLElements(loc, typeConverter, outVals, rewriter, regTy);
+
+    // txl pred
+    //Operation *lookupPt = &rewriter.getInsertionBlock()->front();
+    //int threadsPerWarp = triton::gpu::lookupThreadsPerWarp(rewriter);
+    //int numWarps = triton::gpu::lookupNumWarps(lookupPt);
+    bool needBroadcast = true;
+    if (regLayout.hasInDim(kWarp)){
+        int numWarps = regLayout.getInDimSize(kWarp);
+        if (fullRegLayout.hasInDim(kWarp)){
+            needBroadcast = needBroadcast && (numWarps == fullRegLayout.getInDimSize(kWarp));
+        }
+        else
+            needBroadcast = false;
+    }
+    if (regLayout.hasInDim(kLane)){
+        int numLanes = regLayout.getInDimSize(kLane);
+        if (fullRegLayout.hasInDim(kLane)){
+            needBroadcast = needBroadcast && (numLanes == fullRegLayout.getInDimSize(kLane));
+        }
+        else
+            needBroadcast = false;
+    }
+    int numRepeats = 0;
+    if (regLayout.hasInDim(kReg)){
+        int numRegs = regLayout.getInDimSize(kReg);
+        needBroadcast = needBroadcast && (numRegs == 1);
+        if (fullRegLayout.hasInDim(kReg)){
+            needBroadcast = needBroadcast && (numRegs < fullRegLayout.getInDimSize(kReg));
+            numRepeats = fullRegLayout.getInDimSize(kReg) - 1;
+        }
+        else
+            needBroadcast = false;
+    }
+    else
+        needBroadcast = false;
+
+    if (needBroadcast){
+        for (int i = 0; i < numRepeats; i++){
+            outVals.push_back(outVals[0]);
+        }
+    }
+
+    Value result = packLLElements(loc, typeConverter, outVals, rewriter, needBroadcast?fullRegTy:regTy);
     rewriter.replaceOp(op, result);
 
     return success();

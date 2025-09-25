@@ -81,7 +81,7 @@ def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n
         tl.store(output_ptrs, softmax_output, mask=mask)
 
 @txl.jit
-#@txl.jit(diff_mode='llir')
+#@txl.jit(diff_mode='ttgir')
 def softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
         LOG2_E: tl.constexpr,
         num_stages: tl.constexpr, num_warps: tl.constexpr):
@@ -101,6 +101,7 @@ def softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_strid
     layout_warp_reduce: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[num_warps], order=[0])
     #layout_all_reduce: tl.constexpr = txl.BlockedLayout(size_per_thread=[num_warps], threads_per_warp=[1], warps_per_cta=[1], order=[0])
     layout_all_reduce: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[num_warps], warps_per_cta=[1], order=[0])
+    layout_all_reduce2: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[32], warps_per_cta=[1], order=[0])
     layout_sum: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[1], order=[0]) # TODO: infer from reduced shape
     layout_full: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[32], warps_per_cta=[num_warps], order=[0]) # TODO: use default
     layout_all: tl.constexpr = txl.BlockedLayout(size_per_thread=[BLOCK_SIZE//32//num_warps], threads_per_warp=[32], warps_per_cta=[num_warps], order=[0]) # TODO: use default
@@ -123,10 +124,11 @@ def softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_strid
         #cur_max = tl.max(row, axis=0)
         cur_max = txl.warp_max(row, axis=0)
         txl.frag_smem_store(reduction_smem, cur_max, layout_warp_reduce)
-        #cur_max = txl.frag_smem_load(reduction_smem, layout_all_reduce, layout_full)
-        cur_max = txl.frag_smem_load(reduction_smem, layout_all_reduce)
+        #cur_max = txl.frag_smem_load(reduction_smem, layout_all_reduce)
+        cur_max = txl.frag_smem_load(reduction_smem, layout_all_reduce, layout_all_reduce2, -float('inf'))
         all_max = txl.warp_max(cur_max, axis=0)
-        if  tid < num_warps:
+        #if  tid < num_warps:
+        if  tid == 0:
             txl.frag_smem_store(scalar_smem, all_max, layout_sum)
         cur_max = txl.frag_smem_load(scalar_smem, layout_full, layout_all)
 

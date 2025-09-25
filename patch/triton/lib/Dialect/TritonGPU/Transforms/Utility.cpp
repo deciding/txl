@@ -523,6 +523,19 @@ static bool isSingleValue(Value value) {
   return true;
 }
 
+//txl
+static Attribute inferSrcEncoding(triton::FragSmemLoadOp op, Attribute encoding) {
+  auto dstEncoding = mlir::dyn_cast<triton::gpu::BlockedEncodingAttr>(encoding);
+  if (!dstEncoding)
+    return {};
+  auto srcEncoding = op.getSrc().getType().getEncoding();
+  return srcEncoding; // remain unchanged
+}
+static Attribute inferSrcEncoding(triton::GetBufferOp op, Attribute encoding) {
+  auto srcEncoding = op.getSrc().getType().getEncoding();
+  return srcEncoding; // remain unchanged
+}
+
 Attribute inferSrcEncoding(Operation *op, Attribute encoding) {
   if (isa<triton::ScanOp>(op)) {
     // Scan only supports blocked encoding at the moment.
@@ -553,6 +566,11 @@ Attribute inferSrcEncoding(Operation *op, Attribute encoding) {
     return inferSrcEncoding(gather, encoding);
   if (auto fp4ToFp = dyn_cast<triton::gpu::Fp4ToFpOp>(op))
     return inferSrcEncoding(fp4ToFp, encoding);
+  // txl
+  if (auto fragSmemLoad = dyn_cast<triton::FragSmemLoadOp>(op))
+    return inferSrcEncoding(fragSmemLoad, encoding);
+  if (auto getBuffer = dyn_cast<triton::GetBufferOp>(op))
+    return inferSrcEncoding(getBuffer, encoding);
 
   return {};
 }

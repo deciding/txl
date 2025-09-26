@@ -532,8 +532,9 @@ static Attribute inferSrcEncoding(triton::FragSmemLoadOp op, Attribute encoding)
   return srcEncoding; // remain unchanged
 }
 static Attribute inferSrcEncoding(triton::GetBufferOp op, Attribute encoding) {
-  auto srcEncoding = op.getSrc().getType().getEncoding();
-  return srcEncoding; // remain unchanged
+  //auto srcEncoding = op.getSrc().getType().getEncoding();
+  //return srcEncoding; // remain unchanged
+  return encoding;
 }
 
 Attribute inferSrcEncoding(Operation *op, Attribute encoding) {

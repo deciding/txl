@@ -18,6 +18,8 @@ Users can pass command-line arguments to specify matrix dimensions and iteration
 
 Note that currently this tutorial will fail on devices with a small shared memory size, such as RTX-4090.
 """
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import argparse
 import itertools
@@ -181,12 +183,13 @@ def matmul_tma(a, b, warp_specialize: bool):
         BLOCK_N = META["BLOCK_SIZE_N"]
         return (triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N), )
 
-    matmul_kernel_tma[grid](
-        a_desc, b_desc, c_desc,  #
-        M, N, K,  #
-        FP8_OUTPUT=dtype == torch.float8_e4m3fn,  #
-        WARP_SPECIALIZE=warp_specialize,  #
-    )
+    with proton.scope("matmul_tma"):
+        matmul_kernel_tma[grid](
+            a_desc, b_desc, c_desc,  #
+            M, N, K,  #
+            FP8_OUTPUT=dtype == torch.float8_e4m3fn,  #
+            WARP_SPECIALIZE=warp_specialize,  #
+        )
     return c
 
 
@@ -735,6 +738,7 @@ def matmul_async_load_txl_kernel(a_ptr, b_ptr, c_ptr,  #
     offs_cn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
     c_ptrs = c_ptr + stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
     c_mask = (offs_cm[:, None] < M) & (offs_cn[None, :] < N)
+
     tl.store(c_ptrs, c, mask=c_mask)
 
 def matmul_async_load_txl(a, b):
@@ -1723,9 +1727,10 @@ def bench(K, dtype, reps=100, warmup_reps=25):
     #    bench_fn("torch", reps, warmup_reps, torch_matmul, a, b)
     #bench_fn("naive", reps, warmup_reps, matmul, a, b.T)
     #bench_fn("persistent", reps, warmup_reps, matmul_persistent, a, b.T)
+    bench_fn("tma", reps, warmup_reps, lambda a, b: matmul_tma(a, b, False), a, b)
 
-    bench_fn("async_load", reps, warmup_reps, matmul, a, bn)
-    bench_fn("async_load_txl", reps, warmup_reps, matmul_async_load_txl, a, bn)
+    #bench_fn("async_load", reps, warmup_reps, matmul, a, bn)
+    #bench_fn("async_load_txl", reps, warmup_reps, matmul_async_load_txl, a, bn)
     #bench_fn("naive_tma_txl", reps, warmup_reps, matmul_naive_tma_txl, a, b) #0
     #bench_fn("tma_persistent_txl", reps, warmup_reps, matmul_tma_persistent_txl, a, b) #1
     #bench_fn("tma_ws_persistent_txl", reps, warmup_reps, matmul_tma_ws_persistent_txl, a, b) #2
@@ -1771,6 +1776,7 @@ def validate(M, N, K, dtype, log=False):
     #run_test(naive_result, cublas_matmul, a, b, "cuBLAS", enabled=cublas is not None)
     #run_test(naive_result, matmul_persistent, a, b.T, "Persistent")
     #run_test(naive_result, lambda a, b: matmul_descriptor_persistent(a, b, True), a, b, "TMA WS Persistent", log=log)
+
     #run_test(naive_result, lambda a, b: matmul_tma(a, b, False), a, b, "TMA Naive", log=log)
 
     #run_test(naive_result, lambda a, b: matmul(a, b), a, bn, "AsyncLoad Naive", log=log)
@@ -1828,6 +1834,17 @@ if __name__ == "__main__":
     parser.add_argument("--prec", type=str, choices=["fp8", "fp16"], default="fp16")
     args = parser.parse_args()
 
+    dump_dir='dump'
+
+    from triton import knobs
+    #knobs.runtime.override_arch='sm100'
+    knobs.autotuning.print=True
+    knobs.compilation.always_compile=True
+
+    if dump_dir:
+        knobs.compilation.dump_ir=True
+        knobs.cache.dump_dir=dump_dir
+
     if args.prec == 'fp8' and (not hasattr(torch, "float8_e4m3fn") or not is_cuda()):
         print("This example requires CUDA with fp8 support.")
     else:
@@ -1841,13 +1858,13 @@ if __name__ == "__main__":
 
         #validate(32, 32, 32, dtype)
         #validate(128, 128, 512, dtype, log=True)
-        validate(8192, 8192, args.K_range[0], dtype)
+        validate(8192, 8192, args.K_range[0], dtype, log=True)
 
         #profile(8192, 8192, args.K_range[0], dtype)
-        #exit()
+        exit()
 
         proton.start("matmul", hook="triton")
-        proton.deactivate()
+        #proton.deactivate()
         for K in range(args.K_range[0], args.K_range[1] + 1, args.K_step):
             bench(K, dtype)
         proton.finalize()

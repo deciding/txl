@@ -52,6 +52,7 @@ def naive_softmax(x):
 
 @triton.jit
 def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
+                   LOG2_E: tl.constexpr,
                    num_stages: tl.constexpr):
     # starting row of the program
     row_start = tl.program_id(0)
@@ -68,10 +69,51 @@ def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n
         row = tl.load(input_ptrs, mask=mask, other=-float('inf'))
         row = tl.cast(row, tl.float32)
 
-        # Subtract maximum for numerical stability
-        row_minus_max = row - tl.max(row, axis=0)
-        # Note that exponentiation in Triton is fast but approximate (i.e., think __expf in CUDA)
-        numerator = tl.exp(row_minus_max)
+        ## Subtract maximum for numerical stability
+        #row_minus_max = row - tl.max(row, axis=0)
+        ## Note that exponentiation in Triton is fast but approximate (i.e., think __expf in CUDA)
+        #numerator = tl.exp(row_minus_max)
+
+        cur_max_scaled = tl.max(row, axis=0) * LOG2_E
+        numerator = tl.exp2(row * LOG2_E - cur_max_scaled)
+
+        denominator = tl.sum(numerator, axis=0)
+
+        softmax_output = numerator / denominator
+        # Write back output to DRAM
+        output_row_start_ptr = output_ptr + row_idx * output_row_stride
+        output_ptrs = output_row_start_ptr + col_offsets
+        tl.store(output_ptrs, softmax_output, mask=mask)
+
+@triton.jit
+def cluster_softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
+                   LOG2_E: tl.constexpr,
+                   num_stages: tl.constexpr):
+    # starting row of the program
+    row_start = tl.program_id(0)
+    row_step = tl.num_programs(0)
+    for row_idx in tl.range(row_start, n_rows, row_step):
+        # The stride represents how much we need to increase the pointer to advance 1 row
+        row_start_ptr = input_ptr + row_idx * input_row_stride
+        # The block size is the next power of two greater than n_cols, so we can fit each
+        # row in a single block
+        col_offsets = tl.arange(0, BLOCK_SIZE)
+        col_offsets = tl.reshape(col_offsets, (2, BLOCK_SIZE // 2))
+
+        input_ptrs = row_start_ptr + col_offsets
+        # Load the row into SRAM, using a mask since BLOCK_SIZE may be > than n_cols
+        mask = col_offsets < n_cols
+        row = tl.load(input_ptrs, mask=mask, other=-float('inf'))
+        row = tl.cast(row, tl.float32)
+
+        ## Subtract maximum for numerical stability
+        #row_minus_max = row - tl.max(row, axis=0)
+        ## Note that exponentiation in Triton is fast but approximate (i.e., think __expf in CUDA)
+        #numerator = tl.exp(row_minus_max)
+
+        cur_max_scaled = tl.max(row, axis=0) * LOG2_E
+        numerator = tl.exp2(row * LOG2_E - cur_max_scaled)
+
         denominator = tl.sum(numerator, axis=0)
 
         softmax_output = numerator / denominator
@@ -264,8 +306,9 @@ def fused_softmax(x, num_programs, LOG2_E):
     # Create a number of persistent programs.
     #kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages)
 
-    #softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages)
-    softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
+    #softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages)
+    cluster_softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_ctas=2)
+    #softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
     #online_softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
     return y
 
@@ -428,4 +471,4 @@ def test_softmax(dump_dir=None):
     print(f"Triton mem throughput: {mem_bw_ref:.2f} GB/s")
 
 if __name__ == "__main__":
-    test_softmax()
+    test_softmax('dump')

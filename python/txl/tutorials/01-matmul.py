@@ -645,7 +645,7 @@ def matmul(a, b):
     ],
     key=["M", "N", "K"],
 )
-#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir', log_dir='dump')
 @txl.jit(launch_metadata=_matmul_launch_metadata)
 def matmul_async_load_txl_kernel(a_ptr, b_ptr, c_ptr,  #
                   M, N, K,  #
@@ -1727,13 +1727,13 @@ def bench(K, dtype, reps=100, warmup_reps=25):
     #    bench_fn("torch", reps, warmup_reps, torch_matmul, a, b)
     #bench_fn("naive", reps, warmup_reps, matmul, a, b.T)
     #bench_fn("persistent", reps, warmup_reps, matmul_persistent, a, b.T)
-    bench_fn("tma", reps, warmup_reps, lambda a, b: matmul_tma(a, b, False), a, b)
+    #bench_fn("tma", reps, warmup_reps, lambda a, b: matmul_tma(a, b, False), a, b)
 
     #bench_fn("async_load", reps, warmup_reps, matmul, a, bn)
     #bench_fn("async_load_txl", reps, warmup_reps, matmul_async_load_txl, a, bn)
     #bench_fn("naive_tma_txl", reps, warmup_reps, matmul_naive_tma_txl, a, b) #0
     #bench_fn("tma_persistent_txl", reps, warmup_reps, matmul_tma_persistent_txl, a, b) #1
-    #bench_fn("tma_ws_persistent_txl", reps, warmup_reps, matmul_tma_ws_persistent_txl, a, b) #2
+    bench_fn("tma_ws_persistent_txl", reps, warmup_reps, matmul_tma_ws_persistent_txl, a, b) #2
     #bench_fn("tma_ws_nn_persistent_txl", reps, warmup_reps, matmul_tma_ws_nn_persistent_txl, a, bn)
     return
     warp_specialize = [False, True] if HAS_WARP_SPECIALIZE else [False]
@@ -1784,7 +1784,7 @@ def validate(M, N, K, dtype, log=False):
 
     #run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
     #run_test(naive_result, lambda a, b: matmul_tma_persistent_txl(a, b), a, b, "TXL TMA Persistent", log=log)
-    #run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
+    run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
     #run_test(naive_result, lambda a, b: matmul_tma_ws_nn_persistent_txl(a, bn), a, bn, "TXL TMA WS NN Persistent", log=log)
 
     return
@@ -1834,9 +1834,11 @@ if __name__ == "__main__":
     parser.add_argument("--prec", type=str, choices=["fp8", "fp16"], default="fp16")
     args = parser.parse_args()
 
-    dump_dir='dump'
+    #dump_dir='dump/'
+    dump_dir = None
 
     from triton import knobs
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
     #knobs.runtime.override_arch='sm100'
     knobs.autotuning.print=True
     knobs.compilation.always_compile=True

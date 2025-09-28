@@ -307,8 +307,8 @@ def fused_softmax(x, num_programs, LOG2_E):
     #kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, num_stages)
 
     #softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages)
-    cluster_softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_ctas=2)
-    #softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
+    #cluster_softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_ctas=2)
+    softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
     #online_softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
     return y
 
@@ -408,6 +408,9 @@ def test_softmax(dump_dir=None):
     # Validate
     ################################################
     from triton import knobs
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "axis-info,tritongpu-coalesce"
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-coalesce"
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "ttg-utility"
     knobs.autotuning.print=True
     knobs.compilation.always_compile=True
     if dump_dir:

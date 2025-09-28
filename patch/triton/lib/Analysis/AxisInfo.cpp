@@ -614,6 +614,30 @@ public:
     return AxisInfo(contiguity, divisibility, constancy);
   }
 };
+class FragSmemLoadOpAxisInfoVisitor final : public AxisInfoVisitorImpl<triton::FragSmemLoadOp> {
+public:
+  using AxisInfoVisitorImpl<triton::FragSmemLoadOp>::AxisInfoVisitorImpl;
+
+  AxisInfo
+  getAxisInfo(triton::FragSmemLoadOp op,
+              ArrayRef<const dataflow::Lattice<AxisInfo> *> operands) override {
+    // If pointers and mask both have constancy properties, those properties
+    // will also extend to output.
+    AxisInfo ptrInfo = operands[0]->getValue();
+    AxisInfo::DimVectorT contiguity;
+    AxisInfo::DimVectorT divisibility;
+    AxisInfo::DimVectorT constancy;
+
+    for (int d = 0; d < ptrInfo.getRank(); ++d) {
+      contiguity.push_back(1);
+      divisibility.push_back(1);
+      constancy.push_back(
+          gcd(ptrInfo.getConstancy(d), 0));
+    }
+
+    return AxisInfo(contiguity, divisibility, constancy);
+  }
+};
 
 class ExpandDimsOpAxisInfoVisitor final
     : public AxisInfoVisitorImpl<triton::ExpandDimsOp> {
@@ -1066,6 +1090,7 @@ AxisInfoAnalysis::AxisInfoAnalysis(DataFlowSolver &solver,
   visitors.append<LoadOpAxisInfoVisitor>();
   // txl
   visitors.append<AsyncLoadOpAxisInfoVisitor>();
+  visitors.append<FragSmemLoadOpAxisInfoVisitor>();
 
   if (callback)
     callback(visitors);

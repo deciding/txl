@@ -614,6 +614,7 @@ public:
     return AxisInfo(contiguity, divisibility, constancy);
   }
 };
+// TODO: not used, if used in future remember to get global tt.divisibility for same calculation as tt.load ptr
 class FragSmemLoadOpAxisInfoVisitor final : public AxisInfoVisitorImpl<triton::FragSmemLoadOp> {
 public:
   using AxisInfoVisitorImpl<triton::FragSmemLoadOp>::AxisInfoVisitorImpl;
@@ -627,6 +628,15 @@ public:
     AxisInfo::DimVectorT contiguity;
     AxisInfo::DimVectorT divisibility;
     AxisInfo::DimVectorT constancy;
+    auto ty = op->getResults()[0].getType();
+    if (auto rankedTy = dyn_cast<mlir::RankedTensorType>(ty)) {
+        auto shape = rankedTy.getShape();
+        int dim = shape[0];
+        return AxisInfo(/*contiguity=*/{dim},
+                        /*divisibility=*/{highestPowOf2Divisor(0)},
+                        /*constancy=*/{1});
+    }
+
 
     for (int d = 0; d < ptrInfo.getRank(); ++d) {
       contiguity.push_back(1);

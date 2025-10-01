@@ -1977,6 +1977,42 @@ void init_triton_ir(py::module &&m) {
            [](TritonOpBuilder &self, Type resultTy, Value value) -> Value {
              return self.create<tt::SubLayoutOp>(resultTy, value);
            })
+      .def("create_smem_index",
+           [](TritonOpBuilder &self, Value smem, Value index) -> Value {
+               RankedTensorType srcType = dyn_cast<RankedTensorType>(smem.getType());
+               SmallVector<int64_t> shape;
+               assert(srcType.getShape().size() > 1 &&
+                      "Expected multi-dimensional memdesc (e.g., Nx...) for subview");
+               shape.insert(shape.end(), srcType.getShape().begin() + 1,
+                   srcType.getShape().end());
+               auto tensorType = RankedTensorType::get(shape, srcType.getElementType());
+               return self.create<tt::SmemIndexOp>(tensorType, smem, index);
+           })
+      .def("create_smem_subslice",
+           [](TritonOpBuilder &self, Value smem, 
+              std::vector<int64_t> &shape,
+              std::vector<int32_t> &offsets
+            ) -> Value {
+               RankedTensorType srcType = dyn_cast<RankedTensorType>(smem.getType());
+               auto tensorType = RankedTensorType::get(shape, srcType.getElementType());
+               return self.create<tt::SmemSubsliceOp>(tensorType, smem, shape, offsets);
+           })
+      .def("create_smem_trans",
+           [](TritonOpBuilder &self, Value smem, 
+              std::vector<int32_t> &order,
+              Type resultTy
+            ) -> Value {
+               RankedTensorType ty = dyn_cast<RankedTensorType>(resultTy);
+               return self.create<tt::SmemTransOp>(ty, smem, order);
+           })
+      .def("create_smem_reshape",
+           [](TritonOpBuilder &self, Value smem, 
+              std::vector<int64_t> &shape
+            ) -> Value {
+               RankedTensorType srcType = dyn_cast<RankedTensorType>(smem.getType());
+               auto tensorType = RankedTensorType::get(shape, srcType.getElementType());
+               return self.create<tt::SmemReshapeOp>(tensorType, smem, shape);
+           })
       .def("create_mbar_alloc",
            [](TritonOpBuilder &self,
                int32_t arrCount, int32_t numStages) -> Value {
@@ -1987,6 +2023,15 @@ void init_triton_ir(py::module &&m) {
       .def("create_get_buffer",
            [](TritonOpBuilder &self,
                Value &src, Value &index) -> Value {
+               // TODO: currently use buffer size
+               //RankedTensorType srcType = dyn_cast<RankedTensorType>(src.getType());
+               //SmallVector<int64_t> shape;
+               //assert(srcType.getShape().size() > 1 &&
+               //       "Expected multi-dimensional memdesc (e.g., Nx...) for subview");
+               //shape.insert(shape.end(), srcType.getShape().begin() + 1,
+               // srcType.getShape().end());
+               //auto tensorType = RankedTensorType::get(shape, srcType.getElementType());
+               //return self.create<mlir::triton::GetBufferOp>(tensorType, src, index);
                return self.create<mlir::triton::GetBufferOp>(src.getType(), src, index);
            })
       .def("create_mbar_expect",

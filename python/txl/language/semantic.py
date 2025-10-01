@@ -322,3 +322,30 @@ class TXLSemantic(TritonSemantic):
 
         return tuple(
             self.wrap_tensor(reduce_op.get_result(i), inputs[i].type.scalar, ret_shape) for i in range(len(inputs)))
+
+    def smem_index(self, input: TensorTy, index) -> TensorTy:
+        shape = input.shape[1:]
+        index = self.to_tensor(index)
+        ret_type = tl.block_type(input.type.scalar, shape)
+        return self.tensor(self.builder.create_smem_index(input.handle, index.handle), ret_type)
+
+    def smem_slice(self, input: TensorTy, start, length, dim):
+        offsets = [0] * len(input.shape)
+        offsets[dim] = start
+        shape = list(input.shape)
+        shape[dim] = length
+        ret_type = tl.block_type(input.type.scalar, shape)
+        return self.tensor(self.builder.create_smem_subslice(input.handle, shape, offsets), ret_type)
+
+    def smem_trans(self, input: TensorTy, order: Tuple[int]) -> TensorTy:
+        if len(input.shape) != len(dims):
+            raise ValueError("permute dims must have the same length as input shape")
+        if sorted(tl._unwrap_if_constexpr(d) for d in dims) != list(range(len(dims))):
+            raise ValueError(f"permute dims must be a permutation of 0, 1, ..., n-1, but were {dims}")
+
+        ret_type = tl.block_type(input.type.scalar, [input.shape[d] for d in dims])
+        return self.tensor(self.builder.create_smem_trans(input.handle, order, ret_type), ret_type)
+
+    def smem_reshape(self, input: TensorTy, shape) -> TensorTy:
+        ret_type = tl.block_type(input.type.scalar, shape)
+        return self.tensor(self.builder.create_smem_reshape(input.handle, shape), ret_type)

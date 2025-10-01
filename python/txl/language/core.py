@@ -297,6 +297,28 @@ def async_load_wait(pendings: int, _semantic=None) -> tl.tensor:
     pendings = _unwrap_if_constexpr(pendings)
     return _semantic.async_load_wait(pendings)
 
+@builtin
+def smem_index(input, index: int, _semantic=None) -> tl.tensor:
+    index = _unwrap_if_constexpr(index)
+    return _semantic.smem_index(input, index)
+
+@builtin
+def smem_slice(input, start, length, dim, _semantic=None) -> tl.tensor:
+    start = _unwrap_if_constexpr(start)
+    length = _unwrap_if_constexpr(length)
+    dim = _unwrap_if_constexpr(dim)
+    return _semantic.smem_slice(input, start, length, dim)
+
+@builtin
+def smem_trans(input, order, _semantic=None) -> tl.tensor:
+    order = _shape_check_impl(order)
+    return _semantic.smem_trans(input, order)
+
+@builtin
+def smem_reshape(self, input, shape, _semantic=None) -> tl.tensor:
+    shape = _shape_check_impl(shape)
+    return _semantic.smem_reshape(input, shape)
+
 
 from triton.language import tensor
 
@@ -394,3 +416,4 @@ def warp_sum(input, axis=None, keep_dims=False, dtype: core.constexpr = None):
     if out_dtype is not None:
         input = input.to(out_dtype)
     return warp_reduce(input, axis, _sum_combine, keep_dims=keep_dims)
+

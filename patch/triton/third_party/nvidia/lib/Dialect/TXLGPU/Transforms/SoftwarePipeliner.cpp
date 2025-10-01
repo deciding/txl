@@ -245,6 +245,7 @@ void replaceSmemBufferUses(
       for (Operation* user : users){
           ops.push_back(user);
       }
+      // TODO: now need to enumerate all possible users of GetBufferOp
       for (Operation* user : ops){
         if (auto asyncLoadOp = dyn_cast<tt::AsyncLoadOp>(user)) {
             asyncLoadOp->setOperand(0, newView);
@@ -266,6 +267,9 @@ void replaceSmemBufferUses(
         }
         else if (auto fragSmemStoreOp = dyn_cast<tt::FragSmemStoreOp>(user)) {
             fragSmemStoreOp->setOperand(1, newView);
+        }
+        else if (isa<tt::SmemIndexOp, tt::SmemSubsliceOp, tt::SmemTransOp, tt::SmemReshapeOp>(user)) {
+            user->setOperand(0, newView);
         }
         else {
             auto sharedLoad = builder.create<ttg::LocalLoadOp>(
@@ -504,6 +508,136 @@ void lowerSmemLoadStores(ModuleOp moduleOp) {
   });
   moduleOp->walk([&](tt::FragSmemStoreOp op) {
       lowerFragSmemStore(op);
+  });
+}
+
+Value lowerSmemIndex(tt::SmemIndexOp& op) {
+    OpBuilder builder(op);
+    auto loc = op.getLoc();
+    auto val = op->getOperands()[0]; // converted to memdesc
+    auto srcType = cast<ttg::MemDescType>(val.getType());
+    SmallVector<int64_t> shape;
+    assert(srcType.getShape().size() > 1 &&
+           "Expected multi-dimensional memdesc (e.g., Nx...) for subview");
+    shape.insert(shape.end(), srcType.getShape().begin() + 1,
+                 srcType.getShape().end());
+    auto newType = ttg::MemDescType::get(
+        shape, srcType.getElementType(), srcType.getEncoding(), srcType.getMemorySpace(),
+        /*isMutable=*/false, srcType.getAllocShape());
+    Value memDescIndex = builder.create<ttg::MemDescIndexOp>(
+      op.getLoc(), newType, val, op.getIndex()
+    );
+    return memDescIndex;
+    //tt::replaceUsesAndPropagateType(builder, op, memDescIndex);
+    //op->erase();
+}
+
+Value lowerSmemSubslice(tt::SmemSubsliceOp& op) {
+    OpBuilder builder(op);
+    auto loc = op.getLoc();
+    auto val = op->getOperands()[0]; // converted to memdesc
+    auto srcType = cast<ttg::MemDescType>(val.getType());
+    auto shape = op.getShape();
+
+    auto encoding = srcType.getEncoding();
+    if (auto nvmma_shared_encoding = dyn_cast<NVMMASharedEncodingAttr>(encoding)){
+      llvm::SmallVector<unsigned> newOrder = {1, 0};
+      if (nvmma_shared_encoding.getTransposed())
+          newOrder = {0, 1};
+      auto CTALayout = getCTALayout(nvmma_shared_encoding);
+      auto newEncoding = NVMMASharedEncodingAttr::get(
+          srcType.getContext(), srcType.getShape(), newOrder, CTALayout,
+          srcType.getElementType(), /*isMMAv5Fp4Padded*/ false);
+      encoding = newEncoding;
+    }
+
+    auto newType = ttg::MemDescType::get(
+        shape, srcType.getElementType(), encoding, srcType.getMemorySpace(),
+        /*isMutable=*/false, srcType.getAllocShape());
+    Value memDescSubslice = builder.create<ttg::MemDescSubsliceOp>(
+        loc, newType, val, op.getOffsets()
+    );
+
+    return memDescSubslice;
+
+    //tt::replaceUsesAndPropagateType(builder, op, memDescSubslice);
+    //op->erase();
+}
+
+Value lowerSmemTrans(tt::SmemTransOp& op) {
+    OpBuilder builder(op);
+    auto val = op->getOperands()[0]; // converted to memdesc
+    auto memDescTrans = builder.create<ttg::MemDescTransOp>(op.getLoc(), val,
+                                                   op.getOrder());
+    return memDescTrans;
+    //tt::replaceUsesAndPropagateType(builder, op, memDescTrans);
+    //op->erase();
+}
+
+Value lowerSmemReshape(tt::SmemReshapeOp& op) {
+    OpBuilder builder(op);
+    auto val = op->getOperands()[0]; // converted to memdesc
+    auto memDescReshape = builder.create<ttg::MemDescReshapeOp>(op.getLoc(), val,
+                                                   op.getShape());
+    return memDescReshape;
+    //tt::replaceUsesAndPropagateType(builder, op, memDescReshape);
+    //op->erase();
+}
+
+void replaceMemDescUses(
+    Operation* oldViewOp, Value newView, // replace oldViewOp uses with newView
+    ttg::MemDescType allocTy) {
+
+    OpBuilder builder(oldViewOp);
+    Location loc = oldViewOp->getLoc();
+
+    // remove redundant local_alloc
+    SmallVector<ttg::LocalAllocOp> allocsToErase;
+    for (Operation *user : oldViewOp->getUsers()) {
+      if (auto userAllocOp = dyn_cast<ttg::LocalAllocOp>(user)) {
+        if (allocTy.getEncoding() == userAllocOp.getType().getEncoding()) {
+          // replace all uses of userAlloc to newView
+          tt::replaceUsesAndPropagateType(builder, userAllocOp, newView);
+          //userAllocOp->getResult(0).replaceAllUsesWith(newView);
+          allocsToErase.push_back(userAllocOp);
+        }
+        // replace all uses of userAlloc to newView
+        tt::replaceUsesAndPropagateType(builder, userAllocOp, newView);
+        //userAllocOp->getResult(0).replaceAllUsesWith(newView);
+        allocsToErase.push_back(userAllocOp);
+      }
+    }
+    for (auto allocOp : allocsToErase) {
+      // TODO: why cannot??
+      //allocOp.erase();
+    }
+    tt::replaceUsesAndPropagateType(builder, oldViewOp, newView);
+}
+
+void lowerToMemDesc(ModuleOp moduleOp) {
+  moduleOp->walk([&](tt::SmemIndexOp op) {
+      Value newVal = lowerSmemIndex(op);
+      auto descType = cast<triton::gpu::MemDescType>(newVal.getType());
+      replaceMemDescUses(op, newVal, descType);
+      op->erase();
+  });
+  moduleOp->walk([&](tt::SmemSubsliceOp op) {
+      Value newVal = lowerSmemSubslice(op);
+      auto descType = cast<triton::gpu::MemDescType>(newVal.getType());
+      replaceMemDescUses(op, newVal, descType);
+      op->erase();
+  });
+  moduleOp->walk([&](tt::SmemTransOp op) {
+      Value newVal = lowerSmemTrans(op);
+      auto descType = cast<triton::gpu::MemDescType>(newVal.getType());
+      replaceMemDescUses(op, newVal, descType);
+      op->erase();
+  });
+  moduleOp->walk([&](tt::SmemReshapeOp op) {
+      Value newVal = lowerSmemReshape(op);
+      auto descType = cast<triton::gpu::MemDescType>(newVal.getType());
+      replaceMemDescUses(op, newVal, descType);
+      op->erase();
   });
 }
 
@@ -807,11 +941,37 @@ public:
       LDBG("DONE\n\n\n");
     });
     lowerSmemAllocs(m);
+    LLVM_DEBUG({
+      LDBG("SoftwarePipeliner After SmemAllocs\n");
+      m.dump();
+      LDBG("DONE\n\n\n");
+    });
     lowerMbars(m);
+    LLVM_DEBUG({
+      LDBG("SoftwarePipeliner After Mbars\n");
+      m.dump();
+      LDBG("DONE\n\n\n");
+    });
     lowerLoads(m);
+    LLVM_DEBUG({
+      LDBG("SoftwarePipeliner After lowerLoads\n");
+      m.dump();
+      LDBG("DONE\n\n\n");
+    });
     lowerSmemLoadStores(m);
+    lowerToMemDesc(m);
+    LLVM_DEBUG({
+      LDBG("SoftwarePipeliner After MemDesc\n");
+      m.dump();
+      LDBG("DONE\n\n\n");
+    });
 
     pipelineWgmma(m);
+    LLVM_DEBUG({
+      LDBG("SoftwarePipeliner After wgmma\n");
+      m.dump();
+      LDBG("DONE\n\n\n");
+    });
 
     // schedule the waits
     //mlir::triton::updateWaits(getOperation());

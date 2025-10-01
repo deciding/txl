@@ -134,6 +134,30 @@ TritonGPUConversionTarget::TritonGPUConversionTarget(
         }
         return false;
   });
+  addDynamicallyLegalOp<triton::SmemIndexOp>([&](triton::SmemIndexOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
+  addDynamicallyLegalOp<triton::SmemSubsliceOp>([&](triton::SmemSubsliceOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
+  addDynamicallyLegalOp<triton::SmemTransOp>([&](triton::SmemTransOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
+  addDynamicallyLegalOp<triton::SmemReshapeOp>([&](triton::SmemReshapeOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
 
   // We have requirements for the data layouts
   addDynamicallyLegalOp<triton::DotOp>([](triton::DotOp dotOp) -> bool {

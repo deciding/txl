@@ -1663,6 +1663,149 @@ def matmul_tma_ws_persistent_txl2(a, b):
     )
     return c
 
+##########################################
+# Test x: split mul
+##########################################
+
+@txl.autotune(
+    configs=[
+        txl.Config(
+            {
+                "BLOCK_SIZE_M": 128,
+                "BLOCK_SIZE_N": 128,
+                "BLOCK_SIZE_K": 64,
+                "GROUP_SIZE_M": 8,
+                "NUM_CONSUMER_GROUPS": 1,
+                "NUM_STAGES": 1,
+            },
+            num_stages=1,
+            num_warps=4,
+            num_warpgroups=1,
+            pre_hook=matmul_tma_set_block_size_hook
+        ),
+    ],
+    key=["M", "N", "K"],
+    use_cuda_graph=True,
+)
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+@txl.jit(launch_metadata=_matmul_launch_metadata)
+def matmul_separate_tma_txl_kernel(
+    a_desc,
+    b_desc,
+    c_desc,
+    M,
+    N,
+    K,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    BLOCK_SIZE_K: tl.constexpr,  #
+    GROUP_SIZE_M: tl.constexpr,  #
+    FP8_OUTPUT: tl.constexpr,  #
+    NUM_CONSUMER_GROUPS: tl.constexpr,
+    NUM_STAGES: tl.constexpr,
+
+    # 3.4.x
+    #EPILOGUE_SUBTILE: tl.constexpr,  #
+    NUM_SMS: tl.constexpr,  #
+    WARP_SPECIALIZE: tl.constexpr,  #
+):
+    dtype = tl.float8e4nv if FP8_OUTPUT else tl.float16
+    num_tiles = tl.cdiv(M, BLOCK_SIZE_M) * tl.cdiv(N, BLOCK_SIZE_N)
+    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
+    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
+    num_pid_in_group = GROUP_SIZE_M * num_pid_n
+
+    a0 = txl.smem_alloc([BLOCK_SIZE_M, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+    b0 = txl.smem_alloc([BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+
+    mbar_producer = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+    phase = 0
+    bufIdxP = 0
+    bufIdxC = 0
+
+    for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
+        group_id = pid // num_pid_in_group
+        first_pid_m = group_id * GROUP_SIZE_M
+        group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+        pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+        pid_n = (pid % num_pid_in_group) // group_size_m
+
+        offs_am = pid_m * BLOCK_SIZE_M
+        offs_bn = pid_n * BLOCK_SIZE_N
+        offs_k = 0
+
+        accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+        num_k = tl.cdiv(K, BLOCK_SIZE_K)
+
+        for k in range(0, num_k):
+            cur_mbar = txl.get_buffer(mbar_producer, bufIdxC)
+
+            a = txl.get_buffer(a0, bufIdxC)
+            b = txl.get_buffer(b0, bufIdxC)
+
+            txl.mbar_expect(cur_mbar, BLOCK_SIZE_M*BLOCK_SIZE_K*2 + BLOCK_SIZE_N*BLOCK_SIZE_K*2)
+            txl.tma_load(a, a_desc, [offs_am, offs_k], cur_mbar)
+            txl.tma_load(b, b_desc, [offs_bn, offs_k], cur_mbar)
+            txl.mbar_wait(cur_mbar, phase)
+
+            for kk in tl.static_range(0, BLOCK_SIZE_K, 32):
+                aa = txl.smem_slice(a, start=kk, length=32, dim=1)
+                bb = txl.smem_slice(b, start=kk, length=32, dim=1)
+
+                accumulator = tl.dot(aa, bb.T, accumulator)
+                txl.dot_wait(0)
+            #aa = txl.smem_slice(a, start=0, length=64, dim=1)
+            #bb = txl.smem_slice(b, start=0, length=64, dim=1)
+            #accumulator = tl.dot(aa, bb.T, accumulator)
+            #accumulator = tl.dot(a, b.T, accumulator)
+            txl.dot_wait(0)
+
+            bufIdxC = (bufIdxC + 1) % NUM_STAGES
+            if bufIdxC == 0:
+                phase = phase ^ 1
+            offs_k += BLOCK_SIZE_K
+
+        # Epilogue
+        c = accumulator.to(dtype)
+        c_desc.store([offs_am, offs_bn], c)
+
+def matmul_separate_tma_txl(a, b):
+    # Check constraints.
+    assert a.shape[1] == b.shape[1], "Incompatible dimensions"  # b is transposed
+    assert a.dtype == b.dtype, "Incompatible dtypes"
+
+    M, K = a.shape
+    N, K = b.shape
+    dtype = a.dtype
+
+    c = torch.empty((M, N), device=a.device, dtype=dtype)
+
+    NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
+
+    # A dummy block value that will be overwritten when we have the real block size
+    dummy_block = [1, 1]
+    a_desc = TensorDescriptor(a, a.shape, a.stride(), dummy_block)
+    b_desc = TensorDescriptor(b, b.shape, b.stride(), dummy_block)
+    c_desc = TensorDescriptor(c, c.shape, c.stride(), dummy_block)
+
+    def grid(META):
+        nonlocal a_desc, b_desc, c_desc
+        BLOCK_M = META["BLOCK_SIZE_M"]
+        BLOCK_N = META["BLOCK_SIZE_N"]
+        return (min(
+            NUM_SMS,
+            triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N),
+        ), )
+
+    matmul_separate_tma_txl_kernel[grid](
+        a_desc, b_desc, c_desc,  #
+        M, N, K,  #
+        FP8_OUTPUT=dtype == torch.float8_e4m3fn,  #
+        NUM_SMS=NUM_SMS,  #
+        WARP_SPECIALIZE=False,  #
+    )
+    return c
+
 
 ##########################################
 # END OF TXL
@@ -1780,12 +1923,13 @@ def validate(M, N, K, dtype, log=False):
     #run_test(naive_result, lambda a, b: matmul_tma(a, b, False), a, b, "TMA Naive", log=log)
 
     #run_test(naive_result, lambda a, b: matmul(a, b), a, bn, "AsyncLoad Naive", log=log)
-    run_test(naive_result, lambda a, b: matmul_async_load_txl(a, b), a, bn, "AsyncLoad TXL", log=log)
+    #run_test(naive_result, lambda a, b: matmul_async_load_txl(a, b), a, bn, "AsyncLoad TXL", log=log)
 
     #run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
     #run_test(naive_result, lambda a, b: matmul_tma_persistent_txl(a, b), a, b, "TXL TMA Persistent", log=log)
-    run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
+    #run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
     #run_test(naive_result, lambda a, b: matmul_tma_ws_nn_persistent_txl(a, bn), a, bn, "TXL TMA WS NN Persistent", log=log)
+    run_test(naive_result, lambda a, b: matmul_separate_tma_txl(a, b), a, b, "TXL TMA split k", log=log)
 
     return
 
@@ -1834,11 +1978,12 @@ if __name__ == "__main__":
     parser.add_argument("--prec", type=str, choices=["fp8", "fp16"], default="fp16")
     args = parser.parse_args()
 
-    #dump_dir='dump/'
-    dump_dir = None
+    dump_dir='dump/0930mm_split/'
+    #dump_dir = None
 
     from triton import knobs
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
+    os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
     #knobs.runtime.override_arch='sm100'
     knobs.autotuning.print=True
     knobs.compilation.always_compile=True

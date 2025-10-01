@@ -410,6 +410,7 @@ def test_softmax(dump_dir=None):
     from triton import knobs
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "axis-info,tritongpu-coalesce"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-coalesce"
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "ttg-utility"
     knobs.autotuning.print=True
     knobs.compilation.always_compile=True
@@ -474,4 +475,4 @@ def test_softmax(dump_dir=None):
     print(f"Triton mem throughput: {mem_bw_ref:.2f} GB/s")
 
 if __name__ == "__main__":
-    test_softmax('dump')
+    test_softmax('dump/0929sm')

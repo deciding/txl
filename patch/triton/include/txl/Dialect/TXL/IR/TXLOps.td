@@ -8,6 +8,7 @@ include "triton/Dialect/TritonGPU/IR/TritonGPUTypeInterfaces.td"
 include "txl/Dialect/TXL/IR/TXLAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
+include "/triton/Dialect/TritonGPU/IR/TritonGPUAttrDefs.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td" // SymbolUserOpInterface
 include "mlir/IR/OpAsmInterface.td" // OpAsmOpInterface
@@ -382,6 +383,111 @@ def TXL_TmaGatherOp : TXL_Op<"tma_gather", [MemoryEffects<[MemRead]>]> {
     // This function verifies the result type.
     static LogicalResult verifyResultType(Operation *op, mlir::ShapedType type);
   }];
+}
+
+
+def TXL_SmemIndexOp : TXL_Op<"smem_index", [Pure, MemDescViewTrait]> {
+  let summary = "take a subview of the descriptor.";
+
+  let description = [{
+    This operation returns a new descriptor pointing to the `i`-th element of the
+    input descriptor along the 0-th dimension.
+
+    It doesn't affect the underlying memory.
+
+    For example, suppose that
+     - the input shape is 2x4x16xf16,
+     - the output shape is 4x16xf16, and
+     - index = 1.
+    Then the output descriptor is equivalent to input[1], where input is the logical tensor.
+  }];
+
+  let arguments = (ins TT_Tensor:$src, I32:$index);
+
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = [{$src `[` $index `]` attr-dict `:` qualified(type($src)) `->` qualified(type($result))}];
+}
+
+def TXL_SmemSubsliceOp : TXL_Op<"smem_subslice", [Pure, MemDescViewTrait]> {
+  let summary = "take a subview of the descriptor.";
+
+  let description = [{
+    This operation returns a new descriptor representing a subview of the logical tensor.
+    It doesn't affect the underlying memory.
+
+    For example, suppose that
+     - the input shape is 32x16xf16,
+     - the output shape is 8x16xf16, and
+     - offsets = [2, 1].
+    Then in Python syntax, the subview covers input[2:8+2, 1:16+1] where input is
+    the logical tensor.
+
+    The offsets must be larger or equal to the tile of the tensor (or zero).
+  }];
+
+  let arguments = (
+    ins TT_Tensor:$src,
+    DenseI64ArrayAttr:$shape,
+    DenseI32ArrayAttr:$offsets
+  );
+
+  // Use qualified() otherwise "!ttg.memdesc<X>" is printed as "<X>".
+  // Render offsets inline as %src[0, 0] via a custom directive, but keep
+  // the overall parse/print generated from this assemblyFormat.
+  let assemblyFormat = [{
+    $src  attr-dict `:` qualified(type($src))
+    `->` qualified(type($result))
+  }];
+
+  let results = (outs TT_Tensor:$result);
+
+}
+
+def TXL_SmemTransOp : TXL_Op<"smem_trans", [Pure,
+                                                  MemDescViewTrait,
+                                                  TransposeOpInterface,
+                                                  //InferTypeOpWithLayoutEquivalence,
+                                                  SameOperandsAndResultElementType
+                                           ]> {
+  let summary = "transpose the descriptor";
+
+  let description = [{
+    This operation returns a new descriptor
+    representing a transposed view of the buffer.
+  }];
+
+  let arguments = (
+    ins TT_Tensor:$src,
+    DenseI32ArrayAttr:$order
+  );
+
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
+
+  //let hasFolder = 1;
+}
+
+def TXL_SmemReshapeOp : TXL_Op<"smem_reshape", [Pure,
+                                                      MemDescViewTrait,
+                                                      SameOperandsAndResultElementType]> {
+  let summary = "creates a descriptor for the new shape";
+
+  let description = [{
+    This operation returns a new descriptor representing a reshaped view of the underlying buffer.
+    This doesn't affect the memory.
+  }];
+
+  let arguments = (
+    ins TT_Tensor:$src,
+    DenseI64ArrayAttr:$shape
+  );
+
+
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
 }
 
 #endif // TXL_OPS

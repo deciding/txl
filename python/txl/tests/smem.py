@@ -202,6 +202,128 @@ def test_smem_txl4():
     print("input :", x)
     print("output:", y)
 
+@txl.jit
+#@txl.jit(src_file='dump/smem4/txl_smem_kernel4.ptx')
+def txl_smem_kernel5(
+        a_desc, # 64, 64
+        b_desc, # 64, 64
+        out_desc, # 64, 64
+        mask_ptr, # 64
+        BLOCK_SIZE: tl.constexpr,
+       ):
+
+    offsets = tl.arange(0, BLOCK_SIZE)
+    x = tl.load(mask_ptr + offsets) # mask
+
+    buf = txl.smem_alloc([BLOCK_SIZE], dtype=tl.int1)
+    view = txl.get_buffer(buf, 0)
+    txl.smem_store(view, x)
+
+    layout_a: tl.constexpr = txl.BlockedLayout(size_per_thread=[BLOCK_SIZE], threads_per_warp=[32], warps_per_cta=[4], order=[0])
+    mask = txl.smem_load(view, layout_a)
+
+    a = a_desc.load([0, 0])
+    b = b_desc.load([0, 0])
+    accumulator = tl.dot(a, b.T)
+
+    masked = tl.where(mask, accumulator, 0.0)
+    out_desc.store([0, 0], masked)
+
+    #a = a + tl.full(a.shape, tid, a.dtype) # TODO
+
+def test_smem_txl5():
+    # Example usage
+    BLOCK_SIZE = 64
+
+    # 1D index tensor
+    idx = torch.arange(BLOCK_SIZE, device="cuda")
+    # Integer divide by 2 → groups of 2
+    group = idx // 2             # [0,0,1,1,2,2,3,3,...]
+    # Mod 2 → flip between 0 and 1
+    flip = group % 2             # [0,0,1,1,0,0,1,1,...]
+    # Convert to bool
+    mask = flip == 0             # [True,True,False,False,True,True,False,False,...]
+
+    a = torch.randn((BLOCK_SIZE, BLOCK_SIZE), device="cuda", dtype=torch.float32)
+    b = torch.randn((BLOCK_SIZE, BLOCK_SIZE), device="cuda", dtype=torch.float32)
+
+    out = torch.empty((BLOCK_SIZE, BLOCK_SIZE), device="cuda", dtype=torch.float32)
+
+    dummy_block = [64, 64]
+    a_desc = TensorDescriptor(a, a.shape, a.stride(), dummy_block)
+    b_desc = TensorDescriptor(b, b.shape, b.stride(), dummy_block)
+    out_desc = TensorDescriptor(out, out.shape, out.stride(), dummy_block)
+
+    # Launch kernel: 1 block, 1 warp (BLOCK=32)
+    txl_smem_kernel5[(1,)](a_desc, b_desc, out_desc, mask, BLOCK_SIZE=BLOCK_SIZE, num_warps=4)
+
+    print("input :", mask)
+    print("output:", out)
+
+@txl.jit
+#@txl.jit(diff_mode="ttgir")
+def txl_smem_kernel6(
+        in_ptr,
+        out_ptr,
+        BLOCK_SIZE: tl.constexpr,
+       ):
+
+    offsets = tl.arange(0, BLOCK_SIZE)
+    x = tl.load(in_ptr + offsets)
+    x = x + 1
+
+    buf = txl.smem_alloc([BLOCK_SIZE], dtype=tl.float32)
+    view = txl.get_buffer(buf, 0)
+    txl.smem_store(view, x)
+
+    layout_a: tl.constexpr = txl.BlockedLayout(size_per_thread=[BLOCK_SIZE//2], threads_per_warp=[32], warps_per_cta=[1], order=[0])
+
+    #layout: tl.constexpr = txl.BlockedLayout(size_per_thread=[2], threads_per_warp=[32], warps_per_cta=[1], order=[0])
+    #layout: tl.constexpr = txl.DistributedLinearLayout(
+    #    reg_bases = [[1]],
+    #    lane_bases = [[2], [4]],
+    #    warp_bases = [],
+    #    block_bases = [],
+    #    shape = [8, ]
+    #)
+    #txl.to_linear_layout((8,), tl.bfloat16, layout)
+    #layout: tl.constexpr = txl.DistributedLinearLayout(
+    #    reg_bases = [[1], [0], [8], [16]],
+    #    lane_bases = [[2], [4], [0], [0]],
+    #    warp_bases = [],
+    #    block_bases = [],
+    #    shape = [32, ]
+    #)
+    #txl.to_linear_layout((32,), tl.bfloat16, layout)
+    layout: tl.constexpr = txl.DistributedLinearLayout(
+        reg_bases = [[1], [0], [8], [16], [32]],
+        lane_bases = [[2], [4], [0], [0], [0]],
+        warp_bases = [[0], [0]],
+        block_bases = [],
+        shape = [64, ]
+    )
+    txl.to_linear_layout((64,), tl.bfloat16, layout)
+
+    a = txl.smem_load(view, layout_a)
+
+    tid = txl.tid(0)
+    if tid == 0:
+        txl.print('a', a)
+
+    #tl.store(out_ptr + offsets, a)
+
+def test_smem_txl6():
+    # Example usage
+    BLOCK_SIZE = 32
+    x = torch.arange(BLOCK_SIZE, dtype=torch.float32, device='cuda')
+    y = torch.empty_like(x)
+
+    # Launch kernel: 1 block, 1 warp (BLOCK=32)
+    txl_smem_kernel6[(1,)](x, y, BLOCK_SIZE=32, num_warps=1)
+
+    print("input :", x)
+    print("output:", y)
+
 @triton.jit
 def kernel(x_ptr, y_ptr, BLOCK_SIZE: tl.constexpr):
     # program id (only one CTA here)
@@ -241,9 +363,26 @@ def test_smem_triton():
     print("input :", x)
     print("output:", y)
 
+import os
+from triton import knobs
+
+dump_dir=None
+#os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
+#os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
+
+#knobs.runtime.override_arch='sm100'
+knobs.autotuning.print=True
+knobs.compilation.always_compile=True
+
+if dump_dir:
+    knobs.compilation.dump_ir=True
+    knobs.cache.dump_dir=dump_dir
+
 #test_txl()
 #test_smem_txl()
 #test_smem_txl2()
 #test_smem_txl3()
-test_smem_txl4()
+#test_smem_txl4()
+#test_smem_txl5()
+test_smem_txl6()
 #test_smem_triton()

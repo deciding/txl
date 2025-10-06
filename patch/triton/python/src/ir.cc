@@ -2119,6 +2119,17 @@ void init_triton_ir(py::module &&m) {
              self.create<TmaGatherOp>(
                  src, mbar, desc, x_indices, y_index);
            })
+      .def("create_tma_store",
+           [](TritonOpBuilder &self, Value src, Value desc, std::vector<Value> &indices) -> void {
+             //auto descTy = cast<triton::TensorDescType>(desc.getType());
+             //auto resTy = descTy.getBlockType();
+             // TODO: check the type of desc and src
+             self.create<TmaStoreOp>(src, desc, indices);
+           })
+      .def("create_tma_store_wait",
+           [](TritonOpBuilder &self, int32_t pendings) -> void {
+               self.create<mlir::triton::TmaStoreWaitOp>(pendings);
+           })
       .def("create_dot_wait",
            [](TritonOpBuilder &self, int32_t pendings) -> void {
                self.create<mlir::triton::WGDotWaitOp>(pendings);

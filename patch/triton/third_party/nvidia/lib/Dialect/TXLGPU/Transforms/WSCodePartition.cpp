@@ -658,7 +658,7 @@ public:
             });
         }
         for (scf::IfOp outerIf : wgOps) {
-          SpecializeOuterWarpgroupIf(outerIf, numWarpgroups, hasTma);
+          SpecializeOuterWarpgroupIf(outerIf, numWarpgroups, hasTma); // hasTma is used for heuristic reg alloc
         }
 
         // add init context

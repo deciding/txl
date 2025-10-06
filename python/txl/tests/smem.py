@@ -10,6 +10,70 @@ import os; print(os.getpid())
 
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
+#@txl.jit()
+@txl.jit(diff_mode='llir')
+#@txl.jit(diff_mode='ttgir', diff_select=40)
+def txl_smem_all_kernel(
+        desc_q,
+        desc_o,
+        q_ptr,
+        o_ptr,
+        BLOCK_SIZE_M: tl.constexpr,
+        BLOCK_SIZE_N: tl.constexpr,
+       ):
+
+    qo_offset_y = 0
+
+    # load 0
+    #offs = tl.arange(0, 128)[:, None] * 64 + tl.arange(0, 64)[None, :]
+    #q_ptrs = q_ptr + offs
+    #q = tl.load(q_ptrs)
+
+    # load 1
+    #q = desc_q.load([qo_offset_y, 0])
+
+    # load 2
+    #q_buf = txl.smem_alloc([128, 64], dtype=tl.float16, num_stages=1); q = txl.get_buffer(q_buf, 0)
+    #mbar_q_buf = txl.mbar_alloc(arr_count=1, num_stages=1); mbar_q = txl.get_buffer(mbar_q_buf, 0)
+    #txl.mbar_expect(mbar_q, 128 * 64 * 2)
+    #txl.tma_load(q, desc_q, [qo_offset_y, 0], mbar_q)
+    #txl.mbar_wait(mbar_q, 0)
+
+    # load 3
+    q_buf = txl.smem_alloc([128, 64], dtype=tl.float16, num_stages=1); q = txl.get_buffer(q_buf, 0)
+    offs = tl.arange(0, 128)[:, None] * 64 + tl.arange(0, 64)[None, :]
+    q_ptrs = q_ptr + offs
+    txl.async_load(q, q_ptrs)
+    txl.async_load_wait(0)
+
+    acc = q + 1.0
+
+    # store 0
+    tl.store(o_ptr+offs, acc)
+
+    # store 1
+    #desc_o.store([qo_offset_y, 0], acc)
+
+    # store 2
+    #o_buf = txl.smem_alloc([128, 64], dtype=tl.float16, num_stages=1); o = txl.get_buffer(o_buf, 0)
+    #txl.smem_store(o, acc)
+    #txl.tma_store(o, desc_o, [qo_offset_y, 0])
+    #txl.tma_store_wait(0)
+
+def test_smem_all():
+    dtype = torch.float16
+    dummy_block = [128, 64]
+    q = torch.randn((128, 64), dtype=dtype, device=DEVICE)
+    o = torch.empty_like(q)
+
+    desc_q = TensorDescriptor(q, shape=[128, 64], strides=[64, 1], block_shape=dummy_block)
+    desc_o = TensorDescriptor(o, shape=[128, 64], strides=[64, 1], block_shape=dummy_block)
+
+    grid = lambda meta: (1,)
+    txl_smem_all_kernel[grid](desc_q, desc_o, q, o, BLOCK_SIZE_M=128, BLOCK_SIZE_N=64)
+    print(q)
+    print(o)
+
 
 @txl.jit()
 def txl_tma_kernel(
@@ -363,26 +427,33 @@ def test_smem_triton():
     print("input :", x)
     print("output:", y)
 
-import os
-from triton import knobs
-
-dump_dir=None
-#os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
-#os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
-
-#knobs.runtime.override_arch='sm100'
-knobs.autotuning.print=True
-knobs.compilation.always_compile=True
-
-if dump_dir:
-    knobs.compilation.dump_ir=True
-    knobs.cache.dump_dir=dump_dir
-
 #test_txl()
 #test_smem_txl()
 #test_smem_txl2()
 #test_smem_txl3()
 #test_smem_txl4()
 #test_smem_txl5()
-test_smem_txl6()
+#test_smem_txl6()
 #test_smem_triton()
+
+def test():
+    dump_dir='dump/smem/'
+    #dump_dir = None
+
+    from triton import knobs
+    import os
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-smem-alloc-layout-conversions"
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
+    knobs.runtime.override_arch='sm90'
+    knobs.autotuning.print=True
+    knobs.compilation.always_compile=True
+
+    if dump_dir:
+        knobs.compilation.dump_ir=True
+        knobs.cache.dump_dir=dump_dir
+
+    txl_smem_all_kernel()
+
+if __name__ == "__main__":
+    test()

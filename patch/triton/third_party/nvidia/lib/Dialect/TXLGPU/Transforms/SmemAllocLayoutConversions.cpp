@@ -59,6 +59,8 @@ struct CvtGetBufferToGetBuffer
       return failure();
 
     if (auto getBufferOp = dyn_cast<GetBufferOp>(arg)) {
+      if (!getBufferOp->hasOneUse())
+          return failure();
       Operation* allocOp = getBufferOp.getSrc().getDefiningOp();
 
       if (isa<SmemAllocOp>(allocOp)){
@@ -186,11 +188,16 @@ struct CvtElemWiseFragSmemLoadToFragSmemLoad
 
 void canonicalizeGetBufferOp(GetBufferOp getBufferOp){
     if (getBufferOp.getSrc().getType() !=  getBufferOp->getResult(0).getType()){
-        OpBuilder builder(getBufferOp);
-        auto newGetBuffer = builder.create<GetBufferOp>(getBufferOp->getLoc(), getBufferOp.getSrc().getType(), 
-                getBufferOp.getSrc(), getBufferOp.getIndex());
-        getBufferOp.replaceAllUsesWith(newGetBuffer->getResult(0));
-        getBufferOp->erase();
+	Operation* allocOp = getBufferOp.getSrc().getDefiningOp();
+	assert(isa<SmemAllocOp>(allocOp));
+	SmemAllocOp smemAllocOp = dyn_cast<SmemAllocOp>(allocOp);
+
+        OpBuilder builder(smemAllocOp);
+
+        auto newAllocOp = builder.create<SmemAllocOp>(smemAllocOp->getLoc(), getBufferOp->getResult(0).getType(), 
+                smemAllocOp.getNumStages(), smemAllocOp.getIsMutable());
+        allocOp->replaceAllUsesWith(newAllocOp->getResults());
+        allocOp->erase();
     }
 }
 

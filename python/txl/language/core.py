@@ -170,6 +170,14 @@ def tma_gather(value: tl.tensor, desc, mbar: tl.tensor, *args, _semantic=None) -
     return _semantic.tma_gather(value, desc, x_offsets, y_offset, mbar, "", "")
 
 @builtin
+def tma_store(value: tl.tensor, desc,  offsets, _semantic=None) -> tl.tensor:
+    return _semantic.tma_store(value, desc, offsets)
+
+@builtin
+def tma_store_wait(pendings:int, _semantic=None) -> tl.tensor:
+    return _semantic.tma_store_wait(pendings)
+
+@builtin
 def get_buffer(src: tl.tensor, index, _semantic=None) -> tl.tensor:
     return _semantic.get_buffer(src, index)
 

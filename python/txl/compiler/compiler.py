@@ -263,7 +263,8 @@ def load_ptx_func(func_name):
     import importlib.util
 
     # Define the full path to the module
-    module_path = Path(__file__).parent.parent.parent.parent / "third_party" / "nvidia" / "backend" / "compiler.py"
+    #module_path = Path(__file__).parent.parent.parent.parent / "third_party" / "nvidia" / "backend" / "compiler.py"
+    module_path = Path(__file__).parent.parent.parent / "triton" / "backends" / "nvidia" / "compiler.py"
 
     # Load the module dynamically
     spec = importlib.util.spec_from_file_location("compiler", module_path)

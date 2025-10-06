@@ -72,6 +72,13 @@ SmallVector<OpTy> getSmemAllocUsers(Operation *op) {
         if (isa<OpTy>(user)) {
           ops.push_back(dyn_cast<OpTy>(user));
         }
+        if (isa<ttg::ConvertLayoutOp>(user)) {
+          for (auto user1 : user->getUsers()) {
+            if (isa<OpTy>(user1)) {
+              ops.push_back(dyn_cast<OpTy>(user1));
+            }
+          }
+        }
       }
     }
   }
@@ -91,6 +98,35 @@ OpTy getSmemAllocRoot(Value &smem){
             return rootOp;
     }
     return nullptr;
+}
+
+bool hasAsyncLoadUsers(Operation* op){
+    for (auto user : op->getUsers()){
+        if (isa<tt::AsyncLoadOp>(user)){
+            return true;
+        }
+    }
+    return false;
+}
+
+ttg::NVMMASharedEncodingAttr getFallbackSharedEncoding(RankedTensorType tensorType,
+                                    ttg::CTALayoutAttr ctaLayout,
+                                    ArrayRef<int64_t> usageShape) {
+  auto ctx = tensorType.getContext();
+  SmallVector<unsigned> order;
+  for (int i = tensorType.getRank() - 1; i >= 0; --i)
+    order.push_back(i);
+
+  ArrayRef<int64_t> shape =
+      usageShape.empty() ? tensorType.getShape() : usageShape;
+  if (!ctaLayout)
+    ctaLayout = ttg::CTALayoutAttr::getDefault(ctx, tensorType.getRank());
+  else if (ctaLayout.getRank() != tensorType.getRank())
+    ctaLayout = ttng::updateCTALayoutForShape(ctaLayout, shape);
+
+  return ttg::NVMMASharedEncodingAttr::get(ctx, shape, order, ctaLayout,
+                                           tensorType.getElementType(),
+                                           /*fp4Padded*/ false);
 }
 
 // NOTE: this function is from PipeliningUtility
@@ -136,6 +172,16 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
     return ttng::getEncodingFromDescriptor(op, ty, desc);
   }
 
+  SmallVector<tt::TmaStoreOp> tmaStores = getSmemAllocUsers<tt::TmaStoreOp>(op);
+  // tma_load overwrites local_alloc enc
+  if (tmaStores.size()) {
+    // For TMA, the encoding compatible with it takes precedence over local
+    // alloc created for the MMA operand.
+    TypedValue<tt::TensorDescType> desc;
+    desc = tmaStores[0].getDesc();
+    return ttng::getEncodingFromDescriptor(op, ty, desc);
+  }
+
   SmallVector<tt::TmaGatherOp> tmaGathers = getSmemAllocUsers<tt::TmaGatherOp>(op);
   // tma_load overwrites local_alloc enc
   if (tmaGathers.size()) {
@@ -159,8 +205,7 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
     return localAllocEnc;
 
   // Use generic layout. This won't be optimal for 2D tensors.
-  return ttg::SwizzledSharedEncodingAttr::get(ty.getContext(), 1, 1, 1, order,
-                                              ctaLayout);
+  return getFallbackSharedEncoding(ty, ctaLayout, {});
 }
 
 // Make this general Operation *, thus numStages is passed in not inferred inside
@@ -236,6 +281,21 @@ void replaceSmemBufferUses(
       for (auto allocOp : allocsToErase) {
         allocOp.erase();
       }
+      // remove redundant convert_layout
+      // This can happend for AsyncLoadOp, since the encoding is changed by ptr
+      SmallVector<ttg::ConvertLayoutOp> opsToErase;
+      for (Operation *user : oldViewOp->getUsers()) {
+        if (auto convertLayoutOp = dyn_cast<ttg::ConvertLayoutOp>(user)) {
+          if (hasAsyncLoadUsers(convertLayoutOp)) {
+            // replace all uses of userAlloc to newView
+            tt::replaceUsesAndPropagateType(builder, convertLayoutOp, newView);
+            opsToErase.push_back(convertLayoutOp);
+          }
+        }
+      }
+      for (auto cvtOp : opsToErase) {
+        cvtOp.erase();
+      }
 
       // TmaLoadOp skipped local_load op wrappings
       // If there are some uses that were not local_allocs, we need to create a
@@ -252,6 +312,9 @@ void replaceSmemBufferUses(
         }
         else if (auto tmaLoadOp = dyn_cast<tt::TmaLoadOp>(user)) {
             tmaLoadOp->setOperand(0, newView);
+        }
+        else if (auto tmaStoreOp = dyn_cast<tt::TmaStoreOp>(user)) {
+            tmaStoreOp->setOperand(0, newView);
         }
         else if (auto tmaGatherOp = dyn_cast<tt::TmaGatherOp>(user)) {
             tmaGatherOp->setOperand(0, newView);
@@ -272,8 +335,9 @@ void replaceSmemBufferUses(
             user->setOperand(0, newView);
         }
         else {
+            builder.setInsertionPoint(user);
             auto sharedLoad = builder.create<ttg::LocalLoadOp>(
-                loc, oldViewOp->getResultTypes().front(), newView);
+                user->getLoc(), oldViewOp->getResultTypes().front(), newView);
             auto result = sharedLoad->getResults();
             oldViewOp->replaceAllUsesWith(result);
         }
@@ -356,6 +420,7 @@ void lowerSmemAlloc(tt::SmemAllocOp op){
         
 }
 
+// not really used now
 bool hasTMALoadUsers(Operation* op){
     for (auto user : op->getUsers()){
         if (isa<tt::TmaLoadOp>(user)){
@@ -845,6 +910,37 @@ void lowerTmaLoadOp(tt::TmaLoadOp &tmaLoad) {
     tmaLoad->erase();
 }
 
+void lowerTmaStoreOp(tt::TmaStoreOp &tmaStore) {
+
+    Value desc = tmaStore.getDesc();
+
+    OpBuilder builder(tmaStore);
+    Location loc = tmaStore->getLoc();
+
+    builder.create<ttng::FenceAsyncSharedOp>(loc, false);
+    auto indices = ttng::translateTMAIndices(
+        builder, tmaStore.getLoc(),
+        tmaStore.getDesc().getType().getBlockType().getEncoding(),
+        tmaStore.getIndices());
+    // TODO: tmaStore.getSrc() not working, should have an intermediate op with MemDescType
+    // workaround: use getOperand instead
+    builder.create<ttng::AsyncTMACopyLocalToGlobalOp>(
+        tmaStore.getLoc(), desc, indices, tmaStore.getOperand(0));
+
+    tmaStore->erase();
+}
+
+void lowerTmaStoreWaitOp(tt::TmaStoreWaitOp &op) {
+
+    OpBuilder builder(op);
+    Location loc = op->getLoc();
+
+    builder.create<ttng::TMAStoreWaitOp>(
+        loc, op.getPendings());
+
+    op->erase();
+}
+
 void lowerTmaGatherOp(tt::TmaGatherOp &tmaGather) {
 
     Value desc = tmaGather.getDesc();
@@ -910,6 +1006,12 @@ void lowerLoads(ModuleOp moduleOp) {
   });
   moduleOp->walk([&](tt::TmaGatherOp tmaGatherOp) {
       lowerTmaGatherOp(tmaGatherOp);
+  });
+  moduleOp->walk([&](tt::TmaStoreOp tmaStoreOp) {
+      lowerTmaStoreOp(tmaStoreOp);
+  });
+  moduleOp->walk([&](tt::TmaStoreWaitOp op) {
+      lowerTmaStoreWaitOp(op);
   });
 
 }

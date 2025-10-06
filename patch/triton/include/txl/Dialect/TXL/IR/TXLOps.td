@@ -260,6 +260,36 @@ def TXL_TmaLoadOp : TXL_Op<"tma_load", [MemoryEffects<[MemWrite<SmemMemory>]>]> 
 
 }
 
+def TXL_TmaStoreOp : TXL_Op<"tma_store", [MemoryEffects<[MemWrite]>]> {
+  let summary = "store value based on descriptor";
+  let description = [{
+    This operation will be lowered to Nvidia TMA store operation on targets supporting it.
+    `desc` is a tensor descriptor object.
+    The shape and types of `src` must match the descriptor otherwise the result is undefined.
+  }];
+  let arguments = (ins
+    TT_Tensor:$src,
+    TT_TensorDescType:$desc,
+    Variadic<I32>:$indices
+  );
+
+  let assemblyFormat = [{
+    $src `,` $desc `[` $indices `]`
+    attr-dict `:` qualified(type($desc)) `,` type($src)
+  }];
+}
+
+def TXL_TmaStoreWaitOp : TXL_Op<"tma_store_wait", [MemoryEffects<[MemWrite]>]> {
+  let summary = "wait until all the inputs are read.";
+  let arguments = (ins I32Attr:$pendings);
+  let description = [{
+    Wait until all the read operations are done from the associated store operations.
+    This is needed before the shared memory can be written to.
+  }];
+
+  let assemblyFormat = "attr-dict";
+}
+
 def TXL_NamedBarrierArriveOp : TXL_Op<"barrier_arrive", [MemoryEffects<[MemWrite]>]> {
   let summary = "named barrier arrive";
 

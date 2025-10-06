@@ -29,6 +29,8 @@ from .core import (
     get_buffer,
     tma_load,
     tma_gather,
+    tma_store,
+    tma_store_wait,
     dot_wait,
     async_load,
     async_load_wait,

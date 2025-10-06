@@ -146,6 +146,19 @@ class TXLSemantic(TritonSemantic):
                                                 self._str_to_eviction_policyx(eviction_policy))
         return self.tensor(x, tl.void)
 
+    def tma_store(self, value: tl.tensor, desc: tl.tensor_descriptor_base, offsets) -> TensorTy:
+        assert isinstance(desc, tl.tensor_descriptor_base)
+        ndim = len(desc.block_shape)
+        assert len(offsets) == ndim, f"expected {ndim} offsets, but got {len(offsets)}"
+
+        offsets = self._convert_to_ir_values(offsets, require_i64=False)
+        x = self.builder.create_tma_store(value.handle, desc.handle, offsets)
+        return self.tensor(x, tl.void)
+
+    def tma_store_wait(self, pendings:int) -> TensorTy:
+        x = self.builder.create_tma_store_wait(pendings)
+        return self.tensor(x, tl.void)
+
     def tma_gather(self, value, desc, x_offsets, y_offset, mbar: tl.tensor, cache_modifier: str, eviction_policy: str) -> TensorTy:
         assert isinstance(desc, tl.tensor_descriptor_base)
         assert cache_modifier == "", "cache modifier is not supported yet"

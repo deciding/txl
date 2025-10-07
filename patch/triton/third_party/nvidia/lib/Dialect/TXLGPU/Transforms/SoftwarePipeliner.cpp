@@ -498,20 +498,50 @@ bool sameShapeAndElementType(Type a, Type b) {
          ra.getElementType() == rb.getElementType();
 }
 void propagateTypeRecursively(Value &val, Type newType) {
-  for (Operation *user : val.getUsers()) {
+  for (auto &use : val.getUses()) {
+    Operation* user = use.getOwner();
+    unsigned opNum = use.getOperandNumber();
     if (user->getNumResults()){
         Value userResult = user->getResult(0);
         Type oldType = userResult.getType();
+
+        // Priority 1: if the other is const, should create a new const
         if (user->hasTrait<mlir::OpTrait::Elementwise>()){
-            val.setType(oldType);
-            return;
+          if (user->getNumOperands() == 2) {
+            Value otherOperand = user->getOperand(opNum == 0 ? 1 : 0);
+            auto constOp = otherOperand.getDefiningOp<arith::ConstantOp>();
+            if (constOp){
+                auto attr = dyn_cast<DenseElementsAttr>(constOp.getValue());
+                auto newRankedType = dyn_cast<RankedTensorType>(newType);
+                if (attr) {
+                    OpBuilder builder(constOp);
+                    auto scalarValue = attr.getSplatValue<Attribute>();
+                    auto splatValue = SplatElementsAttr::get(newRankedType, scalarValue);
+                    auto newConst = builder.create<arith::ConstantOp>(
+                                      constOp.getLoc(), newType, splatValue);
+                    user->setOperand(opNum == 0 ? 1 : 0, newConst);
+                    userResult.setType(newType);
+                    continue;
+                }
+            }
+          }
         }
 
+        // Priority 2: if same shape givein to new Type
         if (oldType != newType && sameShapeAndElementType(oldType, newType)) {
           userResult.setType(newType);
           // Recurse on this user's result
           propagateTypeRecursively(userResult, newType);
+          continue;
         }
+
+        // TODO: should we givein to Elementwise?
+        if (user->hasTrait<mlir::OpTrait::Elementwise>()){
+          // fallback
+          val.setType(oldType);
+          return;
+        }
+
     }
   }
 }
@@ -1061,6 +1091,11 @@ public:
       LDBG("DONE\n\n\n");
     });
     lowerSmemLoadStores(m);
+    LLVM_DEBUG({
+      LDBG("SoftwarePipeliner After lowerSmemLoadStores\n");
+      m.dump();
+      LDBG("DONE\n\n\n");
+    });
     lowerToMemDesc(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After MemDesc\n");

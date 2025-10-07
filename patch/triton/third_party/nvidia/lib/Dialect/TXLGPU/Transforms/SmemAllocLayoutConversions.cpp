@@ -129,7 +129,9 @@ struct CvtFragSmemLoadToFragSmemLoad
   }
 };
 
-// cvt(frag_smem_load(ty1), ty2) -> frag_smem_load(ty2)
+// backwards
+// cvt -> elmwise -> frag_smem_load
+// elmwise -> frag_smem_load(newty)
 struct CvtElemWiseFragSmemLoadToFragSmemLoad
     : public OpRewritePattern<ConvertLayoutOp> {
   using OpRewritePattern::OpRewritePattern;

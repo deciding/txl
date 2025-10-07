@@ -152,6 +152,13 @@ def sub_layout(smem, value, layout, _semantic=None) -> tl.tensor:
     return _semantic.sub_layout(smem, value, layout)
 
 @builtin
+def to_linear_layout(shape, dtype, layout, save_loc=None, _semantic=None):
+    shape = _shape_check_impl(shape)
+    layout = _unwrap_if_constexpr(layout)
+    dtype = _unwrap_if_constexpr(dtype)
+    return _semantic.to_linear_layout(shape, dtype, layout, save_loc)
+
+@builtin
 def mbar_alloc(arr_count: int, num_stages:int=1, _semantic=None) -> tl.tensor:
     arr_count = _unwrap_if_constexpr(arr_count)
     num_stages = _unwrap_if_constexpr(num_stages)

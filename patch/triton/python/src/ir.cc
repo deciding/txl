@@ -1977,6 +1977,80 @@ void init_triton_ir(py::module &&m) {
            [](TritonOpBuilder &self, Type resultTy, Value value) -> Value {
              return self.create<tt::SubLayoutOp>(resultTy, value);
            })
+      .def("to_linear_layout",
+           [](TritonOpBuilder &self, Type targetTy) -> std::vector<std::string>{
+             MLIRContext *ctx = self.getContext();
+             RankedTensorType rankedTy = dyn_cast<RankedTensorType>(targetTy);
+             llvm::outs() << "\n ranked tensor type: \n";
+             llvm::outs() << targetTy;
+             LinearLayout ll = ttg::toLinearLayout(rankedTy);
+             llvm::outs() << "\n converted to linear layout: \n";
+             llvm::outs() << ll;
+             llvm::outs() << "\n";
+
+             StringAttr kRegister = str_attr("register");
+             StringAttr kLane = str_attr("lane");
+             StringAttr kWarp = str_attr("warp");
+             StringAttr kBlock = str_attr("block");
+             int rank = rankedTy.getShape().size();
+             int dimR = ll.getInDimSize(kRegister);
+             int dimL = ll.getInDimSize(kLane);
+             int dimW = ll.getInDimSize(kWarp);
+             int dimB = ll.getInDimSize(kBlock);
+             if (dimR > 1){
+                 llvm::outs() << "dim Register\n";
+             }
+             if (dimL > 1){
+                 llvm::outs() << "dim Lane\n";
+             }
+             if (dimW > 1){
+                 llvm::outs() << "dim Warp\n";
+             }
+             if (dimB > 1){
+                 llvm::outs() << "dim Block\n";
+             }
+
+             //SmallVector<SmallVector<SmallVector<unsigned>>> offsets;
+             std::vector<std::string> offsets;
+
+             for (int r = 0; r < dimR; r++) {
+                 for (int l = 0; l < dimL; l++) {
+                     for (int w = 0; w < dimW; w++) {
+                         for (int b = 0; b < dimB; b++) {
+                           auto idxs = ll.apply({{kRegister, r}, {kLane, l}, {kWarp, w}, {kBlock, b}});
+                           assert(idxs.size() == rank);
+                           for (unsigned k = 0; k < rank; ++k) {
+                             assert(idxs[k].first == str_attr("dim" + std::to_string(k)));
+                           }
+                           SmallVector<std::string> vec;
+                           if (dimR > 1){
+                               vec.push_back(std::to_string(r));
+                           }
+                           if (dimL > 1){
+                               vec.push_back(std::to_string(l));
+                           }
+                           if (dimW > 1){
+                               vec.push_back(std::to_string(w));
+                           }
+                           if (dimB > 1){
+                               vec.push_back(std::to_string(b));
+                           }
+                           auto seconds = llvm::to_vector_of<unsigned>(llvm::make_second_range(idxs));
+                           SmallVector<std::string> indices;
+                           for (auto x : seconds)
+                               indices.push_back(std::to_string(x));
+
+                           //SmallVector<SmallVector<unsigned>> off;
+                           //off.push_back(vec);
+                           //off.push_back(seconds);
+
+                           offsets.push_back(llvm::join(vec, ",") + "|" + llvm::join(indices, ","));
+                         }
+                     }
+                 }
+             }
+             return offsets;
+           })
       .def("create_smem_index",
            [](TritonOpBuilder &self, Value smem, Value index) -> Value {
                RankedTensorType srcType = dyn_cast<RankedTensorType>(smem.getType());

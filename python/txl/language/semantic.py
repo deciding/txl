@@ -5,6 +5,41 @@ from triton.language.semantic import TritonSemantic, TensorTy
 from typing import Optional, Tuple, Sequence
 from .core import distributed_type
 
+def pairs_to_tikz(pairs, nrows, ncols):
+    latex = []
+    latex.append(r"\documentclass[convert]{standalone}")
+    latex.append(r"\usepackage{tikz}")
+    latex.append(r"\begin{document}")
+    latex.append(r"\begin{tikzpicture}[x={(1cm,0cm)}, y={(0cm,-1cm)}, every node/.style={minimum size=1cm, outer sep=0pt, draw}]")
+
+    # Row headers
+    latex.append("% --- Row headers ---")
+    for row in range(nrows):
+        latex.append(fr"\node at (-1,{row}) {{\Large\texttt{{{row}}}}};")
+
+    # Column headers
+    latex.append("% --- Column headers ---")
+    for col in range(ncols):
+        latex.append(fr"\node at ({col},-1) {{\Large\texttt{{{col}}}}};")
+
+    # Labels
+    latex.append("% --- Labels ---")
+    for label, indices in pairs:
+        if len(indices) == 1:
+            i, j = 1, indices[0]
+        else:
+            i, j = indices[0], indices[1]
+        label_str = ",".join(map(str, label))
+        # TikZ y-axis is flipped (downward), so we use (j,i)
+        #latex.append(fr"\node at ({j},{i}) {{{label_str}}};")
+        label_str = r"\\ ".join(map(str, label))
+        latex.append(fr"\node[align=center] at ({j},{i}) {{\scriptsize {label_str}}};")
+
+    latex.append(r"\end{tikzpicture}")
+    latex.append(r"\end{document}")
+
+    return "\n".join(latex)
+
 class TXLSemantic(TritonSemantic):
 
     def _str_to_load_cache_modifierx(self, cache_modifier):
@@ -128,6 +163,32 @@ class TXLSemantic(TritonSemantic):
         reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
         handle = self.builder.create_sub_layout(reg_ty.to_ir(self.builder), value.handle)
         return self.tensor(handle, ret_ty)
+
+    def to_linear_layout(self, shape, dtype, layout, save_loc=None):
+        reg_ty = distributed_type(dtype, shape, layout)
+        res = self.builder.to_linear_layout(reg_ty.to_ir(self.builder))
+        res = [x.split('|') for x in res]
+        res = [([int(l) for l in labels.split(',')], [int(i) for i in indices.split(',')]) for labels, indices in res]
+        new_res = {}
+        for labels, indices in res:
+            indices = tuple(indices)
+            labels = tuple(labels)
+            if indices in new_res:
+                all_labels = new_res[indices]
+                all_labels.append(labels)
+            else:
+                new_res[indices] = [labels]
+        res = new_res.items()
+        res = [(y, x) for x, y in res]
+
+        assert len(shape) == 1 or len(shape) == 2
+        if len(shape) == 1:
+            shape = (1, shape[0])
+        latex = pairs_to_tikz(res, shape[0], shape[1])
+        if save_loc is None:
+            save_loc = 'saved_linear_layout.tex'
+        with open(save_loc, 'w') as f:
+            f.write(latex)
 
     def mbar_alloc(self, arr_count: int, num_stages:int=1) -> TensorTy:
         block_type = tl.block_type(tl.int64, [1])

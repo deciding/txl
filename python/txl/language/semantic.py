@@ -158,10 +158,10 @@ class TXLSemantic(TritonSemantic):
         assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
         self.builder.create_frag_smem_store(mem_desc.handle, value.handle, reg_ty.to_ir(self.builder))
 
-    def sub_layout(self, mem_desc, value, layout):
-        ret_ty = tl.block_type(mem_desc.dtype, mem_desc.shape)
-        reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
-        handle = self.builder.create_sub_layout(reg_ty.to_ir(self.builder), value.handle)
+    def relayout(self, value, shape, layout):
+        ret_ty = tl.block_type(value.dtype, shape)
+        reg_ty = distributed_type(value.dtype, shape, layout)
+        handle = self.builder.create_relayout(ret_ty.to_ir(self.builder), value.handle, reg_ty.to_ir(self.builder))
         return self.tensor(handle, ret_ty)
 
     def to_linear_layout(self, shape, dtype, layout, save_loc=None):
@@ -197,14 +197,15 @@ class TXLSemantic(TritonSemantic):
 
     def tma_load(self, value: tl.tensor, desc: tl.tensor_descriptor_base, offsets,
             mbar: tl.tensor,
-            cache_modifier: str, eviction_policy: str) -> TensorTy:
+            cache_modifier: str, eviction_policy: str,
+            contiguity:int) -> TensorTy:
         assert isinstance(desc, tl.tensor_descriptor_base)
         ndim = len(desc.block_shape)
         assert len(offsets) == ndim, f"expected {ndim} offsets, but got {len(offsets)}"
 
         offsets = self._convert_to_ir_values(offsets, require_i64=False)
         x = self.builder.create_tma_load(value.handle, mbar.handle, desc.handle, offsets, self._str_to_load_cache_modifierx(cache_modifier),
-                                                self._str_to_eviction_policyx(eviction_policy))
+                                                self._str_to_eviction_policyx(eviction_policy), contiguity)
         return self.tensor(x, tl.void)
 
     def tma_store(self, value: tl.tensor, desc: tl.tensor_descriptor_base, offsets) -> TensorTy:
@@ -279,7 +280,7 @@ class TXLSemantic(TritonSemantic):
         x = self.builder.create_mbar_arrive(mbar.handle, pred.handle, track_async_op, tx_cnt)
         return self.tensor(x, tl.void)
 
-    def _async_load_block_pointer(self, mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile):
+    def _async_load_block_pointer(self, mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile, contiguity):
         # Load by a block pointer: `pointer_type<block_type<>>`
         # Block pointer can not have `mask` and `other` arguments
         if mask is not None or other is not None:
@@ -298,10 +299,10 @@ class TXLSemantic(TritonSemantic):
 
         # Build IR
         return self.tensor(
-            self.builder.create_tensor_pointer_async_load(mem.handle, ptr.handle, boundary_check, padding, cache, eviction, is_volatile),
+            self.builder.create_tensor_pointer_async_load(mem.handle, ptr.handle, boundary_check, padding, cache, eviction, is_volatile, contiguity),
             tl.void)
 
-    def _async_load_legacy(self, mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile):
+    def _async_load_legacy(self, mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile, contiguity):
         # Load by a tensor of pointers or a pointer of scalar: `block_type<pointer_type<>>` or `pointer_type<>`
         if not ptr.type.scalar.is_ptr():
             raise ValueError(f"Unsupported ptr type {ptr.type.__repr__()} in `tl.load`")
@@ -352,17 +353,17 @@ class TXLSemantic(TritonSemantic):
 
         # Build IR
         if mask is None:
-            ret = self.tensor(self.builder.create_async_load(mem.handle, ptr.handle, cache, eviction, is_volatile), tl.void)
+            ret = self.tensor(self.builder.create_async_load(mem.handle, ptr.handle, cache, eviction, is_volatile, contiguity), tl.void)
         else:
             ret = self.tensor(
                 self.builder.create_masked_async_load(mem.handle, ptr.handle, mask.handle, other.handle if other else None, cache,
-                                                eviction, is_volatile), tl.void)
+                                                eviction, is_volatile, contiguity), tl.void)
         #if is_bool:
         #    ret = self.cast(ret, tl.int1)
         return ret
 
     def async_load(self, mem: TensorTy, ptr: TensorTy, mask: Optional[TensorTy], other: Optional[TensorTy], boundary_check: Tuple,
-             padding_option: str, cache_modifier: str, eviction_policy: str, is_volatile: bool) -> TensorTy:
+                   padding_option: str, cache_modifier: str, eviction_policy: str, is_volatile: bool, contiguity: int) -> TensorTy:
         # Cache, eviction and padding options
         cache = self._str_to_load_cache_modifierx(cache_modifier)
         eviction = self._str_to_eviction_policyx(eviction_policy)
@@ -370,10 +371,10 @@ class TXLSemantic(TritonSemantic):
 
         if ptr.type.is_ptr() and ptr.type.element_ty.is_block():
             # Load by a block pointer: `pointer_type<block_type<>>`
-            return self._async_load_block_pointer(mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile)
+            return self._async_load_block_pointer(mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile, contiguity)
         else:
             # Load by a tensor of pointers or a pointer of scalar: `block_type<pointer_type<>>` or `pointer_type<>`
-            return self._async_load_legacy(mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile)
+            return self._async_load_legacy(mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile, contiguity)
 
     def async_load_wait(self, pendings:int) -> TensorTy:
         x = self.builder.create_async_load_wait(pendings)

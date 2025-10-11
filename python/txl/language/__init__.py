@@ -19,7 +19,7 @@ from .core import (
     smem_reshape,
     frag_smem_load,
     frag_smem_store,
-    sub_layout,
+    relayout,
     to_linear_layout,
     mbar_alloc,
     mbar_expect,

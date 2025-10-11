@@ -114,15 +114,18 @@ def TXL_FragSmemStoreOp : TXL_Op<"frag_smem_store"> {
   }];
 }
 
-def TXL_SubLayoutOp : TXL_Op<"sub_layout",
+def TXL_RelayoutOp : TXL_Op<"relayout",
                                  [Pure]> {
   let summary = "convert layout";
 
-  let arguments = (ins TT_Tensor:$src);
+  let arguments = (ins
+    TT_Tensor:$src,
+    TypeAttr: $regType
+  );
 
   let results = (outs TT_Tensor:$result);
 
-  let assemblyFormat = "$src attr-dict `:` type($src) `->` type($result)";
+  let assemblyFormat = "$src attr-dict `:` type($src) `->` type($result) `(` $regType `)`";
 }
 
 def TXL_MbarAllocOp : TXL_Op<"mbar_alloc", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
@@ -246,7 +249,8 @@ def TXL_TmaLoadOp : TXL_Op<"tma_load", [MemoryEffects<[MemWrite<SmemMemory>]>]> 
     TT_TensorDescType:$desc,
     Variadic<I32>:$indices,
     DefaultValuedAttr<TXL_CacheModifierXAttr, "::mlir::triton::CacheModifierX::NONE">:$cache,
-    DefaultValuedAttr<TXL_EvictionPolicyXAttr, "::mlir::triton::EvictionPolicyX::NORMAL">:$evict
+    DefaultValuedAttr<TXL_EvictionPolicyXAttr, "::mlir::triton::EvictionPolicyX::NORMAL">:$evict,
+    DefaultValuedAttr<I32Attr, "-1">: $contiguity
   );
 
   let assemblyFormat = [{
@@ -322,7 +326,7 @@ def TXL_IsWarpgroupOp : TXL_Op<"is_warpgroup", []> {
 def TXL_AsyncLoadOp : TXL_Op<"async_load", [
   AttrSizedOperandSegments,
   MemoryEffects<[MemWrite]>,
-  TypesMatchWith<"src matches ptr type", "ptr", "src", "getPointeeType($_self)">,
+  //TypesMatchWith<"src matches ptr type", "ptr", "src", "getPointeeType($_self)">,
   TypesMatchWith<"infer mask type from src type",
                  "src", "mask", "getI1SameShape($_self)",
                  "($_op.getOperands().size() <= 3) || std::equal_to<>()">,
@@ -350,7 +354,8 @@ def TXL_AsyncLoadOp : TXL_Op<"async_load", [
     OptionalAttr<TT_PaddingOptionXAttr>:$padding,
     DefaultValuedAttr<TXL_CacheModifierXAttr, "triton::CacheModifierX::NONE">:$cache,
     DefaultValuedAttr<TXL_EvictionPolicyXAttr, "triton::EvictionPolicyX::NORMAL">:$evict,
-    DefaultValuedAttr<BoolAttr, "false">:$isVolatile
+    DefaultValuedAttr<BoolAttr, "false">:$isVolatile,
+    DefaultValuedAttr<I32Attr, "-1">: $contiguity
   );
 
   let results = (outs TT_Tensor:$token);

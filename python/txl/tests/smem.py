@@ -14,7 +14,7 @@ DEVICE = triton.runtime.driver.active.get_active_torch_device()
 All kinds of load and store combinations
 Note that smem_load is implicitly called
 """
-#@txl.jit()
+@txl.jit()
 #@txl.jit(diff_mode='llir')
 #@txl.jit(diff_mode='ttgir', diff_select=40)
 def txl_smem_all_kernel(
@@ -300,7 +300,7 @@ def test_smem_txl4():
     print("output:", y)
 
 """
-smem alloc, smem store matmul mask
+FAILED: smem alloc, smem store matmul mask
 """
 #@txl.jit
 @txl.jit(diff_mode='ttgir')
@@ -360,6 +360,9 @@ def test_smem_txl5():
     print("input :", mask)
     print("output:", out)
 
+"""
+to_linear_layout
+"""
 @txl.jit
 #@txl.jit(diff_mode="ttgir")
 def txl_smem_kernel6(
@@ -424,6 +427,407 @@ def test_smem_txl6():
     print("input :", x)
     print("output:", y)
 
+
+"""""""""""""""""""""""""""""
+FlashMLA
+"""""""""""""""""""""""""""""
+    #indices_layout: tl.constexpr = txl.DistributedLinearLayout(
+    #    reg_bases = [[16], [32]],
+    #    lane_bases = [[0], [0], [0], [1], [2]],
+    #    warp_bases = [[4], [8]],
+    #    block_bases = [],
+    #    shape = [64, ]
+    #)
+
+GROUP_SIZE = tl.constexpr(8)
+@txl.jit
+#@txl.jit(diff_mode="ttgir", log_dir='dump/')
+def txl_mla1(
+        q_nope_desc, q_pe_desc,
+        kv_nope_ptr, kv_pe_ptr,
+        o_desc,
+        indices_ptr,
+
+        S_Q : tl.constexpr,
+        S_KV : tl.constexpr,
+        B_H : tl.constexpr,
+        D_Q : tl.constexpr,
+        D_V : tl.constexpr,
+        NUM_HEAD_BLOCKS : tl.constexpr,
+        TOPK : tl.constexpr,
+        B_TOPK : tl.constexpr,
+        STRIDE_KV_NOPE_0: tl.constexpr,
+        STRIDE_KV_PE_0: tl.constexpr,
+        o0_desc, o1_desc
+       ):
+
+    tid = txl.tid(0)
+    pid = tl.program_id(0)
+    s_q_idx = pid // NUM_HEAD_BLOCKS
+    q_h_idx = pid % NUM_HEAD_BLOCKS
+    NUM_TOPK_BLOCKS = TOPK // B_TOPK
+
+
+    #offs = pid * B_H
+
+    #q0_buf = txl.smem_alloc([64, 64], dtype=tl.bfloat16, num_stages=1); sQ0 = txl.get_buffer(q0_buf, 0)
+    #q1_buf = txl.smem_alloc([64, 512], dtype=tl.bfloat16, num_stages=1); sQ1 = txl.get_buffer(q1_buf, 0)
+    #mbar_buf = txl.mbar_alloc(1, num_stages=1); mbar = txl.get_buffer(mbar_buf, 0)
+    #mbar1_buf = txl.mbar_alloc(1, num_stages=1); mbar1 = txl.get_buffer(mbar1_buf, 0)
+
+    #txl.mbar_expect(mbar, 64*512*2)
+    #txl.tma_load(sQ0, q_nope_desc, [offs, 0], mbar)
+    #txl.mbar_wait(mbar, 0)
+    #txl.mbar_expect(mbar1, 64*64*2)
+    #txl.tma_load(sQ1, q_pe_desc, [offs, 0], mbar1)
+    #txl.mbar_wait(mbar1, 0)
+
+    #txl.tma_store(sQ0, o_desc, [offs, 0])
+    #txl.tma_store(sQ1, o1_desc, [offs, 0])
+
+    Knope_buf = txl.smem_alloc([B_TOPK, 64], dtype=tl.bfloat16, num_stages=2);
+    Kpe_buf = txl.smem_alloc([B_TOPK, 512], dtype=tl.bfloat16, num_stages=2);
+
+    gIndices = indices_ptr + s_q_idx * TOPK
+    index_offs = tl.arange(0, B_TOPK * GROUP_SIZE) // GROUP_SIZE
+
+    #index_layout1d: tl.constexpr = txl.BlockedLayout([8], [32], [4], [0])
+    #index_layout2d: tl.constexpr = txl.BlockedLayout([1, 8], [32, 1], [4, 1], [1, 0])
+    index_layout2d: tl.constexpr = txl.BlockedLayout([1, 8], [4, 8], [4, 1], [1, 0])
+
+    inc_index_offs = tl.reshape(tl.arange(0, B_TOPK * 64) % 64, (64, 64))
+    inc_index_offs = txl.relayout(inc_index_offs, (64, 64), index_layout2d)
+
+    k_nope_buf = txl.smem_alloc([64, 64], dtype=tl.bfloat16, num_stages=1); sKnope = txl.get_buffer(k_nope_buf, 0)
+    k_pe_buf = txl.smem_alloc([64, 512], dtype=tl.bfloat16, num_stages=1); sKpe = txl.get_buffer(k_pe_buf, 0)
+
+    #for block_idx in range(0, 2, 2):
+    for block_idx in range(0, NUM_TOPK_BLOCKS, 2):
+        # buf_idx 0
+        for buf_idx in tl.static_range(0, 2):
+        #for buf_idx in tl.static_range(0, 1):
+            cur_g_indices = gIndices + (block_idx + buf_idx) * B_TOPK
+            cur_index = tl.load(cur_g_indices + index_offs)
+            cur_index_nope0 = cur_index * STRIDE_KV_NOPE_0
+            cur_index_pe0 = cur_index * STRIDE_KV_PE_0
+            cur_index_nope0 = tl.broadcast_to(cur_index_nope0[:, None], (512, 8))
+            cur_index_nope0 = tl.reshape(cur_index_nope0, (64, 64))
+            cur_index_nope0 = txl.relayout(cur_index_nope0, (64, 64), index_layout2d)
+            cur_index_nope0 = cur_index_nope0 + inc_index_offs
+            cur_index_pe0 = tl.broadcast_to(cur_index_pe0[:, None], (512, 8))
+            cur_index_pe0 = tl.reshape(cur_index_pe0, (64, 64))
+            cur_index_pe0 = txl.relayout(cur_index_pe0, (64, 64), index_layout2d)
+            cur_index_pe0 = cur_index_pe0 + inc_index_offs
+
+            sKnope = txl.get_buffer(Knope_buf, buf_idx)
+            sKpe = txl.get_buffer(Kpe_buf, buf_idx)
+
+
+            ## buf_idx 1
+            #cur_g_indices = gIndices + (block_idx + 1) * B_TOPK
+            #cur_index = tl.load(cur_g_indices + index_offs)
+            #cur_index_nope1 = cur_index * STRIDE_KV_NOPE_0
+            #cur_index_pe1 = cur_index * STRIDE_KV_PE_0
+            #is_token_valid1 = cur_index >=0 and cur_index < S_KV
+
+            is_token_valid0 = (cur_index >=0) & (cur_index < S_KV)
+            is_token_valid0 = tl.broadcast_to(is_token_valid0[:, None], (512, 8))
+            is_token_valid0 = tl.reshape(is_token_valid0, (64, 64))
+            is_token_valid0 = txl.relayout(is_token_valid0, (64, 64), index_layout2d)
+
+            #for tile_index in range(0, 1):
+            offs_kv = cur_index_nope0
+            #txl.async_load(sKnope, kv_nope_ptr+offs_kv, mask=is_token_valid0, contiguity=8)
+            txl.async_load(sKnope, kv_nope_ptr+offs_kv, contiguity=8)
+            txl.async_load_wait(0)
+            for tile_index in tl.static_range(0, 512, 64):
+            #for tile_index in tl.static_range(0, 64, 64):
+                cur_sKpe = txl.smem_slice(sKpe, tile_index, 64, dim=1)
+                offs_kv = cur_index_pe0 + tile_index
+                #txl.async_load(cur_sKpe, kv_pe_ptr+offs_kv, mask=is_token_valid0, contiguity=8)
+                txl.async_load(cur_sKpe, kv_pe_ptr+offs_kv, contiguity=8)
+                txl.async_load_wait(0)
+            # for test
+            offs_store = s_q_idx * TOPK + (block_idx + buf_idx) * B_TOPK
+            txl.tma_store(sKnope, o0_desc, [offs_store, 0])
+            txl.tma_store(sKpe, o1_desc, [offs_store, 0])
+
+            #if tid == 1 and pid == 0:
+            #    txl.print('index_offs:', index_offs)
+            #    txl.print('expanded_index_offs:', expanded_index_offs)
+            #    txl.print('cur_index:', cur_index)
+
+        #offs_kv_nope = tl.arange(0, B_TOPK)[:, None] *64 + tl.arange(0, 64)[None, :]
+        #offs_kv_pe = tl.arange(0, B_TOPK)[:, None] *512 + tl.arange(0, 512)[None, :]
+        #txl.async_load(sKnope, kv_nope_ptr+offs_kv)
+        #txl.async_load_wait(0)
+
+
+    #offs_kv = tl.arange(0, B_TOPK)[:, None] *64 + tl.arange(0, 64)[None, :]
+    #txl.async_load(sK0, kv_nope_ptr+offs_kv)
+    #txl.async_load_wait(0)
+
+    #cur = sK0 + 1
+    #if tid == 0 and pid == 0:
+    #    txl.print('cur:', cur)
+
+@txl.jit
+#@txl.jit(diff_mode="llir")
+def txl_mla3(
+        q_nope_desc, q_pe_desc,
+        kv_nope_ptr, kv_pe_ptr,
+        o_desc,
+        indices_ptr,
+
+        S_Q : tl.constexpr,
+        S_KV : tl.constexpr,
+        B_H : tl.constexpr,
+        D_Q : tl.constexpr,
+        D_V : tl.constexpr,
+        NUM_HEAD_BLOCKS : tl.constexpr,
+        TOPK : tl.constexpr,
+        B_TOPK : tl.constexpr,
+        STRIDE_KV_NOPE_0: tl.constexpr,
+        STRIDE_KV_PE_0: tl.constexpr,
+        o0_desc,
+        o1_desc,
+       ):
+
+    tid = txl.tid(0)
+    pid = tl.program_id(0)
+    s_q_idx = pid // NUM_HEAD_BLOCKS
+    q_h_idx = pid % NUM_HEAD_BLOCKS
+    NUM_TOPK_BLOCKS = TOPK // B_TOPK
+
+    Knope_buf = txl.smem_alloc([B_TOPK, 64], dtype=tl.bfloat16, num_stages=2);
+    Kpe_buf = txl.smem_alloc([B_TOPK, 512], dtype=tl.bfloat16, num_stages=2);
+
+    gIndices = indices_ptr + s_q_idx * TOPK
+    index_offs = tl.arange(0, B_TOPK * GROUP_SIZE) // GROUP_SIZE
+
+    index_layout2d: tl.constexpr = txl.BlockedLayout([1, 8], [4, 8], [4, 1], [1, 0])
+
+    inc_index_offs = tl.reshape(tl.arange(0, B_TOPK * 64) % 64, (64, 64))
+    inc_index_offs = txl.relayout(inc_index_offs, (64, 64), index_layout2d)
+
+    k_nope_buf = txl.smem_alloc([64, 64], dtype=tl.bfloat16, num_stages=1); sKnope = txl.get_buffer(k_nope_buf, 0)
+    k_pe_buf = txl.smem_alloc([64, 512], dtype=tl.bfloat16, num_stages=1); sKpe = txl.get_buffer(k_pe_buf, 0)
+
+    #for block_idx in range(0, 2, 2):
+    for block_idx in range(0, NUM_TOPK_BLOCKS, 2):
+        # buf_idx 0
+        #for buf_idx in tl.static_range(0, 2):
+        for buf_idx in tl.static_range(0, 1):
+            cur_g_indices = gIndices + (block_idx + buf_idx) * B_TOPK
+            cur_index = tl.load(cur_g_indices + index_offs)
+            cur_index_nope00 = cur_index * STRIDE_KV_NOPE_0
+            cur_index_pe0 = cur_index * STRIDE_KV_PE_0
+            cur_index_nope01 = tl.broadcast_to(cur_index_nope00[:, None], (512, 8))
+            cur_index_nope02 = tl.reshape(cur_index_nope01, (64, 64))
+            cur_index_nope03 = txl.relayout(cur_index_nope02, (64, 64), index_layout2d)
+            cur_index_nope0 = cur_index_nope03 + inc_index_offs
+            cur_index_pe0 = tl.broadcast_to(cur_index_pe0[:, None], (512, 8))
+            cur_index_pe0 = tl.reshape(cur_index_pe0, (64, 64))
+            cur_index_pe0 = txl.relayout(cur_index_pe0, (64, 64), index_layout2d)
+            cur_index_pe0 = cur_index_pe0 + inc_index_offs
+
+            sKnope = txl.get_buffer(Knope_buf, buf_idx)
+            sKpe = txl.get_buffer(Kpe_buf, buf_idx)
+
+            is_token_valid0 = cur_index >=0 and cur_index < S_KV
+            is_token_valid0 = tl.broadcast_to(is_token_valid0[:, None], (512, 8))
+            is_token_valid0 = tl.reshape(is_token_valid0, (64, 64))
+            is_token_valid0 = txl.relayout(is_token_valid0, (64, 64), index_layout2d)
+
+            #for tile_index in range(0, 1):
+            offs_kv = cur_index_nope0
+
+            #if tid == 1 and pid == 0:
+            #    txl.print('cur_index:', cur_index)
+            #    txl.print('cur_index_nope00:', cur_index_nope00)
+            #    txl.print('cur_index_nope03:', cur_index_nope03)
+            #    txl.print('cur_index_nope0:', cur_index_nope0)
+            #    #txl.print('offs_kv:', offs_kv)
+            #    #txl.print('inc_index_offs:', inc_index_offs)
+
+            txl.async_load(sKnope, kv_nope_ptr+offs_kv, contiguity=8)
+            #txl.async_load(sKnope, kv_nope_ptr+offs_kv, mask=is_token_valid0)
+            #txl.async_load_wait(0)
+
+
+@txl.jit
+#@txl.jit(diff_mode="ttgir")
+def txl_mla2(
+        q_nope_desc, q_pe_desc,
+        kv_nope_ptr, kv_pe_ptr,
+        o_desc,
+        indices_ptr,
+
+        S_Q : tl.constexpr,
+        S_KV : tl.constexpr,
+        B_H : tl.constexpr,
+        D_Q : tl.constexpr,
+        D_V : tl.constexpr,
+        NUM_HEAD_BLOCKS : tl.constexpr,
+        TOPK : tl.constexpr,
+        B_TOPK : tl.constexpr,
+        STRIDE_KV_NOPE_0: tl.constexpr,
+        STRIDE_KV_PE_0: tl.constexpr,
+        o0_desc,
+        o1_desc,
+       ):
+
+    tid = txl.tid(0)
+    pid = tl.program_id(0)
+    #s_q_idx = pid // NUM_HEAD_BLOCKS
+    #q_h_idx = pid % NUM_HEAD_BLOCKS
+
+
+    #gIndices = indices_ptr + s_q_idx * TOPK
+    index_offs = tl.arange(0, B_TOPK * GROUP_SIZE) // GROUP_SIZE
+
+    #layout: tl.constexpr = txl.BlockedLayout([8], [32], [4], [0])
+    #layout2d: tl.constexpr = txl.BlockedLayout([1, 8], [32, 1], [4, 1], [1, 0])
+    layout2d: tl.constexpr = txl.BlockedLayout([1, 8], [4, 8], [4, 1], [1, 0])
+
+    #TODO: must relayout after reshape.
+    inc_index_offs = tl.reshape(tl.arange(0, B_TOPK * 64) % 64, (512, 8))
+    inc_index_offs = txl.relayout(inc_index_offs, (512, 8), layout2d)
+    #inc_index_offs = tl.reshape(tl.arange(0, B_TOPK * 64) % 64, (64, 64))
+    #inc_index_offs = txl.relayout(inc_index_offs, (64, 64), layout2d)
+
+    #k_nope_buf = txl.smem_alloc([64, 64], dtype=tl.bfloat16, num_stages=1); sKnope = txl.get_buffer(k_nope_buf, 0)
+    #k_pe_buf = txl.smem_alloc([64, 512], dtype=tl.bfloat16, num_stages=1); sKpe = txl.get_buffer(k_pe_buf, 0)
+
+    #index_offs = tl.broadcast_to(index_offs[:, None], (512, 8))
+    #index_offs = txl.relayout(index_offs, (512, 8), layout2d)
+    index_offs = tl.broadcast_to(index_offs[:, None], (512, 8))
+    index_offs = tl.reshape(index_offs, (64, 64))
+    index_offs = txl.relayout(index_offs, (64, 64), layout2d)
+
+    #index_offs = index_offs + inc_index_offs
+
+    if tid == 1 and pid == 0:
+        txl.print('index_offs:', index_offs)
+        txl.print('inc_index_offs:', inc_index_offs)
+
+def test_txl_mla1():
+    # Example usage
+
+    B_H = 64
+    B_TOPK = 64
+    D_Q = 576
+    D_K = D_Q
+    D_V = 512
+
+    b0 = 1
+    s_q = 64
+    s_kv = 128
+    top_k = 128
+    h_q = 128
+
+    h_kv = 1
+    d_qk = D_Q
+    d_v = D_V
+
+    q = torch.randn((b0, s_q, h_q, d_qk), dtype=torch.bfloat16, device='cuda')/10
+
+    kv = torch.randn((b0, s_kv, h_kv, d_qk), dtype=torch.bfloat16, device='cuda')/10
+
+    q.clamp_(-10, 10)
+    q_nope, q_pe = torch.split(q, [64, 512], dim=-1)
+    q_nope = q_nope.contiguous()
+    q_pe = q_pe.contiguous()
+
+    kv.clamp_(-10, 10)
+    kv_nope, kv_pe = torch.split(kv, [64, 512], dim=-1)
+    kv_nope = kv_nope.contiguous()
+    kv_pe = kv_pe.contiguous()
+
+    indices = torch.full((b0, s_q, h_kv, top_k), s_kv, dtype=torch.int32, device='cuda')
+    for b in range(b0):
+        for s in range(s_q):
+            for h in range(h_kv):
+                # NOTE We use the following method to generate indices so that most indices lies within [s_kv-20000, s_kv), which is more realistic for sparse attention
+                near_mask = torch.randint(0, 32, (min(top_k, s_kv),)) < 31
+                cur_indices = torch.randperm(s_kv)[:top_k]
+                cur_indices[near_mask] = torch.randint(max(0, s_kv-20000), s_kv-1, (near_mask.sum().item(),))
+                if len(cur_indices) < top_k:
+                    cur_indices = torch.cat([cur_indices, torch.full((top_k - len(cur_indices),), 2147480000)])
+                cur_indices = cur_indices[torch.randperm(top_k)]
+                indices[b, s, h] = cur_indices
+    indices = indices.to(q.device)
+
+    q = q.squeeze(0); kv = kv.squeeze(0); indices = indices.squeeze(0)
+    q_nope = q_nope.squeeze(0); q_pe = q_pe.squeeze(0)
+    kv_nope = kv_nope.squeeze(0); kv_pe = kv_pe.squeeze(0)
+
+    out = torch.empty((s_q, h_q, d_v), dtype=q.dtype, device=q.device)
+
+    q_nope_desc = TensorDescriptor(q_nope, (s_q*h_q, 64), (64, 1), [B_H, 64])
+    q_pe_desc = TensorDescriptor(q_pe, (s_q*h_q, 512), (512, 1), [B_H, 512])
+    #q_nope_desc = TensorDescriptor(q, (s_q*h_q, d_qk), (d_qk, 1), [B_H, D_V])
+    o_desc = TensorDescriptor(out, (s_q*h_q, d_v), (d_v, 1), [B_H, D_V])
+
+    out0 = torch.empty((s_q, top_k, 64), dtype=q.dtype, device=q.device)
+    o0_desc = TensorDescriptor(out0, (s_q*top_k, 64), (64, 1), [B_TOPK, 64])
+    out1 = torch.empty((s_q, top_k, 512), dtype=q.dtype, device=q.device)
+    o1_desc = TensorDescriptor(out1, (s_q*top_k, 512), (512, 1), [B_TOPK, 512])
+
+    #s_q = q.size(0)
+    #s_kv = kv.size(0)
+    #h_q = q.size(1)
+    #h_kv = kv.size(1)
+    #d_qk = q.size(2) # kv.size(2) is the same
+    #top_k = indices.size(2)
+
+    #assert h_kv == 1
+    #assert top_k % (2*B_TOPK) == 0
+    #assert top_k > 0
+    #assert h_q % B_H == 0
+
+    NUM_HEAD_BLOCKS = h_q // B_H
+    txl_mla1[(NUM_HEAD_BLOCKS * s_q,)](
+            q_nope_desc, q_pe_desc,
+            kv_nope, kv_pe,
+            o_desc,
+            indices,
+            s_q, s_kv,
+            B_H, D_Q, D_V,
+            NUM_HEAD_BLOCKS,
+            top_k,
+            B_TOPK,
+            kv_nope.stride(0),
+            kv_pe.stride(0),
+            o0_desc,
+            o1_desc)
+
+    # REF
+    kv_nope_ref = kv_nope.squeeze(1)  # (s_kv, 64)
+    kv_pe_ref = kv_pe.squeeze(1)      # (s_kv, 512)
+    indices_ref = indices.squeeze(1)  # (s_q, top_k)
+    #out0_ref = torch.empty((s_q, top_k, 64), dtype=kv_nope.dtype, device=kv_nope_ref.device)
+    #out1_ref = torch.empty((s_q, top_k, 512), dtype=kv_pe.dtype, device=kv_pe_ref.device)
+    kv_nope_sel = []
+    kv_pe_sel = []
+
+    idx = indices_ref.unsqueeze(-1).expand(-1, -1, 64).to(dtype=torch.int64)     # (s_q, top_k, 64)
+    kv_nope_sel = torch.gather(kv_nope_ref.unsqueeze(0).expand(s_q, -1, -1), 1, idx)  # (s_q, top_k, 64)
+
+    idx_pe = indices_ref.unsqueeze(-1).expand(-1, -1, 512).to(dtype=torch.int64) # (s_q, top_k, 512)
+    kv_pe_sel = torch.gather(kv_pe_ref.unsqueeze(0).expand(s_q, -1, -1), 1, idx_pe)   # (s_q, top_k, 512)
+
+    #print(q0-out)
+    print((out0-kv_nope_sel).sum())
+    print((out1-kv_pe_sel).sum())
+
+
+
+"""""""""""""""""""""""""""""
+TXL
+"""""""""""""""""""""""""""""
+
+
 @triton.jit
 def kernel(x_ptr, y_ptr, BLOCK_SIZE: tl.constexpr):
     # program id (only one CTA here)
@@ -473,12 +877,13 @@ def test_smem_triton():
 #test_smem_triton()
 
 def test():
-    #dump_dir='dump/smem/'
-    dump_dir = None
+    dump_dir='dump/smem/'
+    #dump_dir = None
 
     from triton import knobs
     import os
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-smem-alloc-legalize"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-smem-alloc-layout-conversions"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
     knobs.runtime.override_arch='sm90'
@@ -489,7 +894,8 @@ def test():
         knobs.compilation.dump_ir=True
         knobs.cache.dump_dir=dump_dir
 
-    test_smem_txl6()
+    test_txl_mla1()
+    #test_smem_all()
 
 
 if __name__ == "__main__":

@@ -1177,6 +1177,10 @@ struct AsyncCopyGlobalToLocalOpConversion
     if (mask) {
       maxVec = std::min(maxVec, getMaskAlignment(mask));
     }
+    auto explicitContig = op->getAttrOfType<IntegerAttr>("ttxg.contiguity");
+    if (explicitContig && explicitContig.getInt() != -1) {
+        maxVec = explicitContig.getInt();
+    }
     // The maximum vector size is 128 bits on NVIDIA GPUs.
     maxVec = std::min(maxVec, 128 / resElemTy.getIntOrFloatBitWidth());
 

@@ -24,10 +24,13 @@
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/TritonGPUConversion.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
+#include "triton/Analysis/TXLUtility.h" // txl
 #include <deque>
 #include <memory>
 
+using namespace mlir::triton;
 using namespace mlir::triton::gpu;
+
 namespace mlir::triton::txlgpu {
 
 #define GEN_PASS_DEF_TXLGPUSMEMALLOCLAYOUTCONVERSIONS
@@ -129,6 +132,28 @@ struct CvtFragSmemLoadToFragSmemLoad
   }
 };
 
+// cvt(frag_smem_load(ty1), ty2) -> frag_smem_load(ty2)
+struct lowerRelayout
+    : public OpRewritePattern<RelayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(RelayoutOp op,
+                  PatternRewriter &rewriter) const override {
+    //auto convertLayout = rewriter.replaceOpWithNewOp<ConvertLayoutOp>(
+    auto convertLayout = rewriter.create<ConvertLayoutOp>(
+        op->getLoc(),
+        op.getRegType(),
+        op.getSrc()
+    );
+
+    //op->replaceAllUsesWith(convertLayout->getResults());
+    replaceAndPropagate(op, convertLayout);
+
+    return success();
+  }
+};
+
 // backwards
 // cvt -> elmwise -> frag_smem_load
 // elmwise -> frag_smem_load(newty)
@@ -190,9 +215,9 @@ struct CvtElemWiseFragSmemLoadToFragSmemLoad
 
 void canonicalizeGetBufferOp(GetBufferOp getBufferOp){
     if (getBufferOp.getSrc().getType() !=  getBufferOp->getResult(0).getType()){
-	Operation* allocOp = getBufferOp.getSrc().getDefiningOp();
-	assert(isa<SmemAllocOp>(allocOp));
-	SmemAllocOp smemAllocOp = dyn_cast<SmemAllocOp>(allocOp);
+	    Operation* allocOp = getBufferOp.getSrc().getDefiningOp();
+        assert(isa<SmemAllocOp>(allocOp));
+        SmemAllocOp smemAllocOp = dyn_cast<SmemAllocOp>(allocOp);
 
         OpBuilder builder(smemAllocOp);
 
@@ -216,6 +241,7 @@ public:
     smemAllocPatterns.add<CvtGetBufferToGetBuffer>(context);
     smemAllocPatterns.add<CvtFragSmemLoadToFragSmemLoad>(context);
     smemAllocPatterns.add<CvtElemWiseFragSmemLoadToFragSmemLoad>(context);
+    smemAllocPatterns.add<lowerRelayout>(context);
 
     if (applyPatternsGreedily(m, std::move(smemAllocPatterns)).failed()) {
       signalPassFailure();

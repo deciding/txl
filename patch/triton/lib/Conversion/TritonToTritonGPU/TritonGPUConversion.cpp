@@ -128,7 +128,7 @@ TritonGPUConversionTarget::TritonGPUConversionTarget(
         }
         return false;
   });
-  addDynamicallyLegalOp<triton::SubLayoutOp>([&](triton::SubLayoutOp op) -> bool {
+  addDynamicallyLegalOp<triton::RelayoutOp>([&](triton::RelayoutOp op) -> bool {
         if (typeConverter.isLegal(op)) {
           return true;
         }

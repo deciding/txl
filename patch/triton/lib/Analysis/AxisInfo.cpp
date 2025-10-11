@@ -17,6 +17,23 @@
 namespace mlir::triton {
 namespace {
 
+std::string smallVectorToString(const SmallVector<int64_t> &vec) {
+  // e.g. set the following for viewing
+  //OpBuilder builder(op);
+  //auto attr = builder.getStringAttr(smallVectorToString(operands[0]->getValue().getContiguity()));
+  //auto attr = builder.getI64IntegerAttr(gcd(lhs.getDivisibility(dim), rhsDivisibility));
+  //op->setAttr("ttg.contig", attr);
+  // To view, add to third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/LoadStoreOpToLLVM.cpp
+  //  llvm::outs() << "\n After axisInfoAnalysis\n";
+  //  mod->dump();
+  //  llvm::outs() << "\n END After axisInfoAnalysis\n";
+  SmallVector<std::string> strVec;
+  strVec.reserve(vec.size());
+  for (auto v : vec)
+    strVec.push_back(std::to_string(v));
+  return join(strVec, ",");
+}
+
 constexpr int64_t kMaxDivisor = highestPowOf2Divisor<int64_t>(0);
 
 template <typename... Args> int64_t gcd(int64_t a, int64_t b, Args... args) {

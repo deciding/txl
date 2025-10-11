@@ -1,5 +1,6 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
@@ -20,5 +21,7 @@ bool getOpAttrWarpReduce(Operation* op);
 void setOpRegType(Operation* op, Type type);
 
 Type getOpRegType(Operation* op);
+
+void replaceAndPropagate(Operation *srcOp, Value newValue);
 
 }

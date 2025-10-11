@@ -114,7 +114,7 @@ def reg_dealloc(count, _semantic=None):
 
 @builtin
 def smem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, _semantic=None) -> tl.tensor:
-    shape = _shape_check_impl(shape)
+    #shape = _shape_check_impl(shape)
     dtype = _unwrap_if_constexpr(dtype)
     num_stages = _unwrap_if_constexpr(num_stages)
     mutable = _unwrap_if_constexpr(mutable)
@@ -147,9 +147,10 @@ def frag_smem_store(smem, value, layout, _semantic=None) -> None:
     return _semantic.frag_smem_store(smem, value, layout)
 
 @builtin
-def sub_layout(smem, value, layout, _semantic=None) -> tl.tensor:
+def relayout(value, shape, layout, _semantic=None) -> tl.tensor:
     layout = _unwrap_if_constexpr(layout)
-    return _semantic.sub_layout(smem, value, layout)
+    shape = _shape_check_impl(shape)
+    return _semantic.relayout(value, shape, layout)
 
 @builtin
 def to_linear_layout(shape, dtype, layout, save_loc=None, _semantic=None):
@@ -165,8 +166,9 @@ def mbar_alloc(arr_count: int, num_stages:int=1, _semantic=None) -> tl.tensor:
     return _semantic.mbar_alloc(arr_count, num_stages)
 
 @builtin
-def tma_load(value: tl.tensor, desc, offsets, mbar:tl.tensor, _semantic=None) -> tl.tensor:
-    return _semantic.tma_load(value, desc, offsets, mbar, "", "")
+def tma_load(value: tl.tensor, desc, offsets, mbar:tl.tensor, contiguity:int=-1, _semantic=None) -> tl.tensor:
+    contiguity = _unwrap_if_constexpr(contiguity)
+    return _semantic.tma_load(value, desc, offsets, mbar, "", "", contiguity)
 
 @builtin
 def tma_gather(value: tl.tensor, desc, mbar: tl.tensor, *args, _semantic=None) -> tl.tensor:
@@ -250,7 +252,7 @@ def print(prefix_or_data, data=None, _semantic=None):
 
 @builtin
 def async_load(mem, pointer, mask=None, other=None, boundary_check=(), padding_option="", cache_modifier="", eviction_policy="",
-         volatile=False, _semantic=None):
+         volatile=False, contiguity=-1, _semantic=None):
     """
     Return a tensor of data whose values are loaded from memory at location defined by `pointer`:
 
@@ -304,8 +306,9 @@ def async_load(mem, pointer, mask=None, other=None, boundary_check=(), padding_o
     cache_modifier = _unwrap_if_constexpr(cache_modifier)
     eviction_policy = _unwrap_if_constexpr(eviction_policy)
     volatile = _unwrap_if_constexpr(volatile)
+    contiguity = _unwrap_if_constexpr(contiguity)
     return _semantic.async_load(mem, pointer, mask, other, boundary_check, padding_option, cache_modifier, eviction_policy,
-                         volatile)
+                         volatile, contiguity)
 
 @builtin
 def async_load_wait(pendings: int, _semantic=None) -> tl.tensor:

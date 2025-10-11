@@ -489,76 +489,6 @@ void lowerSmemStore(tt::SmemStoreOp& op) {
     op->erase();
 }
 
-bool sameShapeAndElementType(Type a, Type b) {
-  auto ra = dyn_cast<RankedTensorType>(a);
-  auto rb = dyn_cast<RankedTensorType>(b);
-  if (!ra || !rb)
-    return false;
-  return ra != rb && ra.getShape() == rb.getShape() &&
-         ra.getElementType() == rb.getElementType();
-}
-void propagateTypeRecursively(Value &val, Type newType) {
-  for (auto &use : val.getUses()) {
-    Operation* user = use.getOwner();
-    unsigned opNum = use.getOperandNumber();
-    if (user->getNumResults()){
-        Value userResult = user->getResult(0);
-        Type oldType = userResult.getType();
-
-        // Priority 1: if the other is const, should create a new const
-        if (user->hasTrait<mlir::OpTrait::Elementwise>()){
-          if (user->getNumOperands() == 2) {
-            Value otherOperand = user->getOperand(opNum == 0 ? 1 : 0);
-            auto constOp = otherOperand.getDefiningOp<arith::ConstantOp>();
-            if (constOp){
-                auto attr = dyn_cast<DenseElementsAttr>(constOp.getValue());
-                auto newRankedType = dyn_cast<RankedTensorType>(newType);
-                if (attr) {
-                    OpBuilder builder(constOp);
-                    auto scalarValue = attr.getSplatValue<Attribute>();
-                    auto splatValue = SplatElementsAttr::get(newRankedType, scalarValue);
-                    auto newConst = builder.create<arith::ConstantOp>(
-                                      constOp.getLoc(), newType, splatValue);
-                    user->setOperand(opNum == 0 ? 1 : 0, newConst);
-                    userResult.setType(newType);
-                    continue;
-                }
-            }
-          }
-        }
-
-        // Priority 2: if same shape givein to new Type
-        if (oldType != newType && sameShapeAndElementType(oldType, newType)) {
-          userResult.setType(newType);
-          // Recurse on this user's result
-          propagateTypeRecursively(userResult, newType);
-          continue;
-        }
-
-        // TODO: should we givein to Elementwise?
-        if (user->hasTrait<mlir::OpTrait::Elementwise>()){
-          // fallback
-          val.setType(oldType);
-          return;
-        }
-
-    }
-  }
-}
-void replaceAndPropagate(Operation *srcOp, Value newValue) {
-  assert(srcOp->getNumResults() == 1 &&
-         "Expected single-result operation");
-
-  Value oldResult = srcOp->getResult(0);
-  Type newType = newValue.getType();
-
-  // Replace all uses of old result
-  oldResult.replaceAllUsesWith(newValue);
-
-  // Start recursive propagation from the newValue
-  propagateTypeRecursively(newValue, newType);
-}
-
 void lowerFragSmemLoad(tt::FragSmemLoadOp& op) {
     OpBuilder builder(op);
     Value other = op.getOther();
@@ -646,9 +576,10 @@ Value lowerSmemSubslice(tt::SmemSubsliceOp& op) {
       encoding = newEncoding;
     }
 
+    // here I set the mutable to true, because I may need to load to smem
     auto newType = ttg::MemDescType::get(
         shape, srcType.getElementType(), encoding, srcType.getMemorySpace(),
-        /*isMutable=*/false, srcType.getAllocShape());
+        /*isMutable=*/true, srcType.getAllocShape());
     Value memDescSubslice = builder.create<ttg::MemDescSubsliceOp>(
         loc, newType, val, op.getOffsets()
     );
@@ -871,6 +802,7 @@ void lowerAsyncLoadOp(tt::AsyncLoadOp &asyncLoad) {
     Location loc = asyncLoad->getLoc();
     mlir::triton::CacheModifier cache = mlir::triton::symbolizeCacheModifier(static_cast<uint32_t>(asyncLoad.getCache())).value_or(mlir::triton::CacheModifier::NONE);
     mlir::triton::EvictionPolicy evict = mlir::triton::symbolizeEvictionPolicy(static_cast<uint32_t>(asyncLoad.getEvict())).value_or(mlir::triton::EvictionPolicy::NORMAL);
+    auto contiguity = builder.getI64IntegerAttr(asyncLoad.getContiguity());
 
     // TODO: asyncLoad.getSrc() not working, should have an intermediate op with MemDescType
     // workaround: use getOperand instead
@@ -880,6 +812,7 @@ void lowerAsyncLoadOp(tt::AsyncLoadOp &asyncLoad) {
         asyncLoad.getMask(), asyncLoad.getOther(),
         cache, evict,
         asyncLoad.getIsVolatile());
+    copy->setAttr("ttxg.contiguity", contiguity);
 
     Operation *commit =
         builder.create<ttg::AsyncCommitGroupOp>(loc, copy->getResult(0));
@@ -931,11 +864,14 @@ void lowerTmaLoadOp(tt::TmaLoadOp &tmaLoad) {
         builder, tmaLoad.getLoc(),
         tmaLoad.getDesc().getType().getBlockType().getEncoding(),
         tmaLoad.getIndices());
+
+    auto contiguity = builder.getI64IntegerAttr(tmaLoad.getContiguity());
     // TODO: tmaLoad.getMbar() not working, should have an intermediate op with MemDescType
     // workaround: use getOperand instead
-    builder.create<ttng::AsyncTMACopyGlobalToLocalOp>(
+    auto newTma = builder.create<ttng::AsyncTMACopyGlobalToLocalOp>(
         tmaLoad.getLoc(), desc, indices, 
         tmaLoad.getOperand(1), tmaLoad.getOperand(0), pred);
+    newTma->setAttr("ttxg.contiguity", contiguity);
 
     tmaLoad->erase();
 }

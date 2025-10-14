@@ -69,11 +69,23 @@ struct CvtGetBufferToGetBuffer
       if (isa<SmemAllocOp>(allocOp)){
           auto smemAllocOp = dyn_cast<SmemAllocOp>(allocOp);
           rewriter.setInsertionPoint(smemAllocOp);
-          rewriter.replaceOpWithNewOp<SmemAllocOp>(smemAllocOp,
-                  op->getResult(0).getType(),
-                  smemAllocOp.getNumStages(),
-                  smemAllocOp.getIsMutable()
-              );
+          auto isMutableAttr = mlir::BoolAttr::get(allocOp->getContext(), smemAllocOp.getIsMutable());
+          auto numStagesAttr = rewriter.getI32IntegerAttr(smemAllocOp.getNumStages());
+          auto sharedEnc = smemAllocOp.getSharedEnc();
+          if (sharedEnc.has_value())
+              rewriter.replaceOpWithNewOp<SmemAllocOp>(smemAllocOp,
+                      op->getResult(0).getType(),
+                      numStagesAttr,
+                      isMutableAttr,
+                      sharedEnc.value()
+                  );
+          else
+              rewriter.replaceOpWithNewOp<SmemAllocOp>(smemAllocOp,
+                      op->getResult(0).getType(),
+                      numStagesAttr,
+                      isMutableAttr,
+                      nullptr
+                  );
       }
       else if (isa<MbarAllocOp>(allocOp)){
           auto mbarAllocOp = dyn_cast<MbarAllocOp>(allocOp);
@@ -221,8 +233,16 @@ void canonicalizeGetBufferOp(GetBufferOp getBufferOp){
 
         OpBuilder builder(smemAllocOp);
 
-        auto newAllocOp = builder.create<SmemAllocOp>(smemAllocOp->getLoc(), getBufferOp->getResult(0).getType(), 
-                smemAllocOp.getNumStages(), smemAllocOp.getIsMutable());
+        auto numStagesAttr = builder.getI32IntegerAttr(smemAllocOp.getNumStages());
+        auto isMutableAttr = mlir::BoolAttr::get(getBufferOp->getContext(), smemAllocOp.getIsMutable());
+        auto sharedEnc = smemAllocOp.getSharedEnc();
+        SmemAllocOp newAllocOp;
+        if (sharedEnc.has_value())
+            newAllocOp = builder.create<SmemAllocOp>(smemAllocOp->getLoc(), getBufferOp->getResult(0).getType(), 
+                    numStagesAttr, isMutableAttr, sharedEnc.value());
+        else
+            newAllocOp = builder.create<SmemAllocOp>(smemAllocOp->getLoc(), getBufferOp->getResult(0).getType(), 
+                    numStagesAttr, isMutableAttr, nullptr);
         allocOp->replaceAllUsesWith(newAllocOp->getResults());
         allocOp->erase();
     }

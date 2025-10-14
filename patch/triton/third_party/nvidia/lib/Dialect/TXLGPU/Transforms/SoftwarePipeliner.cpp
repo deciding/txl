@@ -204,6 +204,11 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
   if (localAllocEnc)
     return localAllocEnc;
 
+  if (auto smemAlloc = dyn_cast<SmemAllocOp>(op)){
+      auto sharedEnc = smemAlloc.getSharedEnc();
+      if (sharedEnc.has_value())
+          return sharedEnc.value();
+  }
   // Use generic layout. This won't be optimal for 2D tensors.
   return getFallbackSharedEncoding(ty, ctaLayout, {});
 }

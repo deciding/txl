@@ -1945,11 +1945,43 @@ void init_triton_ir(py::module &&m) {
                  ctx, swizzleByteWidth, transposed, elementBitwidth, fp4Padded,
                  ctaLayout);
            })
+      .def("get_swizzled_shared_layout",
+           [](TritonOpBuilder &self, int vec, int perPhase, int maxPhase,
+              std::vector<unsigned> &order, std::vector<unsigned> &ctasPerCga,
+              std::vector<unsigned> &ctaSplitNum,
+              std::vector<unsigned> &ctaOrder) -> Attribute {
+             auto ctx = self.getContext();
+             auto ctaLayout = ttg::CTALayoutAttr::get(
+                 ctx, ctasPerCga, ctaSplitNum, ctaOrder);
+             return ttg::SwizzledSharedEncodingAttr::get(
+                 ctx, vec, perPhase, maxPhase, order, ctaLayout);
+           })
+      .def("get_tensor_memory_layout",
+           [](TritonOpBuilder &self, std::vector<unsigned> &block, bool unpacked,
+              std::vector<unsigned> &ctaSplitNum) -> Attribute {
+             auto ctx = self.getContext();
+             assert(block.size() == 2);
+             assert(ctaSplitNum.size() == 2);
+             return ttng::TensorMemoryEncodingAttr::get(
+                 ctx, block[0], block[1], unpacked, ctaSplitNum[0],
+                 ctaSplitNum[1]);
+           })
       .def("create_smem_alloc",
            [](TritonOpBuilder &self,
                std::vector<int64_t> &shape, Type &elementType, int32_t numStages, bool isMutable) -> Value {
                auto tensorType = RankedTensorType::get(shape, elementType);
-               return self.create<mlir::triton::SmemAllocOp>(tensorType, numStages, isMutable);
+               auto numStagesAttr = self.getBuilder().getI32IntegerAttr(numStages);
+               auto isMutableAttr = mlir::BoolAttr::get(self.getContext(), isMutable);
+               return self.create<mlir::triton::SmemAllocOp>(tensorType, numStagesAttr, isMutableAttr, nullptr);
+           })
+      .def("create_smem_alloc_with_shared_enc",
+           [](TritonOpBuilder &self,
+               std::vector<int64_t> &shape, Type &elementType, int32_t numStages, bool isMutable, Attribute enc) -> Value {
+               auto tensorType = RankedTensorType::get(shape, elementType);
+               auto numStagesAttr = self.getBuilder().getI32IntegerAttr(numStages);
+               auto isMutableAttr = mlir::BoolAttr::get(self.getContext(), isMutable);
+               auto sharedEnc = dyn_cast<ttg::SharedEncodingTrait>(enc);
+               return self.create<mlir::triton::SmemAllocOp>(tensorType, numStagesAttr, isMutableAttr, sharedEnc);
            })
       .def("create_smem_load",
            [](TritonOpBuilder &self, Type resultTy, Value smem, Type regType) -> Value {

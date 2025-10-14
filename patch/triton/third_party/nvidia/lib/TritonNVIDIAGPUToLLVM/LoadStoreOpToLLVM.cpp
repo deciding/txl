@@ -1502,13 +1502,11 @@ LogicalResult convertTMAStoreLikeOp(Operation *op,
     // txl
     if (numWarpsToCopy == 1) {
       warpID = b.i32_val(0);
-    } else {
-      auto warpOffset = getWarpOffset(op);
-      warpID = b.sub(warpID, b.i32_val(warpOffset));
     }
-
     Value boxPred =
         b.and_(pred, b.icmp_ult(id, b.i32_val(numWarpsToCopy * warpSize)));
+    //boxPred =
+    //    b.and_(boxPred, b.icmp_uge(id, b.i32_val(0)));
     ::mlir::triton::PTXBuilder ptxBuilderTMA;
     Type elemPtrTy = ptr_ty(rewriter.getContext(), 3);
     Value copyIdxVal = b.add(warpID, b.i32_val(copyIdx));

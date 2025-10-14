@@ -68,7 +68,13 @@ public:
             context, shape, this->numWarps, this->threadsPerWarp, this->numCTAs);
     auto tensorType = RankedTensorType::get(shape, eltTy, encoding);
 
-    auto newSmemAlloc = rewriter.replaceOpWithNewOp<SmemAllocOp>(op, tensorType, op.getNumStages(), op.getIsMutable());
+    auto numStagesAttr = rewriter.getI32IntegerAttr(op.getNumStages());
+    auto isMutableAttr = mlir::BoolAttr::get(context, op.getIsMutable());
+    auto sharedEnc = op.getSharedEnc();
+    if (sharedEnc.has_value())
+        auto newSmemAlloc = rewriter.replaceOpWithNewOp<SmemAllocOp>(op, tensorType, numStagesAttr, isMutableAttr, sharedEnc.value());
+    else
+        auto newSmemAlloc = rewriter.replaceOpWithNewOp<SmemAllocOp>(op, tensorType, numStagesAttr, isMutableAttr, nullptr);
 
     //for (auto user : newSmemAlloc->getUsers()) {
     //  if (isa<GetBufferOp>(user)) {

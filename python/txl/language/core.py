@@ -113,12 +113,14 @@ def reg_dealloc(count, _semantic=None):
     return _semantic.reg_dealloc(count)
 
 @builtin
-def smem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, _semantic=None) -> tl.tensor:
+def smem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, shared_enc=None, _semantic=None) -> tl.tensor:
     #shape = _shape_check_impl(shape)
     dtype = _unwrap_if_constexpr(dtype)
     num_stages = _unwrap_if_constexpr(num_stages)
     mutable = _unwrap_if_constexpr(mutable)
-    return _semantic.smem_alloc(shape, dtype, num_stages, mutable)
+    if shared_enc is not None:
+        shared_enc = _unwrap_if_constexpr(shared_enc)
+    return _semantic.smem_alloc(shape, dtype, num_stages, mutable, shared_enc)
 
 @builtin
 def smem_load(smem, layout, _semantic=None) -> tl.tensor:
@@ -130,14 +132,15 @@ def smem_store(smem, value, _semantic=None) -> None:
     return _semantic.smem_store(smem, value)
 
 @builtin
-def frag_smem_load(smem, layout, layout_full=None, other=None, _semantic=None) -> tl.tensor:
+def frag_smem_load(smem, shape, layout, full_layout=False, other=None, _semantic=None) -> tl.tensor:
     layout = _unwrap_if_constexpr(layout)
-    if layout_full is not None:
-        layout_full = _unwrap_if_constexpr(layout_full)
+    shape = _shape_check_impl((shape))
+    if full_layout is not None:
+        full_layout = _unwrap_if_constexpr(full_layout)
     if other is not None:
         assert layout_full is not None, 'other need specify layout_full'
         other = _semantic.to_tensor(other)
-    return _semantic.frag_smem_load(smem, layout, layout_full, other)
+    return _semantic.frag_smem_load(smem, shape, layout, full_layout, other)
 
 @builtin
 def frag_smem_store(smem, value, layout, _semantic=None) -> None:

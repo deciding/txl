@@ -2021,7 +2021,7 @@ try:
 
     print("Has Flash")
 except Exception as e:
-    import pdb;pdb.set_trace()
+    #import pdb;pdb.set_trace()
     HAS_FLASH = False
     print("Has No Flash")
 
@@ -2213,4 +2213,4 @@ def run_test(algo=0, dump_dir=None):
     bench_flash_attention.run(save_path=".", print_data=True, algo=algo, no_tune=no_tune)
 
 if __name__ == "__main__":
-    run_test(3)
+    run_test(4)

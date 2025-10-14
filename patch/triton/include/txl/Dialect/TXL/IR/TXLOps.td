@@ -39,8 +39,9 @@ def TXL_SmemAllocOp : TXL_Op<"smem_alloc", [DeclareOpInterfaceMethods<MemoryEffe
     Shared memory allocation.
   }];
   let arguments = (ins
-    DefaultValuedAttr<I32Attr, "1">:$numStages,
-    DefaultValuedAttr<BoolAttr, "false">:$isMutable
+    I32Attr:$numStages,
+    BoolAttr:$isMutable,
+    OptionalAttr<SharedEncodingTrait>:$sharedEnc
   );
 
   let results = (outs TT_Tensor:$result);

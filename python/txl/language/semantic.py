@@ -118,11 +118,16 @@ class TXLSemantic(TritonSemantic):
     def reg_dealloc(self, count:int):
         self.builder.create_reg_dealloc(count)
 
-    def smem_alloc(self, shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True) -> TensorTy:
+    def smem_alloc(self, shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, shared_enc=None) -> TensorTy:
         block_type = tl.block_type(dtype, shape)
         dtype = dtype.to_ir(self.builder)
-        return self.tensor(
-            self.builder.create_smem_alloc(shape, dtype, num_stages, mutable), block_type)
+        if shared_enc is not None:
+            shared_enc = shared_enc._to_ir(self.builder)
+            return self.tensor(
+                self.builder.create_smem_alloc_with_shared_enc(shape, dtype, num_stages, mutable, shared_enc), block_type)
+        else:
+            return self.tensor(
+                self.builder.create_smem_alloc(shape, dtype, num_stages, mutable), block_type)
 
     def smem_load(self, mem_desc, layout):
         ret_ty = tl.block_type(mem_desc.dtype, mem_desc.shape)
@@ -135,18 +140,7 @@ class TXLSemantic(TritonSemantic):
         assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
         self.builder.create_smem_store(mem_desc.handle, value.handle)
 
-    def frag_smem_load(self, mem_desc, layout, layout_full, other):
-        full_layout = False
-        if other is not None:
-            assert layout_full
-            shape = layout_full.shape()
-            full_layout = True
-        elif layout_full: # broadcast to shape_full
-            shape = layout_full.shape()
-            full_layout = True
-        else:
-            shape = layout.shape() # partial shape, only allow reduce to scalar, or just store to smem
-            full_layout = False
+    def frag_smem_load(self, mem_desc, shape, layout, full_layout, other):
         ret_ty = tl.block_type(mem_desc.dtype, shape)
         reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout) # loading reg should keep smem shape
         handle = self.builder.create_frag_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, other.handle if other else None, reg_ty.to_ir(self.builder), full_layout)

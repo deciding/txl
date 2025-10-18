@@ -260,7 +260,7 @@ public:
 
     smemAllocPatterns.add<CvtGetBufferToGetBuffer>(context);
     smemAllocPatterns.add<CvtFragSmemLoadToFragSmemLoad>(context);
-    smemAllocPatterns.add<CvtElemWiseFragSmemLoadToFragSmemLoad>(context);
+    //smemAllocPatterns.add<CvtElemWiseFragSmemLoadToFragSmemLoad>(context);
     smemAllocPatterns.add<lowerRelayout>(context);
 
     if (applyPatternsGreedily(m, std::move(smemAllocPatterns)).failed()) {

@@ -158,6 +158,12 @@ TritonGPUConversionTarget::TritonGPUConversionTarget(
         }
         return false;
   });
+  addDynamicallyLegalOp<triton::TmaStoreOp>([&](triton::TmaStoreOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
 
   // We have requirements for the data layouts
   addDynamicallyLegalOp<triton::DotOp>([](triton::DotOp dotOp) -> bool {

@@ -591,6 +591,7 @@ void populateTritonPatterns(TritonGPUTypeConverter &typeConverter,
       GenericOpPattern<triton::SmemSubsliceOp>,
       GenericOpPattern<triton::SmemTransOp>,
       GenericOpPattern<triton::SmemReshapeOp>,
+      GenericOpPattern<triton::TmaStoreOp>,
 
       GenericOpPattern<triton::StoreOp>,
       GenericOpPattern<triton::HistogramOp>,

@@ -148,7 +148,10 @@ def parse(full_name, ext, context):
 import difflib
 def diff_strings_colored(str1, str2, log_dir=None, log_filename='tmp.ir'):
     if log_dir is not None:
-        log_path = os.path.join(log_dir, log_filename)
+        if os.path.isfile(log_dir):
+            log_path = log_dir
+        else:
+            log_path = os.path.join(log_dir, log_filename)
         with open(log_path, 'w') as f:
             f.write(str2)
         print(f"log_dir is set, the diff is not printed, instead ir will be saved to {log_path}")

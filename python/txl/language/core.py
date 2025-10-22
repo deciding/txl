@@ -133,6 +133,9 @@ def smem_store(smem, value, _semantic=None) -> None:
 
 @builtin
 def frag_smem_load(smem, shape, layout, full_layout=False, other=None, _semantic=None) -> tl.tensor:
+    """
+    load a fragment of the whole smem. can fill the others for full layout of distributed tensor.
+    """
     layout = _unwrap_if_constexpr(layout)
     shape = _shape_check_impl((shape))
     if full_layout is not None:
@@ -144,6 +147,11 @@ def frag_smem_load(smem, shape, layout, full_layout=False, other=None, _semantic
 
 @builtin
 def frag_smem_store(smem, value, layout, _semantic=None) -> None:
+    """
+    The layout of value must be the same as layout.
+    It just allows the fractional store from the whole tensor.
+    TODO: remove the layout arg
+    """
     if not isinstance(value.type, block_type):
         value = core.full((1,), value, value.type, _semantic=_semantic)
     layout = _unwrap_if_constexpr(layout)
@@ -151,6 +159,11 @@ def frag_smem_store(smem, value, layout, _semantic=None) -> None:
 
 @builtin
 def relayout(value, shape, layout, _semantic=None) -> tl.tensor:
+    """
+    NOTE:
+    Must after all reshape
+    Must after all cast
+    """
     layout = _unwrap_if_constexpr(layout)
     shape = _shape_check_impl(shape)
     return _semantic.relayout(value, shape, layout)

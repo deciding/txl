@@ -144,7 +144,7 @@ struct CvtFragSmemLoadToFragSmemLoad
   }
 };
 
-// cvt(frag_smem_load(ty1), ty2) -> frag_smem_load(ty2)
+// relayout -> convert_layout
 struct lowerRelayout
     : public OpRewritePattern<RelayoutOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -163,6 +163,38 @@ struct lowerRelayout
     replaceAndPropagate(op, convertLayout);
 
     return success();
+  }
+};
+
+// frag_smem_store(cvt(ty), regTy) -> frag_smem_store(cvt(regTy), regTy)
+// TODO: this should be manually done
+struct FragSmemStoreCvtToFragSmemStore
+    : public OpRewritePattern<FragSmemStoreOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(FragSmemStoreOp op,
+                  PatternRewriter &rewriter) const override {
+    Operation *arg = op.getSrc().getDefiningOp();
+    if (!arg)
+      return failure();
+
+    if (auto cvtOp = dyn_cast<ConvertLayoutOp>(arg)) {
+      if (cvtOp->getResult(0).getType() != op.getRegType()){
+        rewriter.setInsertionPoint(arg);
+        auto newCvtOp = rewriter.replaceOpWithNewOp<ConvertLayoutOp>(
+                cvtOp,
+                op.getRegType(),
+                cvtOp.getSrc()
+             );
+
+        op->setOperand(0, newCvtOp);
+        //cvtOp->replaceAllUsesWith(newCvtOp->getResults());
+
+        return success();
+      }
+    }
+    return failure();
   }
 };
 
@@ -262,6 +294,7 @@ public:
     smemAllocPatterns.add<CvtFragSmemLoadToFragSmemLoad>(context);
     //smemAllocPatterns.add<CvtElemWiseFragSmemLoadToFragSmemLoad>(context);
     smemAllocPatterns.add<lowerRelayout>(context);
+    smemAllocPatterns.add<FragSmemStoreCvtToFragSmemStore>(context);
 
     if (applyPatternsGreedily(m, std::move(smemAllocPatterns)).failed()) {
       signalPassFailure();

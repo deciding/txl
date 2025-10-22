@@ -50,6 +50,11 @@ Type getOpRegType(Operation* op) {
     return Type(); // returns a null Type if not set
 }
 
+bool isCastOp(Operation* op){
+    return isa<arith::TruncIOp, arith::TruncFOp, arith::ExtUIOp, arith::ExtSIOp, arith::ExtFOp,
+        arith::SIToFPOp, arith::FPToSIOp, arith::FPToUIOp, arith::UIToFPOp, FpToFpOp>(op);
+}
+
 bool sameShapeAndElementType(Type a, Type b) {
   auto ra = dyn_cast<RankedTensorType>(a);
   auto rb = dyn_cast<RankedTensorType>(b);
@@ -74,6 +79,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
             if (constOp){
                 auto attr = dyn_cast<DenseElementsAttr>(constOp.getValue());
                 auto newRankedType = dyn_cast<RankedTensorType>(newType);
+                auto userRankedType = dyn_cast<RankedTensorType>(oldType);
                 if (attr) {
                     OpBuilder builder(constOp);
                     auto scalarValue = attr.getSplatValue<Attribute>();
@@ -81,8 +87,14 @@ void propagateTypeRecursively(Value &val, Type newType) {
                     auto newConst = builder.create<arith::ConstantOp>(
                                       constOp.getLoc(), newType, splatValue);
                     user->setOperand(opNum == 0 ? 1 : 0, newConst);
-                    userResult.setType(newType);
-                    propagateTypeRecursively(userResult, newType);
+                    //userResult.setType(newType);
+                    //propagateTypeRecursively(userResult, newType);
+                    auto userBasedTensorTy = RankedTensorType::get(
+                            userRankedType.getShape(),
+                            userRankedType.getElementType(),
+                            newRankedType.getEncoding());
+                    userResult.setType(userBasedTensorTy);
+                    propagateTypeRecursively(userResult, userBasedTensorTy);
                     continue;
                 }
             }
@@ -119,7 +131,31 @@ void propagateTypeRecursively(Value &val, Type newType) {
           }
 
           // fallback
+          auto targetOp = val.getDefiningOp();
+          //llvm::outs() << "\n Type givein to Elementwise op, which should knows the type better\n";
+          //llvm::outs() << "op location\n";
+          //llvm::outs() << targetOp->getLoc();
+          //llvm::outs() << "\n op original type\n";
+          //llvm::outs() << val.getType();
+
+          auto userTensorTy = dyn_cast<RankedTensorType>(oldType);
+          auto newTensorTy = dyn_cast<RankedTensorType>(newType);
+          if (userTensorTy && newTensorTy && userTensorTy.getElementType() != newTensorTy.getElementType()){
+            auto userBasedTensorTy = RankedTensorType::get(
+                    userTensorTy.getShape(),
+                    newTensorTy.getElementType(),
+                    //userTensorTy.getEncoding()
+                    newTensorTy.getEncoding()
+                    );
+            val.setType(userBasedTensorTy);
+            //llvm::outs() << "\n op givein to type\n";
+            //llvm::outs() << userBasedTensorTy;
+            return;
+          }
+
           val.setType(oldType);
+          //llvm::outs() << "\n op givein to type\n";
+          //llvm::outs() << oldType;
           return;
         }
 

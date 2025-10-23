@@ -111,6 +111,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
 
         // TODO: should we givein to Elementwise?
         if (user->hasTrait<mlir::OpTrait::Elementwise>()){
+          // Priority 3: as add_ptr offsets, should propagate also back to ptr type
           if (auto addPtr = dyn_cast<AddPtrOp>(user)){
               auto ptr = addPtr.getPtr();
               if (auto splatPtr = ptr.getDefiningOp<SplatOp>()){
@@ -130,7 +131,6 @@ void propagateTypeRecursively(Value &val, Type newType) {
 
           }
 
-          // fallback
           auto targetOp = val.getDefiningOp();
           //llvm::outs() << "\n Type givein to Elementwise op, which should knows the type better\n";
           //llvm::outs() << "op location\n";
@@ -138,21 +138,28 @@ void propagateTypeRecursively(Value &val, Type newType) {
           //llvm::outs() << "\n op original type\n";
           //llvm::outs() << val.getType();
 
+          // Priority 4: Elementwise, be carefull about cast
           auto userTensorTy = dyn_cast<RankedTensorType>(oldType);
           auto newTensorTy = dyn_cast<RankedTensorType>(newType);
           if (userTensorTy && newTensorTy && userTensorTy.getElementType() != newTensorTy.getElementType()){
             auto userBasedTensorTy = RankedTensorType::get(
                     userTensorTy.getShape(),
-                    newTensorTy.getElementType(),
+                    userTensorTy.getElementType(),
+                    //newTensorTy.getElementType(),
                     //userTensorTy.getEncoding()
-                    newTensorTy.getEncoding()
+                    newTensorTy.getEncoding() // NOTE: if using srcEnc, need to propagate.
                     );
-            val.setType(userBasedTensorTy);
+            //val.setType(userBasedTensorTy);
+            userResult.setType(userBasedTensorTy);
+            propagateTypeRecursively(userResult, userBasedTensorTy);
             //llvm::outs() << "\n op givein to type\n";
             //llvm::outs() << userBasedTensorTy;
-            return;
+            continue;
           }
 
+          // if using resultType, no need to propagate
+          // TODO: if changed the val type, should also change other users?
+          // Priority 5, fallback, should not change val type, instead, add convert_layout
           val.setType(oldType);
           //llvm::outs() << "\n op givein to type\n";
           //llvm::outs() << oldType;

@@ -603,7 +603,10 @@ SmallVector<Value> lowerLdStPred(
       actionAdditiveStrides(reps, addrLayout, maskSpanAffineOffset);
   reps = permStrides.apply(reps);
   if (isStore) {
+    llvm::outs() << "\n isStore:\n";
+    llvm::outs() << loc;
     vals = permStrides.apply(vals);
+    llvm::outs() << "\n Done isStore\n";
   }
 
   // PTX expects the address increments to be done in bytes
@@ -713,9 +716,13 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
     }
   };
   auto [laneId, warpId] = getLaneAndWarpId(rewriter, loc);
-  return lowerLdStPred(loc, ctx, cvt, valsArray, otherVal, llvmElemTy, smemBase,
+  llvm::outs() << "\n lowerLdStPred\n";
+  llvm::outs() << loc;
+  auto res = lowerLdStPred(loc, ctx, cvt, valsArray, otherVal, llvmElemTy, smemBase,
                    calcPaddedOffset, affineOffset, maskSpanAffineOffset, laneId,
                    warpId, rewriter, targetInfo, {}, emitLdSt);
+  llvm::outs() << "\n Done lowerLdStPred\n";
+  return res;
 }
 
 SmallVector<Value> lowerLdSt(

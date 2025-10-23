@@ -698,7 +698,7 @@ warpgroup0_sync = tl.constexpr(13)
 warpgroup1_sync = tl.constexpr(14)
 @txl.jit
 #@txl.jit(diff_mode="ttgir", log_dir='dump/')
-#@txl.jit(diff_mode="ttgir", diff_select=6, log_dir='dump/smem')
+#@txl.jit(diff_mode="ttgir", diff_select=7, log_dir='dump/smem')
 def txl_mla0(
         q_nope_desc, q_pe_desc,
         kv_nope_ptr, kv_pe_ptr,

@@ -34,6 +34,7 @@ cp ${FROM_DIR}/lib/Dialect/CMakeLists.txt ${TO_DIR}/lib/Dialect/
 
 cp ${FROM_DIR}/lib/Dialect/Triton/Transforms/RewriteTensorPointer.cpp ${TO_DIR}/lib/Dialect/Triton/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/IR/Dialect.cpp ${TO_DIR}/lib/Dialect/TritonGPU/IR
+cp ${FROM_DIR}/lib/Dialect/TritonGPU/IR/Ops.cpp ${TO_DIR}/lib/Dialect/TritonGPU/IR
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Coalesce.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/OptimizeThreadLocality.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/

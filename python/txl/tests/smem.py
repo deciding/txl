@@ -696,9 +696,9 @@ wg1_s1_ready = tl.constexpr(11)
 sL_ready = tl.constexpr(12)
 warpgroup0_sync = tl.constexpr(13)
 warpgroup1_sync = tl.constexpr(14)
-@txl.jit
+#@txl.jit
 #@txl.jit(diff_mode="ttgir", log_dir='dump/')
-#@txl.jit(diff_mode="ttgir", diff_select=7, log_dir='dump/smem')
+@txl.jit(diff_mode="ttgir", diff_select=4, log_dir='dump/smem')
 def txl_mla0(
         q_nope_desc, q_pe_desc,
         kv_nope_ptr, kv_pe_ptr,
@@ -1147,8 +1147,10 @@ def txl_mla0(
             txl.mbar_arrive(mbar_k1_ready0, track_async_op=True)
 
             if tid % 8 == 0:
-                txl.frag_smem_store(is_kv_valid0, is_token_valid_arr[0].to(tl.int8), is_kv_valid_layout) # frag: only the first for each thread
-                txl.frag_smem_store(is_kv_valid1, is_token_valid_arr[1].to(tl.int8), is_kv_valid_layout)
+                is_token_valid0 = is_token_valid_arr[0]
+                is_token_valid1 = is_token_valid_arr[1]
+                txl.frag_smem_store(is_kv_valid0, is_token_valid0.to(tl.int8), is_kv_valid_layout) # frag: only the first for each thread
+                txl.frag_smem_store(is_kv_valid1, is_token_valid1.to(tl.int8), is_kv_valid_layout)
                 txl.mbar_arrive(mbar_is_kv_valid_ready)
 
             cur_bar_wait_phase ^= 1

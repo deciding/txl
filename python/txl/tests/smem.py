@@ -696,9 +696,9 @@ wg1_s1_ready = tl.constexpr(11)
 sL_ready = tl.constexpr(12)
 warpgroup0_sync = tl.constexpr(13)
 warpgroup1_sync = tl.constexpr(14)
-#@txl.jit
+@txl.jit
 #@txl.jit(diff_mode="ttgir", log_dir='dump/')
-@txl.jit(diff_mode="ttgir", diff_select=4, log_dir='dump/smem')
+#@txl.jit(diff_mode="ttgir", diff_select=4, log_dir='dump/smem')
 def txl_mla0(
         q_nope_desc, q_pe_desc,
         kv_nope_ptr, kv_pe_ptr,
@@ -754,10 +754,14 @@ def txl_mla0(
 
     sO_buf = txl.smem_alloc([B_H, 512], dtype=tl.bfloat16, num_stages=1); sO = txl.get_buffer(sO_buf, 0)
 
-    is_kv_valid_layout: tl.constexpr = txl.BlockedLayout([1, 1], [4, 8], [4, 1], [1, 0]) # 8 threads are for dilation
-    is_kv_valid_buf = txl.smem_alloc([1, B_TOPK], dtype=tl.int8, num_stages=2);
+    is_kv_valid_layout0: tl.constexpr = txl.BlockedLayout([1, 1], [4, 8], [4, 1], [1, 0]) # 8 threads are for dilation
+    is_kv_valid_layout: tl.constexpr = txl.SliceLayout(dim=1, parent=is_kv_valid_layout0) # 8 threads are for dilation
+    #is_kv_valid_buf = txl.smem_alloc([1, B_TOPK], dtype=tl.int8, num_stages=2);
+    is_kv_valid_buf = txl.smem_alloc([B_TOPK], dtype=tl.int8, num_stages=2);
     is_kv_valid0 = txl.get_buffer(is_kv_valid_buf, 0)
     is_kv_valid1 = txl.get_buffer(is_kv_valid_buf, 1)
+    #is_kv_valid0_T = txl.smem_reshape(is_kv_valid0, [B_TOPK, 1])
+    #is_kv_valid1_T = txl.smem_reshape(is_kv_valid1, [B_TOPK, 1])
 
     # 2, 2, 8
     #layout_rP_valid: tl.constexpr = txl.DistributedLinearLayout(
@@ -771,6 +775,7 @@ def txl_mla0(
     sM_buf = txl.smem_alloc([B_H], dtype=tl.float32, num_stages=1); sM = txl.get_buffer(sM_buf, 0)
     sL_buf = txl.smem_alloc([B_H], dtype=tl.float32, num_stages=2); sL0 = txl.get_buffer(sL_buf, 0); sL1 = txl.get_buffer(sL_buf, 1)
     layout_sM: tl.constexpr = txl.SliceLayout(dim=1, parent=layout_acc)
+    layout_row: tl.constexpr = txl.SliceLayout(dim=0, parent=layout_acc)
     #layout_sM: tl.constexpr = txl.DistributedLinearLayout(
     #        [[1]],
     #        [[0], [0], [2], [4], [8]],
@@ -886,9 +891,11 @@ def txl_mla0(
             # mask_rP
             txl.mbar_wait(mbar_is_kv_valid_ready, cur_bar_wait_phase)
             if txl.is_warpgroup([0]):
-                reg_is_kv_valid = txl.smem_load(is_kv_valid0, layout_acc) # mind the shape
+                #reg_is_kv_valid = txl.smem_load(is_kv_valid0, layout_acc) # mind the shape
+                reg_is_kv_valid = txl.smem_load(is_kv_valid0, layout_row) # mind the shape
             else:
-                reg_is_kv_valid = txl.smem_load(is_kv_valid1, layout_acc) # mind the shape
+                #reg_is_kv_valid = txl.smem_load(is_kv_valid1, layout_acc) # mind the shape
+                reg_is_kv_valid = txl.smem_load(is_kv_valid1, layout_row) # mind the shape
             rP = tl.where(reg_is_kv_valid, rP, float('-inf'))
 
             if txl.is_warpgroup([1]):
@@ -916,8 +923,8 @@ def txl_mla0(
 
             # wg0 save half, then wg1 save whole
             if idx_in_warpgroup % 4 == 0: # only store for every 4 because they are the same
-                txl.frag_smem_store(sM, new_maxs, layout_sM)
-                #txl.smem_store(sM, new_maxs) # TODO: remove the layout of frag_smem_store
+                #txl.frag_smem_store(sM, new_maxs, layout_sM)
+                txl.smem_store(sM, new_maxs) # TODO: remove the layout of frag_smem_store
 
             rM = new_maxs # m_i = m_ij
 
@@ -1008,12 +1015,12 @@ def txl_mla0(
         # TODO: reduce L on warp_reduce
         if txl.is_warpgroup([0]):
             if idx_in_warpgroup % 4 == 0: # only store for every 4 because they are the same
-                txl.frag_smem_store(sL0, rL, layout_sM)
-                #txl.smem_store(sL0, rL)
+                #txl.frag_smem_store(sL0, rL, layout_sM)
+                txl.smem_store(sL0, rL)
         if txl.is_warpgroup([1]):
             if idx_in_warpgroup % 4 == 0: # only store for every 4 because they are the same
-                txl.frag_smem_store(sL1, rL, layout_sM)
-                #txl.smem_store(sL1, rL)
+                #txl.frag_smem_store(sL1, rL, layout_sM)
+                txl.smem_store(sL1, rL)
         # all finished sL store
         txl.bar_wait(sL_ready, 256)
         if txl.is_warpgroup([0]):
@@ -1149,6 +1156,7 @@ def txl_mla0(
             if tid % 8 == 0:
                 is_token_valid0 = is_token_valid_arr[0]
                 is_token_valid1 = is_token_valid_arr[1]
+                # smem and layout are same shape
                 txl.frag_smem_store(is_kv_valid0, is_token_valid0.to(tl.int8), is_kv_valid_layout) # frag: only the first for each thread
                 txl.frag_smem_store(is_kv_valid1, is_token_valid1.to(tl.int8), is_kv_valid_layout)
                 txl.mbar_arrive(mbar_is_kv_valid_ready)

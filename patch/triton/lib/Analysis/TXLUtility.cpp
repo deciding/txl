@@ -183,4 +183,20 @@ void replaceAndPropagate(Operation *srcOp, Value newValue) {
   propagateTypeRecursively(newValue, newType);
 }
 
+
+OpPrintingFlags getOpPrintingFlags() {
+  auto printingFlags = OpPrintingFlags();
+  printingFlags.enableDebugInfo();
+  printingFlags.printNameLocAsPrefix(true);
+  return printingFlags;
+}
+
+std::string printModuleOp(ModuleOp &mod) {
+ std::string str;
+ llvm::raw_string_ostream os(str);
+ auto printingFlags = getOpPrintingFlags();
+ mod.print(os, printingFlags);
+ return str;
+}
+
 }

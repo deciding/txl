@@ -9,10 +9,12 @@
 #include "triton/Dialect/TritonGPU/IR/LayoutUtility.h"
 #include "triton/Dialect/TritonGPU/IR/LinearLayoutConversions.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
+#include "nvidia/include/Dialect/TXLGPU/IR/Dialect.h"
 #include "triton/Tools/GenericSwizzling.h"
 #include "triton/Tools/LayoutUtils.h"
 #include "triton/Tools/LinearLayout.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
 
 #include <functional>
@@ -562,7 +564,7 @@ largestVectorisation(MLIRContext *ctx, const LinearLayout &cvt, int bitwidth,
 
 // txl pred
 SmallVector<Value> lowerLdStPred(
-    Location loc, MLIRContext *ctx, LinearLayout cvt,
+    Location loc, MLIRContext *ctx, Operation* ldStOp, LinearLayout cvt,
     ArrayRef<Value> valsArray, // Input for store, output for load
     Value otherVal,
     Type llvmElemTy, Value smemBase,
@@ -715,7 +717,7 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
   auto [laneId, warpId] = getLaneAndWarpId(rewriter, loc);
   //llvm::outs() << "\n lowerLdStPred\n";
   //llvm::outs() << loc;
-  auto res = lowerLdStPred(loc, ctx, cvt, valsArray, otherVal, llvmElemTy, smemBase,
+  auto res = lowerLdStPred(loc, ctx, localLoadOp, cvt, valsArray, otherVal, llvmElemTy, smemBase,
                    calcPaddedOffset, affineOffset, maskSpanAffineOffset, laneId,
                    warpId, rewriter, targetInfo, {}, emitLdSt);
   //llvm::outs() << "\n Done lowerLdStPred\n";

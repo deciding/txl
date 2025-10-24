@@ -1084,44 +1084,51 @@ public:
 
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner Before All\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
     lowerSmemAllocs(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After SmemAllocs\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
     lowerMbars(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After Mbars\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
     lowerLoads(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After lowerLoads\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
     lowerSmemLoadStores(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After lowerSmemLoadStores\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
     lowerToMemDesc(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After MemDesc\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
 
     pipelineWgmma(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After wgmma\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
 
@@ -1152,7 +1159,8 @@ public:
 
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner internal IR Dump \n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
 

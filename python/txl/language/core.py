@@ -148,9 +148,10 @@ def frag_smem_load(smem, shape, layout, full_layout=False, other=None, _semantic
 @builtin
 def frag_smem_store(smem, value, layout, _semantic=None) -> None:
     """
-    The layout of value must be the same as layout.
+    Now only support 2d -> 1d reg based frag store.
+    TODO: check whether support lane and warp selection.
+    For other cases, please use smem_store
     It just allows the fractional store from the whole tensor.
-    TODO: remove the layout arg
     """
     if not isinstance(value.type, block_type):
         value = core.full((1,), value, value.type, _semantic=_semantic)

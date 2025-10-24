@@ -24,4 +24,6 @@ Type getOpRegType(Operation* op);
 
 void replaceAndPropagate(Operation *srcOp, Value newValue);
 
+std::string printModuleOp(ModuleOp &mod);
+
 }

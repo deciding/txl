@@ -752,7 +752,8 @@ def txl_mla0(
     sS1_buf = txl.smem_alloc([B_H, B_TOPK], dtype=tl.bfloat16, num_stages=1);
     sS1 = txl.get_buffer(sS1_buf, 0)
 
-    sO_buf = txl.smem_alloc([B_H, 512], dtype=tl.bfloat16, num_stages=1); sO = txl.get_buffer(sO_buf, 0)
+    #sO_buf = txl.smem_alloc([B_H, 512], dtype=tl.bfloat16, num_stages=1);
+    sO = txl.get_buffer(q_nope_buf, 0) # reuse Q
 
     is_kv_valid_layout0: tl.constexpr = txl.BlockedLayout([1, 1], [4, 8], [4, 1], [1, 0]) # 8 threads are for dilation
     is_kv_valid_layout: tl.constexpr = txl.SliceLayout(dim=1, parent=is_kv_valid_layout0) # 8 threads are for dilation
@@ -1042,11 +1043,14 @@ def txl_mla0(
 
         if txl.is_warpgroup([0]):
             cur_sO = txl.smem_slice(sO, 0, 256, 1)
+            txl.smem_store(cur_sO, cur_rO)
+            txl.bar_wait(warpgroup0_sync, 128)
+            txl.tma_store(cur_sO, o_desc, [offs_q, 0])
         else:
             cur_sO = txl.smem_slice(sO, 256, 256, 1)
-        txl.smem_store(cur_sO, cur_rO)
-        txl.bar_wait(warpgroup0_sync, 128)
-        txl.tma_store(cur_sO, o_desc, [offs_q, 0])
+            txl.smem_store(cur_sO, cur_rO)
+            txl.bar_wait(warpgroup1_sync, 128)
+            txl.tma_store(cur_sO, o_desc, [offs_q, 256])
 
         #txl.bar_wait(warpgroup0_sync, 128)
         #o_desc.store(cur_rO, [offs_q, 0])
@@ -1060,7 +1064,7 @@ def txl_mla0(
 
 
     if txl.is_warpgroup([2]):
-        txl.reg_alloc(72)
+        txl.reg_dealloc(72)
 
         gIndices = indices_ptr + s_q_idx * TOPK
         index_offs = tl.arange(0, B_TOPK * GROUP_SIZE) // GROUP_SIZE # 4 strided with stride 128//8, e.g. 0 16 32 48
@@ -1481,12 +1485,12 @@ def test_txl_mla1():
     kv = torch.randn((b0, s_kv, h_kv, d_qk), dtype=torch.bfloat16, device=DEVICE)/10
 
     q.clamp_(-10, 10)
-    q_nope, q_pe = torch.split(q, [64, 512], dim=-1)
+    q_nope, q_pe = torch.split(q, [512, 64], dim=-1)
     q_nope = q_nope.contiguous()
     q_pe = q_pe.contiguous()
 
     kv.clamp_(-10, 10)
-    kv_nope, kv_pe = torch.split(kv, [64, 512], dim=-1)
+    kv_nope, kv_pe = torch.split(kv, [512, 64], dim=-1)
     kv_nope = kv_nope.contiguous()
     kv_pe = kv_pe.contiguous()
 
@@ -1505,6 +1509,7 @@ def test_txl_mla1():
     indices = indices.to(q.device)
 
     q = q.squeeze(0); kv = kv.squeeze(0); indices = indices.squeeze(0)
+    # q: (s_q, h_q, dim), kv: (s_q, h_kv, dim)
     q_nope = q_nope.squeeze(0); q_pe = q_pe.squeeze(0)
     kv_nope = kv_nope.squeeze(0); kv_pe = kv_pe.squeeze(0)
 
@@ -1512,8 +1517,8 @@ def test_txl_mla1():
     max_logits = torch.empty((s_q, h_q), dtype=torch.float32, device=q.device)
     lse = torch.empty((s_q, h_q), dtype=torch.float32, device=q.device)
 
-    q_nope_desc = TensorDescriptor(q_nope, (s_q*h_q, 64), (64, 1), [B_H, 64])
-    q_pe_desc = TensorDescriptor(q_pe, (s_q*h_q, 512), (512, 1), [B_H, 512])
+    q_nope_desc = TensorDescriptor(q_nope, (s_q*h_q, 512), (512, 1), [B_H, 512])
+    q_pe_desc = TensorDescriptor(q_pe, (s_q*h_q, 64), (64, 1), [B_H, 64])
     #q_nope_desc = TensorDescriptor(q, (s_q*h_q, d_qk), (d_qk, 1), [B_H, D_V])
     o_desc = TensorDescriptor(out, (s_q*h_q, d_v), (d_v, 1), [B_H, D_V])
     max_logits_desc = TensorDescriptor(max_logits, (s_q*h_q, ), (1, ), [B_H])
@@ -1522,6 +1527,7 @@ def test_txl_mla1():
 
 
 
+    # For Tests only
     out_q_nope = torch.empty((s_q, h_q, 64), dtype=q.dtype, device=q.device)
     o_q_nope_desc = TensorDescriptor(out_q_nope, (s_q*h_q, 64), (64, 1), [B_H, 64])
     out_q_pe = torch.empty((s_q, h_q, 512), dtype=q.dtype, device=q.device)
@@ -1558,6 +1564,7 @@ def test_txl_mla1():
             o_desc,
             max_logits_desc, lse_desc,
             indices,
+
             scale,
             s_q, s_kv,
             B_H, D_Q, D_V,
@@ -1572,22 +1579,38 @@ def test_txl_mla1():
             o_q_pe_desc,
             num_warps=4, num_warpgroups=3)
 
-    # REF
+    # REF0
+    # q: (s_q, h_q, dim), kv: (s_q, h_kv, dim)
     kv_nope_ref = kv_nope.squeeze(1)  # (s_kv, 64)
     kv_pe_ref = kv_pe.squeeze(1)      # (s_kv, 512)
     indices_ref = indices.squeeze(1)  # (s_q, top_k)
+
     #out0_ref = torch.empty((s_q, top_k, 64), dtype=kv_nope.dtype, device=kv_nope_ref.device)
     #out1_ref = torch.empty((s_q, top_k, 512), dtype=kv_pe.dtype, device=kv_pe_ref.device)
     kv_nope_sel = []
     kv_pe_sel = []
 
-    idx = indices_ref.unsqueeze(-1).expand(-1, -1, 64).to(dtype=torch.int64)     # (s_q, top_k, 64)
-    kv_nope_sel = torch.gather(kv_nope_ref.unsqueeze(0).expand(s_q, -1, -1), 1, idx)  # (s_q, top_k, 64)
+    idx = indices_ref.unsqueeze(-1).expand(-1, -1, 512).to(dtype=torch.int64)     # (s_q, top_k, 512)
+    kv_nope_sel = torch.gather(kv_nope_ref.unsqueeze(0).expand(s_q, -1, -1), 1, idx)  # (s_q, top_k, 512)
 
-    idx_pe = indices_ref.unsqueeze(-1).expand(-1, -1, 512).to(dtype=torch.int64) # (s_q, top_k, 512)
-    kv_pe_sel = torch.gather(kv_pe_ref.unsqueeze(0).expand(s_q, -1, -1), 1, idx_pe)   # (s_q, top_k, 512)
+    idx_pe = indices_ref.unsqueeze(-1).expand(-1, -1, 64).to(dtype=torch.int64) # (s_q, top_k, 64)
+    kv_pe_sel = torch.gather(kv_pe_ref.unsqueeze(0).expand(s_q, -1, -1), 1, idx_pe)   # (s_q, top_k, 64)
+
+    # s_q, h_q, top_k
+    #qk = q_nope @ kv_nope_sel + q_pe @ kv_pe_sel
+    qk = torch.einsum("shd,std->sht", q_nope.float(), kv_nope_sel.float())
+    qk += torch.einsum("shd,std->sht", q_pe.float(), kv_pe_sel.float())
+    qk *= scale
+    # s_q, h_q, top_k
+    scores = qk.softmax(dim=-1, dtype=torch.float32)
+    # s_q, h_q, top_k @ s_q, top_k, 512
+    #res = scores @ kv_nope_sel
+    res = torch.einsum("sht,std->shd", scores, kv_nope_sel.float()).to(torch.bfloat16)
+    import pdb;pdb.set_trace()
 
     print(out)
+    print(res)
+    print(out-res)
     #print((out0-kv_nope_sel).sum())
     #print((out1-kv_pe_sel).sum())
     #print((out_q_nope-q_nope).sum())

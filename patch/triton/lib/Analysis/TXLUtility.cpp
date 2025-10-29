@@ -1,14 +1,23 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include <cstdint>
 
 #include "triton/Analysis/TXLUtility.h"
+#include "triton/Dialect/TritonGPU/IR/Attributes.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/TritonGPUInterfaces.h"
+
+namespace ttg = mlir::triton::gpu;
 
 namespace mlir::triton{
 
@@ -71,10 +80,11 @@ void propagateTypeRecursively(Value &val, Type newType) {
         Value userResult = user->getResult(0);
         Type oldType = userResult.getType();
 
-        // Priority 1: if the other is const, should create a new const
+        // Priority 1: propagate to elemwise other
         if (user->hasTrait<mlir::OpTrait::Elementwise>()){
           if (user->getNumOperands() == 2) {
             Value otherOperand = user->getOperand(opNum == 0 ? 1 : 0);
+            // Priority 1.1: if the other is const, should create a new const
             auto constOp = otherOperand.getDefiningOp<arith::ConstantOp>();
             if (constOp){
                 auto attr = dyn_cast<DenseElementsAttr>(constOp.getValue());
@@ -98,6 +108,25 @@ void propagateTypeRecursively(Value &val, Type newType) {
                     continue;
                 }
             }
+            // Priority 1.2: if the other is splat, should create a new splat, and op is not addptr
+            auto splatOp = otherOperand.getDefiningOp<triton::SplatOp>();
+            if (splatOp && !isa<AddPtrOp>(user)){
+                auto newRankedType = dyn_cast<RankedTensorType>(newType);
+                auto userRankedType = dyn_cast<RankedTensorType>(oldType);
+                OpBuilder builder(splatOp);
+                auto newSplat = builder.create<SplatOp>(
+                                  splatOp.getLoc(), newType, splatOp.getSrc());
+                user->setOperand(opNum == 0 ? 1 : 0, newSplat);
+                //userResult.setType(newType);
+                //propagateTypeRecursively(userResult, newType);
+                auto userBasedTensorTy = RankedTensorType::get(
+                        userRankedType.getShape(),
+                        userRankedType.getElementType(),
+                        newRankedType.getEncoding());
+                userResult.setType(userBasedTensorTy);
+                propagateTypeRecursively(userResult, userBasedTensorTy);
+                continue;
+            }
           }
         }
 
@@ -109,6 +138,29 @@ void propagateTypeRecursively(Value &val, Type newType) {
           continue;
         }
 
+        if (auto reduceOp = dyn_cast<ReduceOp>(user)){
+            auto userRankedType = dyn_cast<RankedTensorType>(oldType);
+            auto newRankedType = dyn_cast<RankedTensorType>(newType);
+            assert(userRankedType && newRankedType && "reduceop types must be ranked");
+            auto sliceEnc = dyn_cast<ttg::SliceEncodingAttr>(userRankedType.getEncoding());
+            assert(sliceEnc && "reduceop result must be sliced encoding");
+            auto distributedSliceParent = dyn_cast<ttg::DistributedEncodingTrait>(newRankedType.getEncoding());
+            assert(sliceEnc && "new reduceop result must be distributed sliced encoding");
+            auto newSliceEnc = ttg::SliceEncodingAttr::get(user->getContext(), sliceEnc.getDim(), distributedSliceParent);
+            SmallVector<int64_t> sliceShape;
+            int dim = 0;
+            for (auto s: newRankedType.getShape()){
+                if (dim == sliceEnc.getDim())
+                    continue;
+                sliceShape.push_back(s);
+                dim ++;
+            }
+            auto newSliceTy = RankedTensorType::get(sliceShape, newRankedType.getElementType(), newSliceEnc);
+            userResult.setType(newSliceTy);
+            // Recurse on this user's result
+            propagateTypeRecursively(userResult, newSliceTy);
+            continue;
+        }
         // TODO: should we givein to Elementwise?
         if (user->hasTrait<mlir::OpTrait::Elementwise>()){
           // Priority 3: as add_ptr offsets, should propagate also back to ptr type
@@ -128,7 +180,6 @@ void propagateTypeRecursively(Value &val, Type newType) {
                 //                  splatPtr.getLoc(), newType, splatPtr.getSrc());
                 continue;
               }
-
           }
 
           auto targetOp = val.getDefiningOp();
@@ -189,6 +240,12 @@ OpPrintingFlags getOpPrintingFlags() {
   printingFlags.enableDebugInfo();
   printingFlags.printNameLocAsPrefix(true);
   return printingFlags;
+}
+
+Operation* getModuleFromOp(Operation *op) {
+  while (op && !isa<ModuleOp>(op))
+    op = op->getParentOp();
+  return isa<ModuleOp>(op) ? op : nullptr;
 }
 
 std::string printModuleOp(ModuleOp &mod) {

@@ -39,6 +39,7 @@ cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp ${TO_DIR}/l
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Coalesce.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/OptimizeThreadLocality.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/RemoveLayoutConversions.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
+cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/ReorderInstructions.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Utility.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/CMakeLists.txt ${TO_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/PlanCTA.cpp ${TO_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/

@@ -25,6 +25,7 @@
 #include "triton/Dialect/TritonGPU/Transforms/TritonGPUConversion.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "triton/Analysis/TXLUtility.h" // txl
+#include "llvm/Support/Casting.h"
 #include <deque>
 #include <memory>
 
@@ -109,6 +110,12 @@ struct CvtGetBufferToGetBuffer
       //getBufferOp->erase();
 
 
+      LLVM_DEBUG({
+        LDBG("CvtGetBufferToGetBuffer\n");
+        ModuleOp m = dyn_cast<ModuleOp>(getModuleFromOp(op));
+        LDBG(printModuleOp(m));
+        LDBG("DONE\n\n\n");
+      });
       return success();
     }
     return failure();
@@ -138,6 +145,12 @@ struct CvtFragSmemLoadToFragSmemLoad
 
       fragSmemLoad->replaceAllUsesWith(newFragSmemLoad->getResults());
 
+      LLVM_DEBUG({
+        LDBG("CvtFragSmemLoadToFragSmemLoad\n");
+        ModuleOp m = dyn_cast<ModuleOp>(getModuleFromOp(op));
+        LDBG(printModuleOp(m));
+        LDBG("DONE\n\n\n");
+      });
       return success();
     }
     return failure();
@@ -162,6 +175,12 @@ struct lowerRelayout
     //op->replaceAllUsesWith(convertLayout->getResults());
     replaceAndPropagate(op, convertLayout);
 
+    LLVM_DEBUG({
+      LDBG("lowerRelayout\n");
+      ModuleOp m = dyn_cast<ModuleOp>(getModuleFromOp(op));
+      LDBG(printModuleOp(m));
+      LDBG("DONE\n\n\n");
+    });
     return success();
   }
 };
@@ -191,6 +210,12 @@ struct FragSmemStoreCvtToFragSmemStore
         op->setOperand(0, newCvtOp);
         //cvtOp->replaceAllUsesWith(newCvtOp->getResults());
 
+        LLVM_DEBUG({
+          LDBG("FragSmemStoreOp\n");
+          ModuleOp m = dyn_cast<ModuleOp>(getModuleFromOp(op));
+          LDBG(printModuleOp(m));
+          LDBG("DONE\n\n\n");
+        });
         return success();
       }
     }
@@ -252,6 +277,12 @@ struct CvtElemWiseFragSmemLoadToFragSmemLoad
                                              );
 
     fragSmemLoad->replaceAllUsesWith(newFragSmemLoad->getResults());
+    LLVM_DEBUG({
+      LDBG("CvtElemWiseFragSmemLoadToFragSmemLoad\n");
+      ModuleOp m = dyn_cast<ModuleOp>(getModuleFromOp(op));
+      LDBG(printModuleOp(m));
+      LDBG("DONE\n\n\n");
+    });
 
     return success();
   }
@@ -305,8 +336,9 @@ public:
     });
 
     LLVM_DEBUG({
-      DBGS() << "Module after smem_alloc lowering:\n";
-      m.dump();
+      LDBG("Module after smem_alloc lowering:\n");
+      LDBG(printModuleOp(m));
+      LDBG("DONE\n\n\n");
     });
   }
 

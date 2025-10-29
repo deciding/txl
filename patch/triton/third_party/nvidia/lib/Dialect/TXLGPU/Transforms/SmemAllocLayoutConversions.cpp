@@ -25,6 +25,7 @@
 #include "triton/Dialect/TritonGPU/Transforms/TritonGPUConversion.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "triton/Analysis/TXLUtility.h" // txl
+#include "llvm/Support/Casting.h"
 #include <deque>
 #include <memory>
 
@@ -109,6 +110,12 @@ struct CvtGetBufferToGetBuffer
       //getBufferOp->erase();
 
 
+      LLVM_DEBUG({
+        LDBG("CvtGetBufferToGetBuffer\n");
+        ModuleOp m = dyn_cast<ModuleOp>(getModuleFromOp(op));
+        LDBG(printModuleOp(m));
+        LDBG("DONE\n\n\n");
+      });
       return success();
     }
     return failure();
@@ -138,13 +145,19 @@ struct CvtFragSmemLoadToFragSmemLoad
 
       fragSmemLoad->replaceAllUsesWith(newFragSmemLoad->getResults());
 
+      LLVM_DEBUG({
+        LDBG("CvtFragSmemLoadToFragSmemLoad\n");
+        ModuleOp m = dyn_cast<ModuleOp>(getModuleFromOp(op));
+        LDBG(printModuleOp(m));
+        LDBG("DONE\n\n\n");
+      });
       return success();
     }
     return failure();
   }
 };
 
-// cvt(frag_smem_load(ty1), ty2) -> frag_smem_load(ty2)
+// relayout -> convert_layout
 struct lowerRelayout
     : public OpRewritePattern<RelayoutOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -162,7 +175,51 @@ struct lowerRelayout
     //op->replaceAllUsesWith(convertLayout->getResults());
     replaceAndPropagate(op, convertLayout);
 
+    LLVM_DEBUG({
+      LDBG("lowerRelayout\n");
+      ModuleOp m = dyn_cast<ModuleOp>(getModuleFromOp(op));
+      LDBG(printModuleOp(m));
+      LDBG("DONE\n\n\n");
+    });
     return success();
+  }
+};
+
+// frag_smem_store(cvt(ty), regTy) -> frag_smem_store(cvt(regTy), regTy)
+// TODO: this should be manually done
+struct FragSmemStoreCvtToFragSmemStore
+    : public OpRewritePattern<FragSmemStoreOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(FragSmemStoreOp op,
+                  PatternRewriter &rewriter) const override {
+    Operation *arg = op.getSrc().getDefiningOp();
+    if (!arg)
+      return failure();
+
+    if (auto cvtOp = dyn_cast<ConvertLayoutOp>(arg)) {
+      if (cvtOp->getResult(0).getType() != op.getRegType()){
+        rewriter.setInsertionPoint(arg);
+        auto newCvtOp = rewriter.replaceOpWithNewOp<ConvertLayoutOp>(
+                cvtOp,
+                op.getRegType(),
+                cvtOp.getSrc()
+             );
+
+        op->setOperand(0, newCvtOp);
+        //cvtOp->replaceAllUsesWith(newCvtOp->getResults());
+
+        LLVM_DEBUG({
+          LDBG("FragSmemStoreOp\n");
+          ModuleOp m = dyn_cast<ModuleOp>(getModuleFromOp(op));
+          LDBG(printModuleOp(m));
+          LDBG("DONE\n\n\n");
+        });
+        return success();
+      }
+    }
+    return failure();
   }
 };
 
@@ -220,6 +277,12 @@ struct CvtElemWiseFragSmemLoadToFragSmemLoad
                                              );
 
     fragSmemLoad->replaceAllUsesWith(newFragSmemLoad->getResults());
+    LLVM_DEBUG({
+      LDBG("CvtElemWiseFragSmemLoadToFragSmemLoad\n");
+      ModuleOp m = dyn_cast<ModuleOp>(getModuleFromOp(op));
+      LDBG(printModuleOp(m));
+      LDBG("DONE\n\n\n");
+    });
 
     return success();
   }
@@ -262,6 +325,7 @@ public:
     smemAllocPatterns.add<CvtFragSmemLoadToFragSmemLoad>(context);
     //smemAllocPatterns.add<CvtElemWiseFragSmemLoadToFragSmemLoad>(context);
     smemAllocPatterns.add<lowerRelayout>(context);
+    smemAllocPatterns.add<FragSmemStoreCvtToFragSmemStore>(context);
 
     if (applyPatternsGreedily(m, std::move(smemAllocPatterns)).failed()) {
       signalPassFailure();
@@ -272,8 +336,9 @@ public:
     });
 
     LLVM_DEBUG({
-      DBGS() << "Module after smem_alloc lowering:\n";
-      m.dump();
+      LDBG("Module after smem_alloc lowering:\n");
+      LDBG(printModuleOp(m));
+      LDBG("DONE\n\n\n");
     });
   }
 

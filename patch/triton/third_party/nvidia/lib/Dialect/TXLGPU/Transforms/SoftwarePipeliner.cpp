@@ -109,6 +109,19 @@ bool hasAsyncLoadUsers(Operation* op){
     return false;
 }
 
+bool asAsyncLoadSrc(Operation* op){
+    for (Value result: op->getResults()){
+        for (OpOperand &use: result.getUses()){
+            Operation *userOp = use.getOwner();
+            if (auto asyncLoad = dyn_cast<AsyncLoadOp>(userOp)){
+                if (use.getOperandNumber() == 0)
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
 ttg::NVMMASharedEncodingAttr getFallbackSharedEncoding(RankedTensorType tensorType,
                                     ttg::CTALayoutAttr ctaLayout,
                                     ArrayRef<int64_t> usageShape) {
@@ -291,7 +304,8 @@ void replaceSmemBufferUses(
       SmallVector<ttg::ConvertLayoutOp> opsToErase;
       for (Operation *user : oldViewOp->getUsers()) {
         if (auto convertLayoutOp = dyn_cast<ttg::ConvertLayoutOp>(user)) {
-          if (hasAsyncLoadUsers(convertLayoutOp)) {
+          //if (hasAsyncLoadUsers(convertLayoutOp)) {
+          if (asAsyncLoadSrc(convertLayoutOp)) { // only affect src cvt, not mask cvt
             // replace all uses of userAlloc to newView
             tt::replaceUsesAndPropagateType(builder, convertLayoutOp, newView);
             opsToErase.push_back(convertLayoutOp);
@@ -305,15 +319,27 @@ void replaceSmemBufferUses(
       // TmaLoadOp skipped local_load op wrappings
       // If there are some uses that were not local_allocs, we need to create a
       // local_load for them.
-      auto users = oldViewOp->getUsers();
-      SmallVector<Operation*> ops;
-      for (Operation* user : users){
-          ops.push_back(user);
+
+      //auto users = oldViewOp->getUsers();
+      //SmallVector<Operation*> ops;
+      //for (Operation* user : users){
+      //    ops.push_back(user);
+      //}
+      //for (auto user: ops){
+
+      auto uses = oldViewOp->getResult(0).getUses();
+      SmallVector<OpOperand *> opds;
+      for (OpOperand& use : uses){
+          opds.push_back(&use);
       }
-      // TODO: now need to enumerate all possible users of GetBufferOp
-      for (Operation* user : ops){
+      for (OpOperand *use: opds){
+        Operation *user = use->getOwner();
+
+        // TODO: now need to enumerate all possible users of GetBufferOp
+
         if (auto asyncLoadOp = dyn_cast<tt::AsyncLoadOp>(user)) {
-            asyncLoadOp->setOperand(0, newView);
+            if (use->getOperandNumber() == 0)
+                asyncLoadOp->setOperand(0, newView);
         }
         else if (auto tmaLoadOp = dyn_cast<tt::TmaLoadOp>(user)) {
             tmaLoadOp->setOperand(0, newView);
@@ -479,7 +505,8 @@ void lowerSmemLoad(tt::SmemLoadOp& op) {
             op.getRegType(),
             op->getOperand(0) // changed to memdesc
     );
-    tt::replaceUsesAndPropagateType(builder, op, localLoad);
+    //tt::replaceUsesAndPropagateType(builder, op, localLoad);
+    replaceAndPropagate(op, localLoad);
     op->erase();
 }
 
@@ -515,13 +542,27 @@ void lowerFragSmemLoad(tt::FragSmemLoadOp& op) {
     op->erase();
 }
 
+// TODO: Explicit layout conversion.
 void lowerFragSmemStore(tt::FragSmemStoreOp& op) {
     OpBuilder builder(op);
+    auto loc = op->getLoc();
+    Value src = op.getSrc();
+    auto regType = op.getRegType();
+
+    // NOTE: Cannot directly convert since they may not have the same shape
+    //auto srcTy = dyn_cast<RankedTensorType>(src.getType());
+    //if (srcTy != regType){
+    //    auto cvt = builder.create<ttg::ConvertLayoutOp>(
+    //                loc, regType, src
+    //            );
+    //    src = cvt->getResult(0);
+    //}
+
     ttx::FragLocalStoreOp frag_local_store = builder.create<ttx::FragLocalStoreOp>(
-            op->getLoc(),
-            op->getOperand(0),
+            loc,
+            src,
             op->getOperand(1), // changed to memdesc
-            op.getRegType()
+            regType
     );
     op->erase();
 }
@@ -809,12 +850,45 @@ void lowerAsyncLoadOp(tt::AsyncLoadOp &asyncLoad) {
     mlir::triton::EvictionPolicy evict = mlir::triton::symbolizeEvictionPolicy(static_cast<uint32_t>(asyncLoad.getEvict())).value_or(mlir::triton::EvictionPolicy::NORMAL);
     auto contiguity = builder.getI64IntegerAttr(asyncLoad.getContiguity());
 
+    auto ptr = asyncLoad.getPtr();
+    auto ptrTy = dyn_cast<RankedTensorType>(ptr.getType());
+    auto ptrEnc = ptrTy.getEncoding();
+    Value optMask = asyncLoad.getMask();
+    Value optOther = asyncLoad.getOther();
+    Value mask;
+    Value other;
+    // TODO: Explicit layout conversion.
+    if (optMask){
+        mask = optMask;
+        auto maskTy = dyn_cast<RankedTensorType>(mask.getType());
+        auto maskEnc = maskTy.getEncoding();
+        if (maskEnc != ptrEnc){
+            auto resTy = RankedTensorType::get(maskTy.getShape(), maskTy.getElementType(), ptrEnc);
+            auto maskCvt = builder.create<ttg::ConvertLayoutOp>(
+                        loc, resTy, mask
+                    );
+            mask = maskCvt->getResult(0);
+        }
+    }
+    if (optOther){
+        other = optOther;
+        auto otherTy = dyn_cast<RankedTensorType>(other.getType());
+        auto otherEnc = otherTy.getEncoding();
+        if (otherEnc != ptrEnc){
+            auto resTy = RankedTensorType::get(otherTy.getShape(), otherTy.getElementType(), ptrEnc);
+            auto otherCvt = builder.create<ttg::ConvertLayoutOp>(
+                        loc, resTy, other
+                    );
+            other = otherCvt->getResult(0);
+        }
+    }
     // TODO: asyncLoad.getSrc() not working, should have an intermediate op with MemDescType
     // workaround: use getOperand instead
     Operation *copy = builder.create<ttg::AsyncCopyGlobalToLocalOp>(
-        loc, asyncLoad.getPtr(),
+        loc, ptr,
         asyncLoad.getOperand(0), // view
-        asyncLoad.getMask(), asyncLoad.getOther(),
+        mask ? mask : Value{},
+        other ? other : Value{},
         cache, evict,
         asyncLoad.getIsVolatile());
     copy->setAttr("ttxg.contiguity", contiguity);
@@ -1010,44 +1084,51 @@ public:
 
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner Before All\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
     lowerSmemAllocs(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After SmemAllocs\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
     lowerMbars(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After Mbars\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
     lowerLoads(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After lowerLoads\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
     lowerSmemLoadStores(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After lowerSmemLoadStores\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
     lowerToMemDesc(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After MemDesc\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
 
     pipelineWgmma(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After wgmma\n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
 
@@ -1078,7 +1159,8 @@ public:
 
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner internal IR Dump \n");
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
 

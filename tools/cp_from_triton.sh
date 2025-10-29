@@ -34,10 +34,12 @@ cp ${FROM_DIR}/lib/Dialect/CMakeLists.txt ${TO_DIR}/lib/Dialect/
 
 cp ${FROM_DIR}/lib/Dialect/Triton/Transforms/RewriteTensorPointer.cpp ${TO_DIR}/lib/Dialect/Triton/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/IR/Dialect.cpp ${TO_DIR}/lib/Dialect/TritonGPU/IR
+cp ${FROM_DIR}/lib/Dialect/TritonGPU/IR/Ops.cpp ${TO_DIR}/lib/Dialect/TritonGPU/IR
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Coalesce.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/OptimizeThreadLocality.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/RemoveLayoutConversions.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
+cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/ReorderInstructions.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Utility.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/CMakeLists.txt ${TO_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/PlanCTA.cpp ${TO_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/

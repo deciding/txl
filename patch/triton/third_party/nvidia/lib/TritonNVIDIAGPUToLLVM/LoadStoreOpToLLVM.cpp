@@ -1489,6 +1489,8 @@ LogicalResult convertTMAStoreLikeOp(Operation *op,
   auto smemLayout = ttg::toLinearLayout(srcTy);
   auto msgToShared = msgToPackedOffset.invertAndCompose(smemLayout);
   auto msgToOffset = getMsgToUnpackedOffsetLayout(msgToPackedOffset, srcTy);
+  // txl
+  auto warpOffset = getWarpOffset(op);
 
   auto ctx = op->getContext();
   auto kMsg = str_attr("msg");
@@ -1503,6 +1505,8 @@ LogicalResult convertTMAStoreLikeOp(Operation *op,
     if (numWarpsToCopy == 1) {
       warpID = b.i32_val(0);
     }
+    //else
+    //  warpID = rewriter.create<arith::SubIOp>(loc, warpID, b.i32_val(warpOffset));
     Value boxPred =
         b.and_(pred, b.icmp_ult(id, b.i32_val(numWarpsToCopy * warpSize)));
     //boxPred =
@@ -1514,8 +1518,14 @@ LogicalResult convertTMAStoreLikeOp(Operation *op,
         applyLinearLayout(loc, rewriter, msgToShared,
                           {{kMsg, copyIdxVal}, {kBlock, zero}})[0]
             .second;
+
+    //txl: bug of triton, should consider memdesc subslice offsets
+    auto affineOffset = dstMemObj.getShmemOffset(loc, rewriter, srcTy);
     Value shMemPtr =
-        b.gep(elemPtrTy, llvmElemTy, dstMemObj.getBase(), shMemOffset);
+        b.gep(elemPtrTy, llvmElemTy, dstMemObj.getBase(), affineOffset);
+
+    shMemPtr =
+        b.gep(elemPtrTy, llvmElemTy, shMemPtr, shMemOffset);
     SmallVector<PTXBuilder::Operand *> operands = {
         ptxBuilderTMA.newOperand(boxPred, "b"),
         ptxBuilderTMA.newOperand(tmaPtr, "l")};

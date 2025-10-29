@@ -1,5 +1,7 @@
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
+#include "mlir/IR/Attributes.h"
+#include "triton/Analysis/Utility.h"
 #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
 #include "triton/Conversion/TritonGPUToLLVM/PatternTritonGPUOpToLLVM.h"
 #include "triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h"
@@ -18,9 +20,12 @@
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include "triton/Tools/LayoutUtils.h"
+#include "triton/Tools/LinearLayout.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "nvidia/lib/TritonNVIDIAGPUToLLVM/Utility.h"
 #include "nvidia/include/Dialect/TXLGPU/IR/Dialect.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace mlir;
@@ -201,7 +206,7 @@ private:
   const TargetInfoBase &targetInfo;
 };
 
-LogicalResult lowerFragLocalStore(Location loc, MLIRContext *ctx, Value regVal, Type regType,
+LogicalResult lowerFragLocalStore(Location loc, MLIRContext *ctx, Operation* op, Value regVal, Type regType,
                               MemDescType memDescTy, SharedMemoryObject smemObj,
                               ArrayRef<Value> inVals,
                               const LLVMTypeConverter *typeConverter,
@@ -220,12 +225,54 @@ LogicalResult lowerFragLocalStore(Location loc, MLIRContext *ctx, Value regVal, 
   auto paddedEnc =
       dyn_cast<triton::gpu::PaddedSharedEncodingAttr>(memDescTy.getEncoding());
   LinearLayout cvt = LinearLayout::empty();
+  SmallVector<Value> newInVals;
+
+  if (regLayout.getNumOutDims() != fullRegLayout.getNumOutDims()){
+      assert(regLayout.getNumOutDims() == 1 && " currently only support 2d->1d frag smem store");
+      assert(fullRegLayout.getNumOutDims() == 2 && " currently only support 2d->1d frag smem store");
+      //llvm::outs() << "\n TEST: \n";
+      //llvm::outs() << "\n regLayout \n";
+      //llvm::outs() << regLayout;
+      //llvm::outs() << "\n fullRegLayout \n";
+      //llvm::outs() << fullRegLayout;
+
+      SmallVector<StringAttr> inDimNames;
+      for (auto n : fullRegLayout.getInDimNames())
+          inDimNames.push_back(n);
+      SmallVector<StringAttr> outDimNames;
+      for (auto n : regLayout.getOutDimNames())
+          outDimNames.push_back(n);
+
+      auto subRegLayout = fullRegLayout.sublayout(inDimNames, outDimNames);
+      //llvm::outs() << "\n subRegLayout \n";
+      //llvm::outs() << subRegLayout;
+
+      auto removedAction = actionRemoveBroadcastedRegs(subRegLayout);
+      //llvm::outs() << "\n removedAction \n";
+      //llvm::outs() << removedAction.toString();
+
+      auto removedLayout = removedAction.apply(subRegLayout);
+      //llvm::outs() << "\n removedLayout \n";
+      //llvm::outs() << removedLayout;
+
+      //llvm::outs() << "\n invals size \n";
+      //llvm::outs() << inVals.size();
+
+      //auto newInVals = removedAction.apply(inVals);
+      //llvm::outs() << "\n newInVals size \n";
+      //llvm::outs() << newInVals.size();
+      for (auto v : removedAction.apply(inVals)){
+          newInVals.push_back(v);
+      }
+      inVals = newInVals;
+
+      //llvm::outs() << "\n DONE TEST \n";
+  }
+
   if (paddedEnc) {
-    //cvt = getPaddedRegToSharedLayout(fullRegLayout, paddedEnc);
     cvt = getPaddedRegToSharedLayout(regLayout, paddedEnc);
   } else {
     auto sharedLayout = toLinearLayout(memDescTy);
-    //cvt = fullRegLayout.invertAndCompose(sharedLayout);
     cvt = regLayout.invertAndCompose(sharedLayout);
     auto kBlock = str_attr("block");
     // NYI. We would need to emit a map.shared::cluster instruction.
@@ -235,7 +282,7 @@ LogicalResult lowerFragLocalStore(Location loc, MLIRContext *ctx, Value regVal, 
   }
   cvt = cvt.sublayout({kReg, kLane, kWarp}, {kOffset});
   lowerLocalLdSt(loc, ctx, cvt, inVals, llvmElemTy, memDescTy, smemObj,
-                 rewriter, targetInfo);
+                 rewriter, targetInfo, op, Value());
 
   return success();
 }
@@ -266,7 +313,7 @@ public:
     auto smemObj = LLVM::getSharedMemoryObjectFromStruct(loc, adaptor.getDst(),
                                                          llvmElemTy, rewriter);
     auto inVals = unpackLLElements(loc, adaptor.getSrc(), rewriter);
-    if (failed(lowerFragLocalStore(loc, ctx, regVal, regType, memDescTy, smemObj, inVals,
+    if (failed(lowerFragLocalStore(loc, ctx, op, regVal, regType, memDescTy, smemObj, inVals,
                                typeConverter, rewriter, targetInfo))) {
       return failure();
     }

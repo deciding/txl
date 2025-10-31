@@ -395,7 +395,8 @@ void CTAPlanner::processStoreLikeOps(triton::FuncOp &funcOp) {
   llvm::SmallVector<Operation *> stores;
   funcOp.walk([&](Operation *op) {
     if (llvm::isa<triton::StoreOp, triton::AtomicRMWOp, triton::AtomicCASOp,
-                  triton::DescriptorStoreLikeOpInterface>(op))
+                  triton::DescriptorStoreLikeOpInterface,
+                  triton::SmemStoreOp, triton::RemoteSmemStoreOp, triton::FragSmemStoreOp, triton::TmaStoreOp>(op))
       stores.push_back(op);
   });
   assert(stores.size() > 0 && "Cannot find store-like ops");
@@ -620,6 +621,7 @@ void CTAPlanner::eliminateAdjacentCasts(CastOp cast0, CastOp cast1) {
 bool CTAPlanner::isLoadStoreOp(Operation *op) const {
   // txl
   return llvm::isa<triton::LoadOp, triton::StoreOp, triton::AsyncLoadOp, triton::AtomicRMWOp,
+                   triton::TmaLoadOp, triton::TmaStoreOp,
                    triton::AtomicCASOp, triton::DescriptorLoadOp,
                    triton::DescriptorStoreLikeOpInterface,
                    triton::DescriptorGatherOp>(op);

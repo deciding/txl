@@ -1984,12 +1984,12 @@ void init_triton_ir(py::module &&m) {
                return self.create<mlir::triton::SmemAllocOp>(tensorType, numStagesAttr, isMutableAttr, sharedEnc);
            })
       .def("create_smem_load",
-           [](TritonOpBuilder &self, Type resultTy, Value smem, Type regType) -> Value {
-             return self.create<tt::SmemLoadOp>(resultTy, smem, regType);
+           [](TritonOpBuilder &self, Type resultTy, Value smem, Type regType, int ctaId) -> Value {
+             return self.create<tt::SmemLoadOp>(resultTy, smem, regType, ctaId);
            })
       .def("create_smem_store",
-           [](TritonOpBuilder &self, Value smem, Value value) {
-             self.create<tt::SmemStoreOp>(value, smem);
+           [](TritonOpBuilder &self, Value smem, Value value, int ctaId) {
+             self.create<tt::SmemStoreOp>(value, smem, ctaId);
            })
       .def("create_frag_smem_load",
            [](TritonOpBuilder &self, Type resultTy, Value smem, std::optional<Value>& other, Type regType, bool fullLayout) -> Value {
@@ -2271,6 +2271,10 @@ void init_triton_ir(py::module &&m) {
       .def("create_get_lane_id",
            [](TritonOpBuilder& self) -> Value{
                return self.create<mlir::triton::txlgpu::LaneIdOp>(self.getBuilder().getI32Type());
+           })
+      .def("create_get_cta_rank",
+           [](TritonOpBuilder& self) -> Value{
+               return self.create<mlir::triton::txlgpu::ClusterCTARankOp>(self.getBuilder().getI32Type());
            })
       .def("create_reg_alloc",
            [](TritonOpBuilder& self, int32_t count) -> void{

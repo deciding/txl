@@ -70,6 +70,13 @@ const std::string Lane_Id_Op =
     "mov.u32 $0, %lane_id;          \n"
     "}";
 
+const std::string Cluster_CTA_Rank_Op =
+    "{\n"
+    ".reg .u32 %ctarank;                  \n"
+    "mov.u32 %ctarank, %cluster_ctarank;  \n"
+    "mov.u32 $0, %ctarank;                \n"
+    "}";
+
 const std::string Reg_Alloc_Op = "setmaxnreg.inc.sync.aligned.u32 #regCount;";
 const std::string Reg_Dealloc_Op = "setmaxnreg.dec.sync.aligned.u32 #regCount;";
 
@@ -340,6 +347,8 @@ public:
         context, Canonical_Warpgroup_Id_Op, Constraints({"=r"}), Constraints());
     patterns.add<TXLGPUOpGenericPattern<ttx::LaneIdOp>>(
         context, Lane_Id_Op, Constraints({"=r"}), Constraints());
+    patterns.add<TXLGPUOpGenericPattern<ttx::ClusterCTARankOp>>(
+        context, Cluster_CTA_Rank_Op, Constraints({"=r"}), Constraints());
 
     patterns.add<TXLGPUOpGenericPattern<ttx::RegAllocOp>>(context, Reg_Alloc_Op, Constraints(),
                                               Constraints());

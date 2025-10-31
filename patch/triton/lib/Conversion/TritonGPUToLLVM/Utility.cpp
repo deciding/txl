@@ -18,6 +18,7 @@
 #include "llvm/Support/MathExtras.h"
 
 #include <functional>
+#include <optional>
 
 #if defined(_MSC_VER) && !defined(__clang__)
 // from https://gist.github.com/pps83/3210a2f980fd02bb2ba2e5a1fc4a2ef0
@@ -690,7 +691,7 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
                 std::function<Value(Value)> calcPaddedOffset,
                 Value affineOffset, uint64_t maskSpanAffineOffset,
                 RewriterBase &rewriter, const TargetInfoBase &targetInfo,
-                Operation *localLoadOp, Value otherVal) {
+                Operation *localLoadOp, Value otherVal, Value ctaId) {
 
   bool isStore = !valsArray.empty();
   auto b = TritonLLVMOpBuilder(loc, rewriter);
@@ -703,13 +704,13 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
     if (isStore) {
       Value valsVec =
           packLLVector(loc, ArrayRef<Value>(vals).slice(idx, length), rewriter);
-      targetInfo.storeDShared(rewriter, loc, shmemAddr, std::nullopt, valsVec,
+      targetInfo.storeDShared(rewriter, loc, shmemAddr, ctaId ? std::optional<Value>(ctaId) : std::nullopt, valsVec,
                               /*pred=*/pred);
       return {};
     } else {
       assert(vals.empty());
       Value valsVec =
-          targetInfo.loadDShared(rewriter, loc, shmemAddr, std::nullopt, vecTy,
+          targetInfo.loadDShared(rewriter, loc, shmemAddr, ctaId ? std::optional<Value>(ctaId) : std::nullopt, vecTy,
                                  /*pred=*/pred, localLoadOp);
       return unpackLLVector(loc, valsVec, rewriter);
     }
@@ -822,7 +823,7 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
                ArrayRef<Value> valsArray, // Input for store, empty for load
                Type llvmElemTy, triton::gpu::MemDescType srcTy,
                SharedMemoryObject smemObj, RewriterBase &rewriter,
-               const TargetInfoBase &targetInfo, Operation *localLoadOp, Value otherVal) {
+               const TargetInfoBase &targetInfo, Operation *localLoadOp, Value otherVal, Value ctaId) {
   assert(cvt.getNumOutDims() == 1);
   assert(*cvt.getOutDimNames().begin() == str_attr("offset"));
   auto calcPaddedOffset = [&](Value smemOffset) {
@@ -847,7 +848,7 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
       inVals = removeBroadcastSrc.apply(inVals);
     }
     auto outVals = lowerLocalLdSt(loc, ctx, prmtCvt, inVals, llvmElemTy, srcTy,
-                                  smemObj, rewriter, targetInfo, localLoadOp);
+                                  smemObj, rewriter, targetInfo, localLoadOp, otherVal, ctaId);
     if (!isStore) {
       outVals = broadcastAs(outVals, cvt);
     }
@@ -857,7 +858,7 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
   auto maskSpanAffineOffset = smemObj.getMaskSpanOffsets(srcTy);
   return lowerLdStShared(
       loc, ctx, cvt, valsArray, llvmElemTy, smemObj.getBase(), calcPaddedOffset,
-      affineOffset, maskSpanAffineOffset, rewriter, targetInfo, localLoadOp, otherVal);
+      affineOffset, maskSpanAffineOffset, rewriter, targetInfo, localLoadOp, otherVal, ctaId);
 }
 
 bool emitTransferBetweenRegistersAndShared(

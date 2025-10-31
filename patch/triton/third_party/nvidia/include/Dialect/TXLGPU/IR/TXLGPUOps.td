@@ -22,6 +22,11 @@ def TXLGPU_LaneIdOp : TXLGPU_Op<"lane_id", [Pure]> {
   let assemblyFormat = "attr-dict";
 }
 
+def TXLGPU_ClusterCTARankOp : TXLGPU_Op<"cluster_cta_rank", [Pure]> {
+  let results = (outs I32:$result);
+  let assemblyFormat = "attr-dict";
+}
+
 def TXLGPU_RegAllocOp : TXLGPU_Op<"reg_alloc", []> {
   let arguments = (ins I32Attr: $regCount);
   let assemblyFormat = "attr-dict";

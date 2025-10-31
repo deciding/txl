@@ -156,6 +156,7 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
       auto enc = mlir::cast<ttg::SharedEncodingTrait>(
           localAlloc.getType().getEncoding());
       if (!localAllocEnc) {
+        //llvm::outs() << "\n LocalAlloc: from local_alloc\n";
         localAllocEnc = enc; // get local_alloc result smem enc
       }
       if (enc != localAllocEnc) {
@@ -182,6 +183,7 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
     // alloc created for the MMA operand.
     TypedValue<tt::TensorDescType> desc;
     desc = tmaLoads[0].getDesc();
+    //llvm::outs() << "\n LocalAlloc: from tma_load\n";
     return ttng::getEncodingFromDescriptor(op, ty, desc);
   }
 
@@ -192,6 +194,7 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
     // alloc created for the MMA operand.
     TypedValue<tt::TensorDescType> desc;
     desc = tmaStores[0].getDesc();
+    //llvm::outs() << "\n LocalAlloc: from tma_store\n";
     return ttng::getEncodingFromDescriptor(op, ty, desc);
   }
 
@@ -202,6 +205,7 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
     // alloc created for the MMA operand.
     TypedValue<tt::TensorDescType> desc;
     desc = tmaGathers[0].getDesc();
+    //llvm::outs() << "\n LocalAlloc: from tma_gather\n";
     return ttng::getEncodingFromDescriptor(op, ty, desc);
   }
 
@@ -214,14 +218,19 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
       getSharedEncIfAllUsersAreDotEnc(op->getResult(0), incompatible)
           .value_or(nullptr);
 
-  if (localAllocEnc)
+  if (localAllocEnc) {
+    //llvm::outs() << "\n LocalAlloc: from dot\n";
     return localAllocEnc;
+  }
 
   if (auto smemAlloc = dyn_cast<SmemAllocOp>(op)){
       auto sharedEnc = smemAlloc.getSharedEnc();
-      if (sharedEnc.has_value())
+      if (sharedEnc.has_value()) {
+          //llvm::outs() << "\n LocalAlloc: from smem_alloc attr\n";
           return sharedEnc.value();
+      }
   }
+  //llvm::outs() << "\n LocalAlloc: from fallback\n";
   // Use generic layout. This won't be optimal for 2D tensors.
   return getFallbackSharedEncoding(ty, ctaLayout, {});
 }
@@ -499,12 +508,16 @@ void lowerMbar(tt::MbarAllocOp& op) {
 
 void lowerSmemLoad(tt::SmemLoadOp& op) {
     OpBuilder builder(op);
+    int ctaIdAttr = op.getCtaId();
     Value localLoad = builder.create<ttg::LocalLoadOp>(
             op->getLoc(),
             //op.getResult().getType(),
             op.getRegType(),
             op->getOperand(0) // changed to memdesc
     );
+    if (ctaIdAttr != -1)
+        localLoad.getDefiningOp()->setAttr("ttxg.ctaid",
+                       mlir::IntegerAttr::get(builder.getI32Type(), ctaIdAttr));
     //tt::replaceUsesAndPropagateType(builder, op, localLoad);
     replaceAndPropagate(op, localLoad);
     op->erase();
@@ -512,12 +525,16 @@ void lowerSmemLoad(tt::SmemLoadOp& op) {
 
 void lowerSmemStore(tt::SmemStoreOp& op) {
     OpBuilder builder(op);
+    int ctaIdAttr = op.getCtaId();
     ttg::LocalStoreOp local_store = builder.create<ttg::LocalStoreOp>(
             op->getLoc(),
             //newSrc,
             op->getOperand(0),
             op->getOperand(1) // changed to memdesc
     );
+    if (ctaIdAttr != -1)
+        local_store->setAttr("ttxg.ctaid",
+                       mlir::IntegerAttr::get(builder.getI32Type(), ctaIdAttr));
     op->erase();
 }
 

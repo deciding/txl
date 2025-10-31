@@ -116,6 +116,18 @@ TritonGPUConversionTarget::TritonGPUConversionTarget(
         }
         return false;
   });
+  addDynamicallyLegalOp<triton::RemoteSmemLoadOp>([&](triton::RemoteSmemLoadOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
+  addDynamicallyLegalOp<triton::RemoteSmemStoreOp>([&](triton::RemoteSmemStoreOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
   addDynamicallyLegalOp<triton::FragSmemLoadOp>([&](triton::FragSmemLoadOp op) -> bool {
         if (typeConverter.isLegal(op)) {
           return true;

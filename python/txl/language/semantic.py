@@ -109,6 +109,9 @@ class TXLSemantic(TritonSemantic):
     def lane_id(self) -> TensorTy:
         return self.tensor(self.builder.create_get_lane_id(), tl.int32)
 
+    def cta_rank(self) -> TensorTy:
+        return self.tensor(self.builder.create_get_cta_rank(), tl.int32)
+
     def is_warpgroup(self, ids) -> TensorTy:
         return self.tensor(self.builder.create_is_warpgroup(ids), tl.int1)
 
@@ -129,16 +132,18 @@ class TXLSemantic(TritonSemantic):
             return self.tensor(
                 self.builder.create_smem_alloc(shape, dtype, num_stages, mutable), block_type)
 
-    def smem_load(self, mem_desc, layout):
+    def smem_load(self, mem_desc, layout, cta_id:int=-1):
+        # TODO: check cta_id in boundary
         ret_ty = tl.block_type(mem_desc.dtype, mem_desc.shape)
         reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
-        handle = self.builder.create_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, reg_ty.to_ir(self.builder))
+        handle = self.builder.create_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, reg_ty.to_ir(self.builder), cta_id)
         return self.tensor(handle, ret_ty)
 
-    def smem_store(self, mem_desc, value):
+    def smem_store(self, mem_desc, value, cta_id:int=-1):
+        # TODO: check cta_id in boundary
         assert value.shape == mem_desc.shape, f"source shape {value.shape} and destination shape {mem_desc.shape} must match"
         assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
-        self.builder.create_smem_store(mem_desc.handle, value.handle)
+        self.builder.create_smem_store(mem_desc.handle, value.handle, cta_id)
 
     def frag_smem_load(self, mem_desc, shape, layout, full_layout, other):
         ret_ty = tl.block_type(mem_desc.dtype, shape)

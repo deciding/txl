@@ -23,6 +23,7 @@ cp ${FROM_DIR}/lib/Analysis/Membar.cpp ${TO_DIR}/lib/Analysis/
 cp ${FROM_DIR}/lib/Analysis/TXLUtility.cpp ${TO_DIR}/lib/Analysis/
 
 cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/AllocateWarpGroups.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/
+cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/MemoryOpToLLVM.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/ReduceOpToLLVM.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/Utility.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/lib/Conversion/TritonToTritonGPU/TritonGPUConversion.cpp ${TO_DIR}/lib/Conversion/TritonToTritonGPU/
@@ -42,6 +43,7 @@ cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/RemoveLayoutConversions.cpp ${TO
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/ReorderInstructions.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Utility.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/CMakeLists.txt ${TO_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/
+cp ${FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/OptimizeDescriptorEncoding.cpp ${TO_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/PlanCTA.cpp ${TO_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/
 
 cp ${FROM_DIR}/python/build_helpers.py ${TO_DIR}/python/
@@ -68,6 +70,7 @@ cp ${FROM_DIR}/third_party/nvidia/lib/Dialect/CMakeLists.txt ${TO_DIR}/third_par
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/BarrierOpToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/CMakeLists.txt ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/LoadStoreOpToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
+cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/MemoryOpToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TritonGPUToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 
 cp ${FROM_DIR}/third_party/nvidia/triton_nvidia.cc ${TO_DIR}/third_party/nvidia/

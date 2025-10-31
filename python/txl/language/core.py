@@ -99,6 +99,10 @@ def lane_id(_semantic=None):
     return _semantic.lane_id()
 
 @builtin
+def cta_rank(_semantic=None):
+    return _semantic.cta_rank()
+
+@builtin
 def is_warpgroup(ids, _semantic=None):
     return _semantic.is_warpgroup(ids)
 
@@ -123,13 +127,15 @@ def smem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, shar
     return _semantic.smem_alloc(shape, dtype, num_stages, mutable, shared_enc)
 
 @builtin
-def smem_load(smem, layout, _semantic=None) -> tl.tensor:
+def smem_load(smem, layout, cta_id=-1, _semantic=None) -> tl.tensor:
     layout = _unwrap_if_constexpr(layout)
-    return _semantic.smem_load(smem, layout)
+    cta_id = _unwrap_if_constexpr(cta_id)
+    return _semantic.smem_load(smem, layout, cta_id)
 
 @builtin
-def smem_store(smem, value, _semantic=None) -> None:
-    return _semantic.smem_store(smem, value)
+def smem_store(smem, value, cta_id=-1, _semantic=None) -> None:
+    cta_id = _unwrap_if_constexpr(cta_id)
+    return _semantic.smem_store(smem, value, cta_id)
 
 @builtin
 def frag_smem_load(smem, shape, layout, full_layout=False, other=None, _semantic=None) -> tl.tensor:

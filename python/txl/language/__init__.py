@@ -7,6 +7,7 @@ from .core import (
     wg_thread0,
     warp_id,
     lane_id,
+    cta_rank,
     is_warpgroup,
     reg_alloc,
     reg_dealloc,

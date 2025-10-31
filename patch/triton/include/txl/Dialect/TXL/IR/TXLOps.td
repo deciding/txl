@@ -57,7 +57,8 @@ def TXL_SmemLoadOp : TXL_Op<"smem_load"> {
   }];
   let arguments = (ins
     Arg<TT_Tensor, "", [MemRead]>:$src,
-    TypeAttr: $regType
+    TypeAttr: $regType,
+    DefaultValuedAttr<I32Attr, "-1">: $ctaId
   );
   let results = (outs TT_Tensor:$result);
 
@@ -72,11 +73,45 @@ def TXL_SmemStoreOp : TXL_Op<"smem_store"> {
   }];
   let arguments = (ins
     TT_Tensor:$src,
-    Arg<TT_Tensor, "", [MemWrite]>:$dst
+    Arg<TT_Tensor, "", [MemWrite]>:$dst,
+    DefaultValuedAttr<I32Attr, "-1">: $ctaId
   );
 
   let assemblyFormat = [{
     $src `,` $dst attr-dict `:` type($src) `,` type($dst)
+  }];
+}
+
+def TXL_RemoteSmemLoadOp : TXL_Op<"remote_smem_load"> {
+  let summary = "Load a buffer from local memory into a distributed tensor in cluster";
+
+  let description = [{
+    Load a tensor from the local memory descriptor into a distributed tensor.
+  }];
+  let arguments = (ins
+    Arg<TT_Tensor, "", [MemRead]>:$src,
+    I32: $ctaId,
+    TypeAttr: $regType
+  );
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = [{$src `,` $ctaId attr-dict `:` type($src) `,` type($ctaId) `->` type($result) `(` $regType `)` }];
+}
+
+def TXL_RemoteSmemStoreOp : TXL_Op<"remote_smem_store"> {
+  let summary = "Store a distributed tensor into a buffer in local memory in cluster";
+
+  let description = [{
+    Store a distributed tensor into a buffer in local memory.
+  }];
+  let arguments = (ins
+    TT_Tensor:$src,
+    Arg<TT_Tensor, "", [MemWrite]>:$dst,
+    I32: $ctaId
+  );
+
+  let assemblyFormat = [{
+    $src `,` $dst `,` $ctaId attr-dict `:` type($src) `,` type($dst) `,` type($ctaId)
   }];
 }
 

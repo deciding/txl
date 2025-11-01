@@ -276,7 +276,8 @@ def txl_smem_kernel4(
     txl.frag_smem_store(view, x, layout_b) # TODO: make layout_a not necessary
 
     # one thread load
-    c = txl.frag_smem_load(view, layout_c) # should never put into threadlevel if
+    #c = txl.frag_smem_load(view, layout_c) # should never put into threadlevel if
+    c = txl.smem_load(view, layout_c) # should never put into threadlevel if
     if txl.tid(0) == 0:
         sum_c = txl.sum(c)
         #sum_c = tl.full((1,), sum_c, tl.float32)
@@ -284,7 +285,8 @@ def txl_smem_kernel4(
         txl.frag_smem_store(view1, sum_c, layout_sum_c) # TODO: make layout_a not necessary
 
     # all thread broadcast
-    a = txl.frag_smem_load(view1, layout_a)
+    #a = txl.frag_smem_load(view1, layout_a)
+    a = txl.smem_load(view1, layout_a)
     if txl.tid(0) == 33:
         txl.print("a:", a)
 
@@ -1667,9 +1669,10 @@ def test():
         knobs.compilation.dump_ir=True
         knobs.cache.dump_dir=dump_dir
 
-    test_txl_mla1()
+    #test_txl_mla1()
     #test_smem_all()
     #test_smem_txl11()
+    test_smem_txl4()
 
 
 if __name__ == "__main__":

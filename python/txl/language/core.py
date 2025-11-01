@@ -138,24 +138,29 @@ def smem_store(smem, value, cta_id=-1, _semantic=None) -> None:
     return _semantic.smem_store(smem, value, cta_id)
 
 @builtin
-def frag_smem_load(smem, shape, layout, full_layout=False, other=None, _semantic=None) -> tl.tensor:
+def frag_smem_load(smem, shape, layout, other=None, is_broadcast=False, _semantic=None) -> tl.tensor:
     """
     load a fragment of the whole smem. can fill the others for full layout of distributed tensor.
+    support:
+    1. lane, warp pred
+    2. broadcast of smem to tensor
     """
     layout = _unwrap_if_constexpr(layout)
     shape = _shape_check_impl((shape))
-    if full_layout is not None:
-        full_layout = _unwrap_if_constexpr(full_layout)
     if other is not None:
-        assert layout_full is not None, 'other need specify layout_full'
         other = _semantic.to_tensor(other)
-    return _semantic.frag_smem_load(smem, shape, layout, full_layout, other)
+    is_broadcast = _unwrap_if_constexpr(is_broadcast)
+    if is_broadcast:
+        print("DEPRECATED: is_broadcast should be well covered by smem_load/smem_store, should not use frag version")
+    assert not (other is not None and is_broadcast), "fill (other) and broadcast can not be specified at the same time"
+    return _semantic.frag_smem_load(smem, shape, layout, other, is_broadcast)
 
 @builtin
 def frag_smem_store(smem, value, layout, _semantic=None) -> None:
     """
-    Now only support 2d -> 1d reg based frag store.
-    TODO: check whether support lane and warp selection.
+    support:
+    1. support 2d -> squeezed 1d reg based frag store.
+    2. TODO: check whether support lane and warp selection.
     For other cases, please use smem_store
     It just allows the fractional store from the whole tensor.
     """

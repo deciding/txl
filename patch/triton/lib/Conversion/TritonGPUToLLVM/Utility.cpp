@@ -673,6 +673,7 @@ SmallVector<Value> lowerLdStPred(
     outVals = invPermStrides.apply(outVals);
     auto invPerm = permutation.inverse();
     outVals = invPerm.apply(outVals);
+    // txl: if otherVal not specified, they will broadcast to fill the rest lanes and warps
     if (otherVal){
         SmallVector<Value> newVals;
         for (auto val : outVals){

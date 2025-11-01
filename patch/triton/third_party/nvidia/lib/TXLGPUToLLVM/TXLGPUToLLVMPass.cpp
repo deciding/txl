@@ -162,7 +162,9 @@ public:
     auto outVals = lowerLocalLdSt(loc, ctx, cvt, {}, llvmElemTy, memDescTy,
                                   smemObj, rewriter, targetInfo, op, otherVal);
 
-    // txl pred
+    // txl pred, broadcast only triggered in 
+    //  1. normal cases, i.e. warp and lanes are full. TODO: full specified by default or fullRegLayout?
+    //  2. AND, num regs is 1 and smaller than full
     //Operation *lookupPt = &rewriter.getInsertionBlock()->front();
     //int threadsPerWarp = triton::gpu::lookupThreadsPerWarp(rewriter);
     //int numWarps = triton::gpu::lookupNumWarps(lookupPt);

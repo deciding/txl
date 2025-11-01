@@ -141,6 +141,9 @@ void propagateTypeRecursively(Value &val, Type newType) {
         if (auto reduceOp = dyn_cast<ReduceOp>(user)){
             auto userRankedType = dyn_cast<RankedTensorType>(oldType);
             auto newRankedType = dyn_cast<RankedTensorType>(newType);
+            if (isa<IntegerType>(oldType) || isa<FloatType>(oldType)) {
+                continue;
+            }
             assert(userRankedType && newRankedType && "reduceop types must be ranked");
             auto sliceEnc = dyn_cast<ttg::SliceEncodingAttr>(userRankedType.getEncoding());
             assert(sliceEnc && "reduceop result must be sliced encoding");

@@ -13,8 +13,9 @@ try:
     from quack.softmax import softmax
     print("Quack detected")
     HAS_QUACK=True
-except:
+except Exception as e:
     print("No quack")
+    print(e)
     HAS_QUACK=False
 
 
@@ -50,6 +51,9 @@ def naive_softmax(x):
     # in total: read 5MN + 2M elements ; wrote 3MN + 2M elements
     return ret
 
+"""
+Totally triton
+"""
 @triton.jit
 def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
                    LOG2_E: tl.constexpr,
@@ -122,8 +126,97 @@ def cluster_softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_s
         output_ptrs = output_row_start_ptr + col_offsets
         tl.store(output_ptrs, softmax_output, mask=mask)
 
+"""
+TXL reimpl triton
+"""
 @txl.jit
-#@txl.jit(diff_mode='ttgir')
+#@txl.jit(diff_mode='llir')
+def softmax_kernel_txl2(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
+        LOG2_E: tl.constexpr,
+        num_stages: tl.constexpr, num_warps: tl.constexpr):
+    # starting row of the program
+    row_start = tl.program_id(0)
+    row_step = tl.num_programs(0)
+
+    #lid = txl.lane_id()
+    tid = txl.tid(0)
+
+    smem_buf = txl.smem_alloc([num_warps], dtype=tl.float32)
+    reduction_smem = txl.get_buffer(smem_buf, 0)
+
+    smem_buf = txl.smem_alloc([1], dtype=tl.float32)
+    scalar_smem = txl.get_buffer(smem_buf, 0)
+
+    layout_warp_reduce: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[num_warps], order=[0])
+    layout_all_reduce: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[num_warps], warps_per_cta=[1], order=[0])
+    layout_all_reduce2: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[32], warps_per_cta=[1], order=[0])
+    layout_sum: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[1], order=[0]) # TODO: infer from reduced shape
+    layout_full: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[32], warps_per_cta=[num_warps], order=[0]) # TODO: use default
+    layout_all: tl.constexpr = txl.BlockedLayout(size_per_thread=[8], threads_per_warp=[32], warps_per_cta=[num_warps], order=[0]) # TODO: use default
+
+    for row_idx in tl.range(row_start, n_rows, row_step):
+        # The stride represents how much we need to increase the pointer to advance 1 row
+        row_start_ptr = input_ptr + row_idx * input_row_stride
+        # The block size is the next power of two greater than n_cols, so we can fit each
+        # row in a single block
+        col_offsets = tl.arange(0, BLOCK_SIZE)
+        input_ptrs = row_start_ptr + col_offsets
+        # Load the row into SRAM, using a mask since BLOCK_SIZE may be > than n_cols
+        mask = col_offsets < n_cols
+        row = tl.load(input_ptrs, mask=mask, other=-float('inf'))
+        row = tl.cast(row, tl.float32) # reduce on higher precision
+
+        # Subtract maximum for numerical stability
+
+        # REPLACE with warp reduce
+        #cur_max = tl.max(row, axis=0)
+        cur_max = txl.warp_max(row, axis=0)
+        txl.frag_smem_store(reduction_smem, cur_max, layout_warp_reduce) # only 1 val 1 lane, only filter lanes here
+        #cur_max = txl.frag_smem_load(reduction_smem, layout_all_reduce)
+        #cur_max = txl.frag_smem_load(reduction_smem, layout_all_reduce, layout_all_reduce2, -float('inf'))
+        cur_max = txl.frag_smem_load(reduction_smem, [128], layout_all_reduce, -float('inf')) # fill other lanes
+        all_max = txl.warp_max(cur_max, axis=0)
+        #if  tid < num_warps:
+        if  tid == 0:
+            txl.frag_smem_store(scalar_smem, all_max, layout_sum) # only one value
+        #cur_max = txl.frag_smem_load(scalar_smem, layout_full, layout_all)
+        #cur_max = txl.frag_smem_load(scalar_smem, [BLOCK_SIZE], layout_full) # implicit broadcast
+        #cur_max = txl.smem_load(scalar_smem, layout_full) # implicit broadcast
+        cur_max = txl.smem_load(scalar_smem, layout_all) # implicit broadcast
+
+        # Note that exponentiation in Triton is fast but approximate (i.e., think __expf in CUDA)
+        #row_minus_max = row - cur_max
+        #numerator = tl.exp(row_minus_max)
+        cur_max_scaled = cur_max * LOG2_E
+        numerator = tl.exp2(row * LOG2_E - cur_max_scaled)
+
+        # REPLACE with warp reduce
+        #denominator = tl.sum(numerator, axis=0)
+        cur_denom = txl.warp_sum(numerator, axis=0)
+        txl.frag_smem_store(reduction_smem, cur_denom, layout_warp_reduce) # 1 lane
+
+        #cur_denom = txl.frag_smem_load(reduction_smem, layout_all_reduce, layout_full)
+        cur_denom = txl.frag_smem_load(reduction_smem, [128], layout_all_reduce, 0.0) # 1 reg, 4 lanes, 1 warp
+        all_denom = txl.warp_sum(cur_denom, axis=0)
+
+        if  tid < num_warps:
+            txl.frag_smem_store(scalar_smem, all_denom, layout_sum)
+        #denominator = txl.frag_smem_load(scalar_smem, layout_full, layout_all)
+        #denominator = txl.frag_smem_load(scalar_smem, [BLOCK_SIZE], layout_full) # implicit broadcast
+        #denominator = txl.smem_load(scalar_smem, layout_full) # implicit broadcast
+        denominator = txl.smem_load(scalar_smem, layout_all) # implicit broadcast
+
+        softmax_output = numerator / denominator
+        # Write back output to DRAM
+        output_row_start_ptr = output_ptr + row_idx * output_row_stride
+        output_ptrs = output_row_start_ptr + col_offsets
+        tl.store(output_ptrs, softmax_output, mask=mask)
+
+"""
+TXL reiml triton
+"""
+@txl.jit
+#@txl.jit(diff_mode='llir')
 def softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
         LOG2_E: tl.constexpr,
         num_stages: tl.constexpr, num_warps: tl.constexpr):
@@ -146,7 +239,8 @@ def softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_strid
     layout_all_reduce2: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[32], warps_per_cta=[1], order=[0])
     layout_sum: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[1], order=[0]) # TODO: infer from reduced shape
     layout_full: tl.constexpr = txl.BlockedLayout(size_per_thread=[1], threads_per_warp=[32], warps_per_cta=[num_warps], order=[0]) # TODO: use default
-    layout_all: tl.constexpr = txl.BlockedLayout(size_per_thread=[BLOCK_SIZE//32//num_warps], threads_per_warp=[32], warps_per_cta=[num_warps], order=[0]) # TODO: use default
+    #layout_all: tl.constexpr = txl.BlockedLayout(size_per_thread=[BLOCK_SIZE//32//num_warps], threads_per_warp=[32], warps_per_cta=[num_warps], order=[0]) # TODO: use default
+    layout_all: tl.constexpr = txl.BlockedLayout(size_per_thread=[8], threads_per_warp=[32], warps_per_cta=[num_warps], order=[0]) # TODO: use default
 
     for row_idx in tl.range(row_start, n_rows, row_step):
         # The stride represents how much we need to increase the pointer to advance 1 row
@@ -158,21 +252,25 @@ def softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_strid
         # Load the row into SRAM, using a mask since BLOCK_SIZE may be > than n_cols
         mask = col_offsets < n_cols
         row = tl.load(input_ptrs, mask=mask, other=-float('inf'))
-        row = tl.cast(row, tl.float32)
+        row = tl.cast(row, tl.float32) # reduce on higher precision
 
         # Subtract maximum for numerical stability
 
         # REPLACE with warp reduce
         #cur_max = tl.max(row, axis=0)
         cur_max = txl.warp_max(row, axis=0)
-        txl.frag_smem_store(reduction_smem, cur_max, layout_warp_reduce)
+        txl.frag_smem_store(reduction_smem, cur_max, layout_warp_reduce) # only 1 val 1 lane, only filter lanes here
         #cur_max = txl.frag_smem_load(reduction_smem, layout_all_reduce)
-        cur_max = txl.frag_smem_load(reduction_smem, layout_all_reduce, layout_all_reduce2, -float('inf'))
+        #cur_max = txl.frag_smem_load(reduction_smem, layout_all_reduce, layout_all_reduce2, -float('inf'))
+        cur_max = txl.frag_smem_load(reduction_smem, [128], layout_all_reduce, -float('inf')) # fill other lanes and warps
         all_max = txl.warp_max(cur_max, axis=0)
         #if  tid < num_warps:
         if  tid == 0:
-            txl.frag_smem_store(scalar_smem, all_max, layout_sum)
-        cur_max = txl.frag_smem_load(scalar_smem, layout_full, layout_all)
+            txl.frag_smem_store(scalar_smem, all_max, layout_sum) # only one value
+        #cur_max = txl.frag_smem_load(scalar_smem, layout_full, layout_all)
+        #cur_max = txl.frag_smem_load(scalar_smem, [BLOCK_SIZE], layout_full) # implicit broadcast
+        #cur_max = txl.smem_load(scalar_smem, layout_full) # implicit broadcast
+        cur_max = txl.smem_load(scalar_smem, layout_all) # implicit broadcast
 
         # Note that exponentiation in Triton is fast but approximate (i.e., think __expf in CUDA)
         #row_minus_max = row - cur_max
@@ -183,12 +281,16 @@ def softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_row_strid
         # REPLACE with warp reduce
         #denominator = tl.sum(numerator, axis=0)
         cur_denom = txl.warp_sum(numerator, axis=0)
-        txl.frag_smem_store(reduction_smem, cur_denom, layout_warp_reduce)
-        cur_denom = txl.frag_smem_load(reduction_smem, layout_all_reduce, layout_full)
+        txl.frag_smem_store(reduction_smem, cur_denom, layout_warp_reduce) # 1 lane
+        #cur_denom = txl.frag_smem_load(reduction_smem, layout_all_reduce, layout_full)
+        cur_denom = txl.frag_smem_load(reduction_smem, [BLOCK_SIZE], layout_all_reduce, 0.0)
         all_denom = txl.warp_sum(cur_denom, axis=0)
         if  tid < num_warps:
             txl.frag_smem_store(scalar_smem, all_denom, layout_sum)
-        denominator = txl.frag_smem_load(scalar_smem, layout_full, layout_all)
+        #denominator = txl.frag_smem_load(scalar_smem, layout_full, layout_all)
+        #denominator = txl.frag_smem_load(scalar_smem, [BLOCK_SIZE], layout_full) # implicit broadcast
+        #denominator = txl.smem_load(scalar_smem, layout_full) # implicit broadcast
+        denominator = txl.smem_load(scalar_smem, layout_all) # implicit broadcast
 
         softmax_output = numerator / denominator
         # Write back output to DRAM
@@ -246,10 +348,10 @@ def online_softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_ro
         txl.frag_smem_store(max_smem, cur_max, layout_warp_reduce)
         txl.frag_smem_store(sum_smem, cur_denom, layout_warp_reduce)
 
-        #warp_max = txl.frag_smem_load(max_smem, layout_all_reduce, -float('inf'), layout_sum)
-        #warp_denom = txl.frag_smem_load(sum_smem, layout_all_reduce, 0.0, layout_sum)
-        warp_max = txl.frag_smem_load(max_smem, layout_all_reduce, layout_sum, -float('inf'))
-        warp_denom = txl.frag_smem_load(sum_smem, layout_all_reduce, layout_sum, 0.0)
+        #warp_max = txl.frag_smem_load(max_smem, layout_all_reduce, layout_sum, -float('inf'))
+        #warp_denom = txl.frag_smem_load(sum_smem, layout_all_reduce, layout_sum, 0.0)
+        warp_max = txl.frag_smem_load(max_smem, [128], layout_all_reduce, -float('inf'))
+        warp_denom = txl.frag_smem_load(sum_smem, [128], layout_all_reduce, 0.0)
         #if lid >= num_warps: # shape problem
         #    warp_max = -float('inf')
         #    warp_denom = 0.0
@@ -268,7 +370,7 @@ def online_softmax_kernel_txl(output_ptr, input_ptr, input_row_stride, output_ro
         tl.store(output_ptrs, softmax_output, mask=mask)
 
 
-def fused_softmax(x, num_programs, LOG2_E):
+def fused_softmax(x, num_programs, LOG2_E, bench: bool=False):
     n_rows, n_cols = x.shape
 
     # The block size of each loop iteration is the smallest power of two greater than the number of columns in `x`
@@ -285,7 +387,10 @@ def fused_softmax(x, num_programs, LOG2_E):
     num_stages = 1
 
     # Allocate output
-    y = torch.empty_like(x)
+    if bench:
+        y = torch.empty_like(x) # for benchmark
+    else:
+        y = torch.zeros_like(x)
 
     ## pre-compile kernel to get register usage and compute thread occupancy.
     #kernel = softmax_kernel.warmup(y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE=BLOCK_SIZE,
@@ -308,8 +413,9 @@ def fused_softmax(x, num_programs, LOG2_E):
 
     #softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages)
     #cluster_softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_ctas=2)
-    softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
-    #online_softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
+    #softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
+    #softmax_kernel_txl2[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
+    online_softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
     return y
 
 
@@ -400,7 +506,7 @@ def test_softmax(dump_dir=None):
 
         #num_programs, BLOCK_SIZE, num_warps, num_stages = meta_fn(softmax_kernel, x)
         num_programs=228
-        txl_fn = lambda x: fused_softmax(x, num_programs, LOG2_E)
+        txl_fn = lambda x, bench: fused_softmax(x, num_programs, LOG2_E, bench)
 
         fn_mem_bytes = lambda: 2 * x.numel() * dtype.width // 8
 
@@ -412,6 +518,7 @@ def test_softmax(dump_dir=None):
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-coalesce"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "ttg-utility"
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
     knobs.autotuning.print=True
     knobs.compilation.always_compile=True
     if dump_dir:
@@ -427,7 +534,7 @@ def test_softmax(dump_dir=None):
     torch_out = compiled_func_ref(x, target).to(torch.float32).cpu().numpy()
     if HAS_QUACK:
         quack_out = quack_fn().to(torch.float32).cpu().numpy()
-    txl_out = txl_fn(x).to(torch.float32).cpu().numpy()
+    txl_out = txl_fn(x, False).to(torch.float32).cpu().numpy()
 
     # relative error
     outs = []
@@ -440,7 +547,6 @@ def test_softmax(dump_dir=None):
         max_rel_err = np.max(np.abs(out - ref) / (ref + 1e-20))
         print("max relative error:", max_rel_err)
         print("sum per row -1 (should be 0):", np.max(np.abs(out.sum(axis=1) - 1.0)))
-    exit()
 
 
     ################################################
@@ -466,7 +572,7 @@ def test_softmax(dump_dir=None):
         print(f"Quack execution time: {avg_time:.4f} ms")
         print(f"Quack mem throughput: {mem_bw:.2f} GB/s")
 
-    fn = lambda: txl_fn(x)
+    fn = lambda: txl_fn(x, True)
     for _ in range(5): fn()  # warm up
     time.sleep(0.5)
     avg_time = do_bench(fn, warmup=warmup_iterations, rep=iterations)
@@ -475,4 +581,5 @@ def test_softmax(dump_dir=None):
     print(f"Triton mem throughput: {mem_bw_ref:.2f} GB/s")
 
 if __name__ == "__main__":
-    test_softmax('dump/0929sm')
+    #test_softmax('dump/1031sm')
+    test_softmax()

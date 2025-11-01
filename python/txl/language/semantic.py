@@ -145,10 +145,19 @@ class TXLSemantic(TritonSemantic):
         assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
         self.builder.create_smem_store(mem_desc.handle, value.handle, cta_id)
 
-    def frag_smem_load(self, mem_desc, shape, layout, full_layout, other):
+    def frag_smem_load(self, mem_desc, shape, layout, other, is_broadcast=False):
+        partial_load = False
+        for i, (s1, s2) in enumerate(zip(mem_desc.shape, shape)):
+            assert s1 <= s2, f"dim{i} with large size {s1} than specified size {s2}"
+            if s1 < s2: # TODO: stricter: divisible
+                partial_load = True
+        if is_broadcast:
+            partial_load = False
+        if partial_load:
+            assert other is not None, f"param `other` must be provided to fill the full load"
         ret_ty = tl.block_type(mem_desc.dtype, shape)
         reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout) # loading reg should keep smem shape
-        handle = self.builder.create_frag_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, other.handle if other else None, reg_ty.to_ir(self.builder), full_layout)
+        handle = self.builder.create_frag_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, other.handle if other else None, reg_ty.to_ir(self.builder), partial_load)
         return self.tensor(handle, ret_ty)
 
     def frag_smem_store(self, mem_desc, value, layout):

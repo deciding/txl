@@ -16,7 +16,7 @@ txl_image = (
     .workdir("/workspace")
     .add_local_file(txl_wheel_file, remote_path="/workspace/", copy=True) # copy the local code to the image
     .pip_install_from_requirements(requirements_file) # local file not remote file
-    .pip_install("quack-kernels")
+    .pip_install("quack-kernels==0.1.11")
     .run_commands(
         "pip install /workspace/txl-3.4.0-cp312-cp312-linux_x86_64.whl",
     )

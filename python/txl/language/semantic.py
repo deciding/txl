@@ -145,7 +145,7 @@ class TXLSemantic(TritonSemantic):
         assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
         self.builder.create_smem_store(mem_desc.handle, value.handle, cta_id)
 
-    def frag_smem_load(self, mem_desc, shape, layout, other, is_broadcast=False):
+    def frag_smem_load(self, mem_desc, shape, layout, other, is_broadcast=False, cta_id:int=-1):
         partial_load = False
         for i, (s1, s2) in enumerate(zip(mem_desc.shape, shape)):
             assert s1 <= s2, f"dim{i} with large size {s1} than specified size {s2}"
@@ -157,14 +157,14 @@ class TXLSemantic(TritonSemantic):
             assert other is not None, f"param `other` must be provided to fill the full load"
         ret_ty = tl.block_type(mem_desc.dtype, shape)
         reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout) # loading reg should keep smem shape
-        handle = self.builder.create_frag_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, other.handle if other else None, reg_ty.to_ir(self.builder), partial_load)
+        handle = self.builder.create_frag_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, other.handle if other else None, reg_ty.to_ir(self.builder), partial_load, cta_id)
         return self.tensor(handle, ret_ty)
 
-    def frag_smem_store(self, mem_desc, value, layout):
+    def frag_smem_store(self, mem_desc, value, layout, cta_id:int=-1):
         reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
         #assert value.shape == mem_desc.shape, f"source shape {value.shape} and destination shape {mem_desc.shape} must match"
         assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
-        self.builder.create_frag_smem_store(mem_desc.handle, value.handle, reg_ty.to_ir(self.builder))
+        self.builder.create_frag_smem_store(mem_desc.handle, value.handle, reg_ty.to_ir(self.builder), cta_id)
 
     def relayout(self, value, shape, layout):
         ret_ty = tl.block_type(value.dtype, shape)

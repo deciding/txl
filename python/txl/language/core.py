@@ -138,7 +138,7 @@ def smem_store(smem, value, cta_id=-1, _semantic=None) -> None:
     return _semantic.smem_store(smem, value, cta_id)
 
 @builtin
-def frag_smem_load(smem, shape, layout, other=None, is_broadcast=False, _semantic=None) -> tl.tensor:
+def frag_smem_load(smem, shape, layout, other=None, is_broadcast=False, cta_id=-1, _semantic=None) -> tl.tensor:
     """
     load a fragment of the whole smem. can fill the others for full layout of distributed tensor.
     support:
@@ -153,10 +153,11 @@ def frag_smem_load(smem, shape, layout, other=None, is_broadcast=False, _semanti
     if is_broadcast:
         print("DEPRECATED: is_broadcast should be well covered by smem_load/smem_store, should not use frag version")
     assert not (other is not None and is_broadcast), "fill (other) and broadcast can not be specified at the same time"
-    return _semantic.frag_smem_load(smem, shape, layout, other, is_broadcast)
+    cta_id = _unwrap_if_constexpr(cta_id)
+    return _semantic.frag_smem_load(smem, shape, layout, other, is_broadcast, cta_id)
 
 @builtin
-def frag_smem_store(smem, value, layout, _semantic=None) -> None:
+def frag_smem_store(smem, value, layout, cta_id=-1, _semantic=None) -> None:
     """
     support:
     1. support 2d -> squeezed 1d reg based frag store.
@@ -167,7 +168,8 @@ def frag_smem_store(smem, value, layout, _semantic=None) -> None:
     if not isinstance(value.type, block_type):
         value = core.full((1,), value, value.type, _semantic=_semantic)
     layout = _unwrap_if_constexpr(layout)
-    return _semantic.frag_smem_store(smem, value, layout)
+    cta_id = _unwrap_if_constexpr(cta_id)
+    return _semantic.frag_smem_store(smem, value, layout, cta_id)
 
 @builtin
 def relayout(value, shape, layout, _semantic=None) -> tl.tensor:

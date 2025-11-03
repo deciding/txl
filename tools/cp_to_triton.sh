@@ -71,6 +71,7 @@ cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/BarrierOpToLLVM.cpp 
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/CMakeLists.txt ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/LoadStoreOpToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/MemoryOpToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
+cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TritonGPUToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 
 cp ${FROM_DIR}/third_party/nvidia/triton_nvidia.cc ${TO_DIR}/third_party/nvidia/

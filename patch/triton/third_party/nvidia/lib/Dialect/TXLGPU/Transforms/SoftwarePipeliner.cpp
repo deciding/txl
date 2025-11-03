@@ -508,13 +508,13 @@ void lowerMbar(tt::MbarAllocOp& op) {
 
 void lowerSmemLoad(tt::SmemLoadOp& op) {
     OpBuilder builder(op);
-    int ctaIdAttr = op.getCtaId();
     Value localLoad = builder.create<ttg::LocalLoadOp>(
             op->getLoc(),
             //op.getResult().getType(),
             op.getRegType(),
             op->getOperand(0) // changed to memdesc
     );
+    int ctaIdAttr = op.getCtaId();
     if (ctaIdAttr != -1)
         localLoad.getDefiningOp()->setAttr("ttxg.ctaid",
                        mlir::IntegerAttr::get(builder.getI32Type(), ctaIdAttr));
@@ -525,13 +525,13 @@ void lowerSmemLoad(tt::SmemLoadOp& op) {
 
 void lowerSmemStore(tt::SmemStoreOp& op) {
     OpBuilder builder(op);
-    int ctaIdAttr = op.getCtaId();
     ttg::LocalStoreOp local_store = builder.create<ttg::LocalStoreOp>(
             op->getLoc(),
             //newSrc,
             op->getOperand(0),
             op->getOperand(1) // changed to memdesc
     );
+    int ctaIdAttr = op.getCtaId();
     if (ctaIdAttr != -1)
         local_store->setAttr("ttxg.ctaid",
                        mlir::IntegerAttr::get(builder.getI32Type(), ctaIdAttr));
@@ -556,6 +556,10 @@ void lowerFragSmemLoad(tt::FragSmemLoadOp& op) {
     );
     //tt::replaceUsesAndPropagateType(builder, op, frag_local_load);
     replaceAndPropagate(op, frag_local_load);
+    int ctaIdAttr = op.getCtaId();
+    if (ctaIdAttr != -1)
+        frag_local_load.getDefiningOp()->setAttr("ttxg.ctaid",
+                       mlir::IntegerAttr::get(builder.getI32Type(), ctaIdAttr));
     op->erase();
 }
 
@@ -581,6 +585,10 @@ void lowerFragSmemStore(tt::FragSmemStoreOp& op) {
             op->getOperand(1), // changed to memdesc
             regType
     );
+    int ctaIdAttr = op.getCtaId();
+    if (ctaIdAttr != -1)
+        frag_local_store->setAttr("ttxg.ctaid",
+                       mlir::IntegerAttr::get(builder.getI32Type(), ctaIdAttr));
     op->erase();
 }
 

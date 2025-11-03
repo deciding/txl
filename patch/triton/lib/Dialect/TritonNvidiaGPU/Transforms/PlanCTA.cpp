@@ -378,8 +378,10 @@ bool CTAPlanner::processReduce(triton::FuncOp &funcOp) {
     auto newSrcLayout =
         replaceCTALayout(cast<ttg::DistributedEncodingTrait>(srcLayout),
                          srcShape, numWarps, CTALayout);
-    auto newResultLayout =
-        ttg::SliceEncodingAttr::get(context, axis, newSrcLayout);
+    Attribute newResultLayout;
+    if (rank > 1)
+        newResultLayout =
+            ttg::SliceEncodingAttr::get(context, axis, newSrcLayout);
     unsigned numOperands = reduce.getNumOperands();
     SmallVector<Attribute> newSrcLayoutVec(numOperands, newSrcLayout);
     SmallVector<Attribute> newResultLayoutVec(numOperands, newResultLayout);

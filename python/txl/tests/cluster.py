@@ -87,7 +87,7 @@ def txl_kernel1(
 two smem
 """
 @txl.jit()
-#@txl.jit(diff_mode='ttgir')
+#@txl.jit(diff_mode='llir', log_dir='dump/cluster')
 #@txl.jit(src_file='dump/cluster/ACY7IPOZL6RTOBW4DMV5WZFDHLF67GR5533DFTBNU2EQWKN4V2SA/txl_kernel1.ptx')
 def txl_kernel2(
         desc_q,
@@ -96,18 +96,22 @@ def txl_kernel2(
         BLOCK_SIZE_N: tl.constexpr,
        ):
 
-    s_buf = txl.smem_alloc([BLOCK_SIZE_M, BLOCK_SIZE_N], tl.float32); s = txl.get_buffer(s_buf, 0)
-    #s_buf = txl.smem_alloc([BLOCK_SIZE_M//2, BLOCK_SIZE_N], tl.float32); s = txl.get_buffer(s_buf, 0)
+    layout :tl.constexpr = txl.BlockedLayout([1, 1], [1, 32], [1, 2], [1, 0], ctas_per_cga=[2, 1], cta_split_num=[2, 1], cta_order=[1, 0])
+    s_buf = txl.smem_alloc([BLOCK_SIZE_M//2, BLOCK_SIZE_N], tl.float32); s = txl.get_buffer(s_buf, 0)
+
+    #s_buf = txl.smem_alloc([BLOCK_SIZE_M, BLOCK_SIZE_N], tl.float32); s = txl.get_buffer(s_buf, 0)
     rid = txl.cta_rank()
     tid = txl.tid(0)
     #x = tl.zeros([BLOCK_SIZE_M//2, BLOCK_SIZE_N], tl.float32)
     x = tl.zeros([BLOCK_SIZE_M, BLOCK_SIZE_N], tl.float32)
     if rid == 0:
-        x += 1
-        txl.smem_store(s, x, 1)
+        x += 1.0
+        #txl.smem_store(s, x, 1)
+        txl.frag_smem_store(s, x, layout, 1)
     else:
-        x += 2
-        txl.smem_store(s, x, 0)
+        x += 2.0
+        #txl.smem_store(s, x, 0)
+        txl.frag_smem_store(s, x, layout, 0)
     #txl.smem_store(s, x)
     #layout :tl.constexpr = txl.BlockedLayout([1, 8], [4, 8], [1, 1], [1, 0], ctas_per_cga=[2, 1], cta_split_num=[2, 1], cta_order=[1, 0])
     #y = txl.smem_load(s, layout)
@@ -130,12 +134,14 @@ def test_txl():
     o = torch.empty_like(q)
 
     desc_q = TensorDescriptor(q, shape=[BLOCK_SIZE_M, BLOCK_SIZE_N], strides=[BLOCK_SIZE_N, 1], block_shape=dummy_block)
-    desc_o = TensorDescriptor(o, shape=[BLOCK_SIZE_M, BLOCK_SIZE_N], strides=[BLOCK_SIZE_N, 1], block_shape=dummy_block)
+    #desc_o = TensorDescriptor(o, shape=[BLOCK_SIZE_M, BLOCK_SIZE_N], strides=[BLOCK_SIZE_N, 1], block_shape=dummy_block)
+    desc_o = TensorDescriptor(o, shape=[BLOCK_SIZE_M//2, BLOCK_SIZE_N], strides=[BLOCK_SIZE_N, 1], block_shape=[BLOCK_SIZE_M//2, BLOCK_SIZE_N])
 
     grid = lambda meta: (1,)
     txl_kernel2[grid](desc_q, desc_o, BLOCK_SIZE_M=BLOCK_SIZE_M, BLOCK_SIZE_N=BLOCK_SIZE_N, num_warps=4, num_ctas=2)
     #txl_kernel1[grid](desc_q, desc_o, BLOCK_SIZE_M=BLOCK_SIZE_M, BLOCK_SIZE_N=BLOCK_SIZE_N, num_warps=4, num_ctas=2)
     #txl_kernel[grid](desc_q, desc_o, BLOCK_SIZE_M=BLOCK_SIZE_M, BLOCK_SIZE_N=BLOCK_SIZE_N, num_warps=1)
+    import pdb;pdb.set_trace()
 
     print(q)
     print(o)

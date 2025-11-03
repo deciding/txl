@@ -159,8 +159,17 @@ public:
     }
     cvt = cvt.sublayout({kReg, kLane, kWarp}, {kOffset});
 
+    //txl: cluster
+    auto b = TritonLLVMOpBuilder(loc, rewriter);
+    auto attr = op->getAttrOfType<IntegerAttr>("ttxg.ctaid");
+    Value ctaId = Value();
+    if (attr) {
+        assert(attr.getType().isInteger(32) && "ttxg.ctaid must be 32 bit int\n");
+        ctaId = b.i32_val(attr.getInt());
+    }
+
     auto outVals = lowerLocalLdSt(loc, ctx, cvt, {}, llvmElemTy, memDescTy,
-                                  smemObj, rewriter, targetInfo, op, otherVal);
+                                  smemObj, rewriter, targetInfo, op, otherVal, ctaId);
 
     // txl pred, broadcast only triggered in 
     //  1. normal cases, i.e. warp and lanes are full. TODO: full specified by default or fullRegLayout?
@@ -289,9 +298,29 @@ LogicalResult lowerFragLocalStore(Location loc, MLIRContext *ctx, Operation* op,
       return failure();
     }
   }
+  llvm::outs() << "\n lowerFragLocalStore\n";
+  llvm::outs() << "\n fullRegLayout\n";
+  llvm::outs() << fullRegLayout;
+  llvm::outs() << "\n regLayout\n";
+  llvm::outs() << regLayout;
+  llvm::outs() << "\n cvt\n";
+  llvm::outs() << cvt;
   cvt = cvt.sublayout({kReg, kLane, kWarp}, {kOffset});
+  llvm::outs() << "\n sublayout\n";
+  llvm::outs() << cvt;
+  llvm::outs() << "\n";
+
+  //txl: cluster
+  auto b = TritonLLVMOpBuilder(loc, rewriter);
+  auto attr = op->getAttrOfType<IntegerAttr>("ttxg.ctaid");
+  Value ctaId = Value();
+  if (attr) {
+      assert(attr.getType().isInteger(32) && "ttxg.ctaid must be 32 bit int\n");
+      ctaId = b.i32_val(attr.getInt());
+  }
+
   lowerLocalLdSt(loc, ctx, cvt, inVals, llvmElemTy, memDescTy, smemObj,
-                 rewriter, targetInfo, op, Value());
+                 rewriter, targetInfo, op, Value(), ctaId);
 
   return success();
 }

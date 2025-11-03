@@ -125,7 +125,8 @@ def TXL_FragSmemLoadOp : TXL_Op<"frag_smem_load"> {
     Arg<TT_Tensor, "", [MemRead]>:$src,
     Optional<TT_Type>:$other,
     TypeAttr: $regType,
-    BoolAttr: $fullLayout
+    BoolAttr: $fullLayout,
+    DefaultValuedAttr<I32Attr, "-1">: $ctaId
   );
 
   let results = (outs TT_Tensor:$result);
@@ -142,7 +143,8 @@ def TXL_FragSmemStoreOp : TXL_Op<"frag_smem_store"> {
   let arguments = (ins
     TT_Tensor:$src,
     Arg<TT_Tensor, "", [MemWrite]>:$dst,
-    TypeAttr: $regType
+    TypeAttr: $regType,
+    DefaultValuedAttr<I32Attr, "-1">: $ctaId
   );
 
   let assemblyFormat = [{

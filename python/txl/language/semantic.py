@@ -172,31 +172,30 @@ class TXLSemantic(TritonSemantic):
         handle = self.builder.create_relayout(ret_ty.to_ir(self.builder), value.handle, reg_ty.to_ir(self.builder))
         return self.tensor(handle, ret_ty)
 
-    def to_linear_layout(self, shape, dtype, layout, save_loc=None):
+    def print_layout(self, shape, dtype, layout, save_loc=None):
         reg_ty = distributed_type(dtype, shape, layout)
         res = self.builder.to_linear_layout(reg_ty.to_ir(self.builder))
-        res = [x.split('|') for x in res]
-        res = [([int(l) for l in labels.split(',')], [int(i) for i in indices.split(',')]) for labels, indices in res]
-        new_res = {}
-        for labels, indices in res:
-            indices = tuple(indices)
-            labels = tuple(labels)
-            if indices in new_res:
-                all_labels = new_res[indices]
-                all_labels.append(labels)
-            else:
-                new_res[indices] = [labels]
-        res = new_res.items()
-        res = [(y, x) for x, y in res]
+        if save_loc is not None:
+            res = [x.split('|') for x in res]
+            res = [([int(l) for l in labels.split(',')], [int(i) for i in indices.split(',')]) for labels, indices in res]
+            new_res = {}
+            for labels, indices in res:
+                indices = tuple(indices)
+                labels = tuple(labels)
+                if indices in new_res:
+                    all_labels = new_res[indices]
+                    all_labels.append(labels)
+                else:
+                    new_res[indices] = [labels]
+            res = new_res.items()
+            res = [(y, x) for x, y in res]
 
-        assert len(shape) == 1 or len(shape) == 2
-        if len(shape) == 1:
-            shape = (1, shape[0])
-        latex = pairs_to_tikz(res, shape[0], shape[1])
-        if save_loc is None:
-            save_loc = 'saved_linear_layout.tex'
-        with open(save_loc, 'w') as f:
-            f.write(latex)
+            assert len(shape) == 1 or len(shape) == 2
+            if len(shape) == 1:
+                shape = (1, shape[0])
+            latex = pairs_to_tikz(res, shape[0], shape[1])
+            with open(save_loc, 'w') as f:
+                f.write(latex)
 
     def mbar_alloc(self, arr_count: int, num_stages:int=1) -> TensorTy:
         block_type = tl.block_type(tl.int64, [1])

@@ -170,6 +170,23 @@ static Value mapa(RewriterBase &rewriter, Location loc, Value ptr, Value ctaid,
   return ptr;
 }
 
+static void cluster_wait(RewriterBase &rewriter, Location loc, Value pred) {
+  PTXBuilder builder;
+  auto arr1 = builder.create<>("barrier")
+              ->o("cluster")
+              .o("arrive")
+              .o("aligned");
+  auto wait1 = builder.create<>("barrier")
+              ->o("cluster")
+              .o("wait")
+              .o("aligned");
+  // barrier cluster wait must not use pred, should all wait
+  arr1();
+  wait1();
+  builder.launch(rewriter, loc, void_ty(rewriter.getContext()), /*hasSideEffect=*/ true);
+  return;
+}
+
 static std::string getConstraintForBitwidth(unsigned bitwidth) {
   switch (bitwidth) {
   case 8:
@@ -307,6 +324,9 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
     }
     st(ptrOpr, valOpr).predicate(pred, "b");
     builder.launch(rewriter, loc, void_ty(ctx));
+  }
+  if (ctaId.has_value()) {
+      cluster_wait(rewriter, loc, pred);
   }
 }
 

@@ -1,5 +1,6 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -20,6 +21,23 @@
 namespace ttg = mlir::triton::gpu;
 
 namespace mlir::triton{
+
+void changeForOpArgType(scf::ForOp forOp, unsigned int opNum, Type newType){
+    auto initArgs = forOp.getInitArgs();
+
+    auto numInductions = forOp.getNumInductionVars();
+    auto numStepingVars = numInductions * 3;
+    auto numYields = forOp.getYieldedValues().size();
+    auto numOperands = forOp.getNumOperands();
+    assert((numOperands == numYields + numStepingVars) && "Num operands is not correct!\n");
+    auto iterArgNum = opNum - numStepingVars;
+    auto bbArg = forOp.getRegionIterArgs()[iterArgNum];
+
+    auto newArg = forOp.getBody()->insertArgument(iterArgNum+numInductions, newType, forOp->getLoc());
+    bbArg.replaceAllUsesWith(newArg);
+
+    forOp.getBody()->eraseArgument(iterArgNum+1+numInductions);
+}
 
 void setOpAttrWgId(Operation* op, int32_t wgid){
     auto attrTy = IntegerType::get(op->getContext(), 32);
@@ -76,6 +94,40 @@ void propagateTypeRecursively(Value &val, Type newType) {
   for (auto &use : val.getUses()) {
     Operation* user = use.getOwner();
     unsigned opNum = use.getOperandNumber();
+    // For loop yield, backpropagate to input, and it must be a const
+    if (isa<scf::YieldOp>(user)){
+        auto yieldOp = dyn_cast<scf::YieldOp>(user);
+        auto forOp = yieldOp->getParentOfType<scf::ForOp>();
+        if (forOp){
+            Value suspiciousInput = forOp->getOperand(opNum+3);
+            Type oldType = suspiciousInput.getType();
+            changeForOpArgType(forOp, opNum+3, newType);
+            Value userResult = forOp->getResult(opNum);
+            userResult.setType(newType);
+            propagateTypeRecursively(userResult, newType);
+
+            // backpropagate to const
+            auto constOp = suspiciousInput.getDefiningOp<arith::ConstantOp>();
+            if (constOp){
+                auto attr = dyn_cast<DenseElementsAttr>(constOp.getValue());
+                auto newRankedType = dyn_cast<RankedTensorType>(newType);
+                auto userRankedType = dyn_cast<RankedTensorType>(oldType);
+                if (attr) {
+                    OpBuilder builder(constOp);
+                    auto scalarValue = attr.getSplatValue<Attribute>();
+                    auto splatValue = SplatElementsAttr::get(newRankedType, scalarValue);
+                    auto newConst = builder.create<arith::ConstantOp>(
+                                      constOp.getLoc(), newType, splatValue);
+                    forOp->setOperand(opNum + 3, newConst);
+                }
+            }
+            else {
+                user->emitError("Type backpropagate failed: ForOp input is not const");
+            }
+            continue;
+        }
+    }
+
     if (user->getNumResults()){
         Value userResult = user->getResult(0);
         Type oldType = userResult.getType();
@@ -258,5 +310,6 @@ std::string printModuleOp(ModuleOp &mod) {
  mod.print(os, printingFlags);
  return str;
 }
+
 
 }

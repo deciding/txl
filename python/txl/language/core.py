@@ -183,7 +183,7 @@ def relayout(value, shape, layout, _semantic=None) -> tl.tensor:
     return _semantic.relayout(value, shape, layout)
 
 @builtin
-def to_linear_layout(shape, dtype, layout, save_loc=None, _semantic=None):
+def print_layout(shape, dtype, layout, save_loc=None, _semantic=None):
     shape = _shape_check_impl(shape)
     layout = _unwrap_if_constexpr(layout)
     dtype = _unwrap_if_constexpr(dtype)

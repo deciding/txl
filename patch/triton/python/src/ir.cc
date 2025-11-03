@@ -2005,7 +2005,7 @@ void init_triton_ir(py::module &&m) {
            [](TritonOpBuilder &self, Type resultTy, Value value, Type regType) -> Value {
              return self.create<tt::RelayoutOp>(resultTy, value, regType);
            })
-      .def("to_linear_layout",
+      .def("print_layout",
            [](TritonOpBuilder &self, Type targetTy) -> std::vector<std::string>{
              MLIRContext *ctx = self.getContext();
              RankedTensorType rankedTy = dyn_cast<RankedTensorType>(targetTy);

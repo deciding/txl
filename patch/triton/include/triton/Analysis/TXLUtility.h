@@ -1,3 +1,4 @@
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -27,5 +28,7 @@ void replaceAndPropagate(Operation *srcOp, Value newValue);
 Operation* getModuleFromOp(Operation *op);
 
 std::string printModuleOp(ModuleOp &mod);
+
+void changeForOpArgType(scf::ForOp forOp, unsigned int opNum, Type newType);
 
 }

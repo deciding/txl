@@ -57,6 +57,7 @@ bool isTMALoad(Operation *op) {
   return isa<tt::TmaLoadOp>(op);
 }
 
+
 // smem_alloc's tma_load users
 // TODO: assume all the same, if we want to reuse smem, just dealloc all and realloc
 template<typename OpTy>
@@ -826,20 +827,7 @@ void replaceUsesForBlockArg(OpBuilder &builder, Operation * oldOp, Value newValu
         if (isa<scf::ForOp>(user)){
 
             auto forOp = dyn_cast<scf::ForOp>(user);
-            auto initArgs = forOp.getInitArgs();
-
-            auto numInductions = forOp.getNumInductionVars();
-            auto numStepingVars = numInductions * 3;
-            auto numYields = forOp.getYieldedValues().size();
-            auto numOperands = forOp.getNumOperands();
-            assert((numOperands == numYields + numStepingVars) && "Num operands is not correct!\n");
-            auto iterArgNum = opNum - numStepingVars;
-            auto bbArg = forOp.getRegionIterArgs()[iterArgNum];
-
-            auto newArg = forOp.getBody()->insertArgument(iterArgNum+numInductions, newValue.getType(), forOp->getLoc());
-            bbArg.replaceAllUsesWith(newArg);
-
-            forOp.getBody()->eraseArgument(iterArgNum+1+numInductions);
+            changeForOpArgType(forOp, opNum, newValue.getType());
 
             //builder.setInsertionPoint(forOp);
             //auto newForOp = builder.create<scf::ForOp>(

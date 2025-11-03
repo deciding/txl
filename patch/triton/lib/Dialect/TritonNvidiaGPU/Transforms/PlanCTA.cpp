@@ -343,13 +343,22 @@ bool CTAPlanner::processReduce(triton::FuncOp &funcOp) {
     unsigned remainingCTAs = numCTAs;
     for (int i = rank - 1; i >= 0; --i) {
       unsigned dim = order[i];
-      if (dim == axis) {
-        CTAsPerCGA[dim] = 1;
-      } else {
+      // txl: allow cta split on reduce dim
+      //if (dim == axis) {
+      //  CTAsPerCGA[dim] = 1;
+      //} else {
         CTAsPerCGA[dim] = std::min<unsigned>(srcShape[dim] / sizePerThread[dim],
                                              remainingCTAs);
         remainingCTAs /= CTAsPerCGA[dim];
-      }
+      //}
+    //llvm::outs() << "\n dim\n";
+    //llvm::outs() << dim;
+    //llvm::outs() << "\n CTAsPerCGA\n";
+    //llvm::outs() << CTAsPerCGA[dim];
+    //llvm::outs() << "\n srcShape[dim]\n";
+    //llvm::outs() << srcShape[dim];
+    //llvm::outs() << "\n sizePerThread[dim]\n";
+    //llvm::outs() << sizePerThread[dim];
     }
 
     for (int i = rank - 1; i >= 0; --i) {

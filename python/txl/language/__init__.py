@@ -21,7 +21,7 @@ from .core import (
     frag_smem_load,
     frag_smem_store,
     relayout,
-    to_linear_layout,
+    print_layout,
     mbar_alloc,
     mbar_expect,
     mbar_wait,

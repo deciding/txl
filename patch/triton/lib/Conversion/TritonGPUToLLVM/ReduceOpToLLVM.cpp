@@ -28,8 +28,9 @@ public:
   matchAndRewrite(triton::ReduceOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     ReduceOpHelper helper(op);
-    assert(helper.isReduceWithinCTA() &&
-           "Unexpected srcLayout in ReduceOpConversion");
+    //txl
+    //assert(helper.isReduceWithinCTA() &&
+    //       "Unexpected srcLayout in ReduceOpConversion");
     Location loc = op->getLoc();
 
     auto srcValues = unpackInputs(loc, op, adaptor, rewriter);

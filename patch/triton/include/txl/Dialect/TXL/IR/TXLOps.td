@@ -143,12 +143,13 @@ def TXL_FragSmemStoreOp : TXL_Op<"frag_smem_store"> {
   let arguments = (ins
     TT_Tensor:$src,
     Arg<TT_Tensor, "", [MemWrite]>:$dst,
+    Optional<TT_Tensor>:$mbar,
     TypeAttr: $regType,
     DefaultValuedAttr<I32Attr, "-1">: $ctaId
   );
 
   let assemblyFormat = [{
-    $src `,` $dst attr-dict `:` type($src) `(` $regType `)` `,` type($dst)
+    $src `,` $dst `,` (`mbar` $mbar^)? attr-dict `:` type($src) `(` $regType `)` `,` type($dst) `,` type($mbar)
   }];
 }
 

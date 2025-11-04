@@ -7,6 +7,7 @@
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "llvm/Support/MathExtras.h"
+#include <optional>
 
 using namespace mlir;
 
@@ -211,14 +212,19 @@ static bool isConstantTruePred(Value pred) {
 void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
                               std::optional<Value> ctaId, Value val,
                               Value pred) const {
+    storeDSharedMbar(rewriter, loc, ptr, ctaId, val, pred, Value());
+}
+void TargetInfo::storeDSharedMbar(RewriterBase &rewriter, Location loc, Value ptr,
+                              std::optional<Value> ctaId, Value val,
+                              Value pred, Value mbarPtr) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
   MLIRContext *ctx = rewriter.getContext();
   auto ptrTy = cast<LLVM::LLVMPointerType>(ptr.getType());
   assert(ptrTy.getAddressSpace() == 3 && "Invalid addr space for load_dsmem");
 
   if (!isa<VectorType>(val.getType())) {
-    storeDShared(rewriter, loc, ptr, ctaId, packLLVector(loc, {val}, rewriter),
-                 pred);
+    storeDSharedMbar(rewriter, loc, ptr, ctaId, packLLVector(loc, {val}, rewriter),
+                 pred, mbarPtr);
     return;
   }
 
@@ -235,8 +241,8 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
     for (Value &v : vals) {
       v = b.zext(int_ty(8), b.bitcast(v, int_ty(elemBitwidth)));
     }
-    storeDShared(rewriter, loc, ptr, ctaId, packLLVector(loc, vals, rewriter),
-                 pred);
+    storeDSharedMbar(rewriter, loc, ptr, ctaId, packLLVector(loc, vals, rewriter),
+                 pred, mbarPtr);
     return;
   }
 
@@ -245,8 +251,8 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
     for (Value &v : vals) {
       v = b.bitcast(v, int_ty(elemBitwidth));
     }
-    storeDShared(rewriter, loc, ptr, ctaId, packLLVector(loc, vals, rewriter),
-                 pred);
+    storeDSharedMbar(rewriter, loc, ptr, ctaId, packLLVector(loc, vals, rewriter),
+                 pred, mbarPtr);
     return;
   }
 
@@ -266,8 +272,8 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
           rewriter);
       newVals.push_back(b.bitcast(v, i32_ty));
     }
-    storeDShared(rewriter, loc, ptr, ctaId,
-                 packLLVector(loc, newVals, rewriter), pred);
+    storeDSharedMbar(rewriter, loc, ptr, ctaId,
+                 packLLVector(loc, newVals, rewriter), pred, mbarPtr);
     return;
   }
 
@@ -281,10 +287,10 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
     for (int i = 0; i < vec / maxVec; i++) {
       auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec),
                           LLVM::GEPNoWrapFlags::inbounds);
-      storeDShared(
+      storeDSharedMbar(
           rewriter, loc, newPtr, ctaId,
           packLLVector(loc, ArrayRef(vals).slice(i * maxVec, maxVec), rewriter),
-          pred);
+          pred, mbarPtr);
     }
     return;
   }
@@ -300,10 +306,16 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
     ptr = mapa(rewriter, loc, ptr, *ctaId, pred);
   }
 
+  if (mbarPtr) {
+    mbarPtr = mapa(rewriter, loc, mbarPtr, *ctaId, pred);
+  }
+
   PTXBuilder builder;
   auto *ptrOpr = builder.newAddrOperand(ptr, "r");
   auto st = builder.create<>("st")
-                ->o("shared::cluster", ctaId.has_value())
+                ->o("async", (bool)mbarPtr)
+                .o("shared::cluster", ctaId.has_value())
+                .o("mbarrier::complete_tx::bytes", (bool)mbarPtr)
                 .o("shared", !ctaId.has_value())
                 .v(vec, /*predicate=*/vec > 1)
                 .b(elemBitwidth);
@@ -322,10 +334,16 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
     } else {
       valOpr = builder.newOperand(val, constraint);
     }
-    st(ptrOpr, valOpr).predicate(pred, "b");
+    if (mbarPtr) {
+      auto *mbarPtrOpr = builder.newAddrOperand(mbarPtr, "r");
+      st(ptrOpr, valOpr, mbarPtrOpr).predicate(pred, "b");
+    }
+    else {
+      st(ptrOpr, valOpr).predicate(pred, "b");
+    }
     builder.launch(rewriter, loc, void_ty(ctx));
   }
-  if (ctaId.has_value()) {
+  if (ctaId.has_value() && !mbarPtr) {
       cluster_wait(rewriter, loc, pred);
   }
 }

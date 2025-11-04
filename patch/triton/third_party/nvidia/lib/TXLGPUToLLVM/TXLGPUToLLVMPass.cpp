@@ -20,13 +20,16 @@
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include "triton/Dialect/TritonGPU/IR/Types.h"
 #include "triton/Tools/LayoutUtils.h"
 #include "triton/Tools/LinearLayout.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "nvidia/lib/TritonNVIDIAGPUToLLVM/Utility.h"
 #include "nvidia/include/Dialect/TXLGPU/IR/Dialect.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include <optional>
 
 using namespace mlir;
 using namespace mlir::triton;
@@ -157,7 +160,18 @@ public:
         return failure();
       }
     }
+    //llvm::outs() << "\n lowerFragLocalLoad\n";
+    //op.dump();
+    //llvm::outs() << "\n fullRegLayout\n";
+    //llvm::outs() << fullRegLayout;
+    //llvm::outs() << "\n regLayout\n";
+    //llvm::outs() << regLayout;
+    //llvm::outs() << "\n cvt\n";
+    //llvm::outs() << cvt;
     cvt = cvt.sublayout({kReg, kLane, kWarp}, {kOffset});
+    //llvm::outs() << "\n sublayout\n";
+    //llvm::outs() << cvt;
+    //llvm::outs() << "\n";
 
     //txl: cluster
     auto b = TritonLLVMOpBuilder(loc, rewriter);
@@ -229,7 +243,9 @@ LogicalResult lowerFragLocalStore(Location loc, MLIRContext *ctx, Operation* op,
                               ArrayRef<Value> inVals,
                               const LLVMTypeConverter *typeConverter,
                               ConversionPatternRewriter &rewriter,
-                              const TargetInfoBase &targetInfo) {
+                              const TargetInfoBase &targetInfo,
+                              std::optional<MemDescType> mbarMemDescTy,
+                              std::optional<SharedMemoryObject> mbarObj) {
   auto fullRegTy = cast<RankedTensorType>(regVal.getType());
   auto llvmElemTy = typeConverter->convertType(memDescTy.getElementType());
   auto regTy = cast<RankedTensorType>(regType);
@@ -312,15 +328,24 @@ LogicalResult lowerFragLocalStore(Location loc, MLIRContext *ctx, Operation* op,
 
   //txl: cluster
   auto b = TritonLLVMOpBuilder(loc, rewriter);
+  txlgpu::FragLocalStoreOp fragLocalStore = dyn_cast<txlgpu::FragLocalStoreOp>(op);
   auto attr = op->getAttrOfType<IntegerAttr>("ttxg.ctaid");
   Value ctaId = Value();
   if (attr) {
       assert(attr.getType().isInteger(32) && "ttxg.ctaid must be 32 bit int\n");
       ctaId = b.i32_val(attr.getInt());
   }
+  std::optional<Type> mbarllvmElemTy;
+  if (mbarMemDescTy.has_value()) {
+      if (!ctaId) {
+          op->emitError("ctaid must be specified if mbar is passed");
+      }
+      mbarllvmElemTy = typeConverter->convertType(mbarMemDescTy.value().getElementType());
+  }
 
   lowerLocalLdSt(loc, ctx, cvt, inVals, llvmElemTy, memDescTy, smemObj,
-                 rewriter, targetInfo, op, Value(), ctaId);
+                 rewriter, targetInfo, op, Value(), ctaId,
+                 mbarllvmElemTy, mbarMemDescTy, mbarObj);
 
   return success();
 }
@@ -350,9 +375,18 @@ public:
     auto llvmElemTy = typeConverter->convertType(memDescTy.getElementType());
     auto smemObj = LLVM::getSharedMemoryObjectFromStruct(loc, adaptor.getDst(),
                                                          llvmElemTy, rewriter);
+    Value mbar = op.getMbar();
+    std::optional<MemDescType> mbarMemDescTy = std::nullopt;
+    std::optional<SharedMemoryObject> mbarSmemObj = std::nullopt;
+    if (mbar){
+        mbarMemDescTy = cast<MemDescType>(mbar.getType());
+        auto mbarElemTy = typeConverter->convertType(mbarMemDescTy.value().getElementType());
+        mbarSmemObj = LLVM::getSharedMemoryObjectFromStruct(loc, adaptor.getMbar(),
+                                                             mbarElemTy, rewriter);
+    }
     auto inVals = unpackLLElements(loc, adaptor.getSrc(), rewriter);
     if (failed(lowerFragLocalStore(loc, ctx, op, regVal, regType, memDescTy, smemObj, inVals,
-                               typeConverter, rewriter, targetInfo))) {
+                               typeConverter, rewriter, targetInfo, mbarMemDescTy,  mbarSmemObj))) {
       return failure();
     }
 

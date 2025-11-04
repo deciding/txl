@@ -86,6 +86,45 @@ public:
   }
 };
 
+class AddEncodingToMbarAlloc
+    : public OpRewritePattern<MbarAllocOp> {
+  //using OpRewritePattern::OpRewritePattern;
+
+  int numWarps;
+  int threadsPerWarp;
+  int numCTAs;
+  std::string target;
+
+public:
+  // constructor with some parameters set explicitly.
+  AddEncodingToMbarAlloc(mlir::MLIRContext *context, const std::string &target, int numWarps,
+                           int threadsPerWarp, int numCTAs)
+  : OpRewritePattern<MbarAllocOp>(context), numWarps(numWarps), threadsPerWarp(threadsPerWarp),
+    numCTAs(numCTAs), target(target) {}
+
+  mlir::LogicalResult
+  matchAndRewrite(MbarAllocOp op,
+                  PatternRewriter &rewriter) const override {
+    auto oldTy = op.getType();
+    if (oldTy.getEncoding())
+        return failure();
+
+    auto context = op->getContext();
+    auto shape = oldTy.getShape();
+    auto eltTy = oldTy.getElementType();
+
+    Attribute encoding = mlir::triton::gpu::getDefaultBlockedEncoding(
+            context, shape, this->numWarps, this->threadsPerWarp, this->numCTAs);
+    auto tensorType = RankedTensorType::get(shape, eltTy, encoding);
+
+    auto numStagesAttr = rewriter.getI32IntegerAttr(op.getNumStages());
+    auto arrCountAttr = rewriter.getI32IntegerAttr(op.getArrCount());
+    rewriter.replaceOpWithNewOp<MbarAllocOp>(op, tensorType, arrCountAttr, numStagesAttr);
+
+    return success();
+  }
+};
+
 class AddEncodingToGetBuffer
     : public OpRewritePattern<GetBufferOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -127,6 +166,7 @@ public:
     RewritePatternSet smemAllocPatterns(context);
 
     smemAllocPatterns.add<AddEncodingToSmemAlloc>(context, target, numWarps, threadsPerWarp, numCTAs);
+    smemAllocPatterns.add<AddEncodingToMbarAlloc>(context, target, numWarps, threadsPerWarp, numCTAs);
     smemAllocPatterns.add<AddEncodingToGetBuffer>(context);
 
     if (applyPatternsGreedily(m, std::move(smemAllocPatterns)).failed()) {

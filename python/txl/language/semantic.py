@@ -101,7 +101,7 @@ class TXLSemantic(TritonSemantic):
         return self.tensor(self.builder.create_get_num_programs(axis), tl.int32)
 
     def warp_id(self) -> TensorTy:
-        return self.tensor(self.builder.create_get_canonical_wrap_id(), tl.int32)
+        return self.tensor(self.builder.create_get_canonical_warp_id(), tl.int32)
 
     def warpgroup_id(self) -> TensorTy:
         return self.tensor(self.builder.create_get_canonical_wrapgroup_id(), tl.int32)
@@ -160,11 +160,11 @@ class TXLSemantic(TritonSemantic):
         handle = self.builder.create_frag_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, other.handle if other else None, reg_ty.to_ir(self.builder), partial_load, cta_id)
         return self.tensor(handle, ret_ty)
 
-    def frag_smem_store(self, mem_desc, value, layout, cta_id:int=-1):
+    def frag_smem_store(self, mem_desc, value, layout, cta_id:int=-1, mbar=None):
         reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
         #assert value.shape == mem_desc.shape, f"source shape {value.shape} and destination shape {mem_desc.shape} must match"
         assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
-        self.builder.create_frag_smem_store(mem_desc.handle, value.handle, reg_ty.to_ir(self.builder), cta_id)
+        self.builder.create_frag_smem_store(mem_desc.handle, value.handle, mbar.handle if mbar else None, reg_ty.to_ir(self.builder), cta_id)
 
     def relayout(self, value, shape, layout):
         ret_ty = tl.block_type(value.dtype, shape)

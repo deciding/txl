@@ -126,7 +126,7 @@ def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n
         tl.store(output_ptrs, softmax_output, mask=mask)
 
 @txl.jit
-#@txl.jit(diff_mode='llir')
+#@txl.jit(diff_mode='ttgir')
 #@txl.jit(src_file='dump/1103sm/EVXHWDXBSFGUEJF2BXKQR2KMUSDV47TOC5AYVC2FX7WEDZUG34MQ/cluster_softmax_kernel.ptx')
 def cluster_softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
                    LOG2_E: tl.constexpr,
@@ -157,12 +157,14 @@ def cluster_softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_s
     smem_buf = txl.smem_alloc([1*2], dtype=tl.float32)
     scalar_smem = txl.get_buffer(smem_buf, 0)
 
+    mbar_buf = txl.mbar_alloc(1); mbar = txl.get_buffer(mbar_buf, 0)
+
     layout_warp_reduce: tl.constexpr = txl.BlockedLayout(
             size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[num_warps], order=[0],
             ctas_per_cga=[2], cta_split_num=[2], cta_order=[0]
     )
     layout_all_reduce: tl.constexpr = txl.BlockedLayout(
-            size_per_thread=[1], threads_per_warp=[num_warps*2], warps_per_cta=[num_warps], order=[0],
+            size_per_thread=[1], threads_per_warp=[num_warps], warps_per_cta=[num_warps], order=[0],
             ctas_per_cga=[2], cta_split_num=[2], cta_order=[0]
     )
 
@@ -195,22 +197,40 @@ def cluster_softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_s
         txl.frag_smem_store(sum_smem, cur_denom, layout_warp_reduce)
 
 
+        txl.mbar_expect(mbar, num_warps*4*2)
         if rid == 0:
-            txl.frag_smem_store(max_smem1, cur_max, layout_warp_reduce, 1)
-            txl.frag_smem_store(sum_smem1, cur_denom, layout_warp_reduce, 1)
+            txl.frag_smem_store(max_smem1, cur_max, layout_warp_reduce, 1, mbar)
+            txl.frag_smem_store(sum_smem1, cur_denom, layout_warp_reduce, 1, mbar)
             #txl.smem_store(max_smem1, cur_max, 1)
             #txl.smem_store(sum_smem1, cur_denom, 1)
         else:
-            txl.frag_smem_store(max_smem1, cur_max, layout_warp_reduce, 0)
-            txl.frag_smem_store(sum_smem1, cur_denom, layout_warp_reduce, 0)
+            txl.frag_smem_store(max_smem1, cur_max, layout_warp_reduce, 0, mbar)
+            txl.frag_smem_store(sum_smem1, cur_denom, layout_warp_reduce, 0, mbar)
             #txl.smem_store(max_smem1, cur_max, 0)
             #txl.smem_store(sum_smem1, cur_denom, 0)
+        txl.mbar_wait(mbar, 0)
 
-        warp_max = txl.frag_smem_load(max_smem, [64], layout_all_reduce, -float('inf'))
-        warp_denom = txl.frag_smem_load(sum_smem, [64], layout_all_reduce, 0.0)
+        warp_max = txl.frag_smem_load(max_smem, [128], layout_all_reduce, -float('inf'))
+        warp_denom = txl.frag_smem_load(sum_smem, [128], layout_all_reduce, 0.0)
 
-        warp_max1 = txl.frag_smem_load(max_smem1, [64], layout_all_reduce, -float('inf'))
-        warp_denom1 = txl.frag_smem_load(sum_smem1, [64], layout_all_reduce, 0.0)
+        warp_max1 = txl.frag_smem_load(max_smem1, [128], layout_all_reduce, -float('inf'))
+        warp_denom1 = txl.frag_smem_load(sum_smem1, [128], layout_all_reduce, 0.0)
+        #wid = txl.warp_id()
+        #if rid == 0 and wid == 0 and lid == 0:
+        #    txl.print('000-0', warp_max)
+        #    txl.print('000-1', warp_max1)
+        #if rid == 0 and wid == 0 and lid == 1:
+        #    txl.print('001-0', warp_max)
+        #    txl.print('001-1', warp_max1)
+        #if rid == 0 and wid == 0 and lid == 4:
+        #    txl.print('004-0', warp_max)
+        #    txl.print('004-1', warp_max1)
+        #if rid == 0 and wid == 0 and lid == 8:
+        #    txl.print('008-4', warp_max)
+        #    txl.print('008-4', warp_max1)
+        #if rid == 0 and wid == 0 and lid == 16:
+        #    txl.print('0016-4', warp_max)
+        #    txl.print('0016-4', warp_max1)
 
         all_max = txl.warp_max(warp_max, axis=0) # 3rd, might have problem
         all_max1 = txl.warp_max(warp_max1, axis=0) # 3rd, might have problem
@@ -703,11 +723,11 @@ def meta_fn(kernel_fn, x):
 
     return num_programs, BLOCK_SIZE, num_warps, num_stages
 
-def test_softmax(dump_dir=None, size=32*1024):
+def test_softmax(dump_dir=None, M=32*1024, N=32*1024):
     #M = 1
     #N = 32*1024
-    M = 32*1024
-    N = size
+    #M = 32*1024
+    #N = size
     KERNEL="SM"
 
     dtype = cutlass.BFloat16
@@ -753,7 +773,7 @@ def test_softmax(dump_dir=None, size=32*1024):
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "ttg-utility"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
     knobs.autotuning.print=True
-    knobs.compilation.always_compile=True
+    #knobs.compilation.always_compile=True
     if dump_dir:
         knobs.compilation.dump_ir=True
         knobs.cache.dump_dir=dump_dir
@@ -762,6 +782,8 @@ def test_softmax(dump_dir=None, size=32*1024):
         quack_out = quack_fn().to(torch.float32).cpu().numpy()
     if HAS_TXL:
         txl_out = txl_fn(x, False).to(torch.float32).cpu().numpy()
+
+    #exit()
 
     # NumPy reference
     a = x32.cpu().numpy()
@@ -784,6 +806,8 @@ def test_softmax(dump_dir=None, size=32*1024):
         print("max relative error:", max_rel_err)
         print("sum per row -1 (should be 0):", np.max(np.abs(out.sum(axis=1) - 1.0)))
 
+    #import pdb;pdb.set_trace()
+    #exit()
 
     ################################################
     # Bench
@@ -818,6 +842,7 @@ def test_softmax(dump_dir=None, size=32*1024):
         print(f"Triton mem throughput: {mem_bw_ref:.2f} GB/s")
 
 if __name__ == "__main__":
-    #test_softmax('dump/1103sm')
+    #test_softmax('dump/1104sm', 8*1024, 32*1024)
+    test_softmax(M=1, N=32*1024)
     #test_softmax()
-    test_softmax(size=32*1024)
+    #test_softmax(size=32*1024)

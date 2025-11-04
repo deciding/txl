@@ -1998,8 +1998,8 @@ void init_triton_ir(py::module &&m) {
              return res;
            })
       .def("create_frag_smem_store",
-           [](TritonOpBuilder &self, Value smem, Value value, Type regType, int ctaId) {
-             self.create<tt::FragSmemStoreOp>(value, smem, regType, ctaId);
+           [](TritonOpBuilder &self, Value smem, Value value, std::optional<Value>& mbar, Type regType, int ctaId) {
+             self.create<tt::FragSmemStoreOp>(value, smem, mbar.has_value() ? mbar.value() : Value(), regType, ctaId);
            })
       .def("create_relayout",
            [](TritonOpBuilder &self, Type resultTy, Value value, Type regType) -> Value {

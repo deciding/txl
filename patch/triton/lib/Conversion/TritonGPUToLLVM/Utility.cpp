@@ -4,6 +4,7 @@
 #include "mlir/Transforms/RegionUtils.h"
 #include "triton/Analysis/Allocation.h"
 #include "triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h"
+#include "nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
 #include "triton/Dialect/TritonGPU/IR/LayoutUtility.h"
@@ -692,7 +693,7 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
                 std::function<Value(Value)> calcPaddedOffset,
                 Value affineOffset, uint64_t maskSpanAffineOffset,
                 RewriterBase &rewriter, const TargetInfoBase &targetInfo,
-                Operation *localLoadOp, Value otherVal, Value ctaId) {
+                Operation *localLoadOp, Value otherVal, Value ctaId, Value mbarPtr) {
 
   bool isStore = !valsArray.empty();
   auto b = TritonLLVMOpBuilder(loc, rewriter);
@@ -705,8 +706,15 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
     if (isStore) {
       Value valsVec =
           packLLVector(loc, ArrayRef<Value>(vals).slice(idx, length), rewriter);
-      targetInfo.storeDShared(rewriter, loc, shmemAddr, ctaId ? std::optional<Value>(ctaId) : std::nullopt, valsVec,
-                              /*pred=*/pred);
+      if (mbarPtr) {
+          // nvidia-only
+          targetInfo.storeDSharedMbar(rewriter, loc, shmemAddr, ctaId ? std::optional<Value>(ctaId) : std::nullopt, valsVec,
+                                  /*pred=*/pred, mbarPtr);
+      }
+      else
+          // general
+          targetInfo.storeDShared(rewriter, loc, shmemAddr, ctaId ? std::optional<Value>(ctaId) : std::nullopt, valsVec,
+                                  /*pred=*/pred);
       return {};
     } else {
       assert(vals.empty());
@@ -824,7 +832,11 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
                ArrayRef<Value> valsArray, // Input for store, empty for load
                Type llvmElemTy, triton::gpu::MemDescType srcTy,
                SharedMemoryObject smemObj, RewriterBase &rewriter,
-               const TargetInfoBase &targetInfo, Operation *localLoadOp, Value otherVal, Value ctaId) {
+               const TargetInfoBase &targetInfo, Operation *localLoadOp,
+               Value otherVal, Value ctaId, 
+               std::optional<Type> mbarllvmElementTy,
+               std::optional<triton::gpu::MemDescType> mbarMemDescType,
+               std::optional<SharedMemoryObject> mbarShmemObj) {
   assert(cvt.getNumOutDims() == 1);
   assert(*cvt.getOutDimNames().begin() == str_attr("offset"));
   auto calcPaddedOffset = [&](Value smemOffset) {
@@ -849,17 +861,31 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
       inVals = removeBroadcastSrc.apply(inVals);
     }
     auto outVals = lowerLocalLdSt(loc, ctx, prmtCvt, inVals, llvmElemTy, srcTy,
-                                  smemObj, rewriter, targetInfo, localLoadOp, otherVal, ctaId);
+                                  smemObj, rewriter, targetInfo, localLoadOp, otherVal, ctaId,
+                                  mbarllvmElementTy,
+                                  mbarMemDescType,
+                                  mbarShmemObj);
     if (!isStore) {
       outVals = broadcastAs(outVals, cvt);
     }
     return outVals;
   }
   auto affineOffset = smemObj.getShmemOffset(loc, rewriter, srcTy);
+
+  // txl cluster
+  Value mbarShMemPtr = Value();
+  if (mbarShmemObj.has_value()){
+    auto mbarAffineOffset = mbarShmemObj.value().getShmemOffset(loc, rewriter, mbarMemDescType.value());
+    auto b = TritonLLVMOpBuilder(loc, rewriter);
+    mbarShMemPtr =
+        b.gep(mbarShmemObj.value().getBase().getType(),
+                mbarllvmElementTy.value(), mbarShmemObj.value().getBase(), mbarAffineOffset);
+  }
+
   auto maskSpanAffineOffset = smemObj.getMaskSpanOffsets(srcTy);
   return lowerLdStShared(
       loc, ctx, cvt, valsArray, llvmElemTy, smemObj.getBase(), calcPaddedOffset,
-      affineOffset, maskSpanAffineOffset, rewriter, targetInfo, localLoadOp, otherVal, ctaId);
+      affineOffset, maskSpanAffineOffset, rewriter, targetInfo, localLoadOp, otherVal, ctaId, mbarShMemPtr);
 }
 
 bool emitTransferBetweenRegistersAndShared(

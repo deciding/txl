@@ -127,11 +127,12 @@ def TXLGPU_FragLocalStoreOp : TXLGPU_Op<"frag_local_store"> {
   let arguments = (ins
     TT_Tensor:$src,
     Arg<TTG_MemDescType, "", [MemWrite]>:$dst,
+    Optional<TTG_MemDescType>:$mbar,
     TypeAttr: $regType
   );
 
   let assemblyFormat = [{
-    $src `,` $dst attr-dict `:` type($src) `(` $regType `)` `->` type($dst)
+    $src `,` $dst (`mbar` $mbar^)? attr-dict `:` type($src) `(` $regType `)` `,` type($dst) `,` type($mbar)
   }];
 }
 

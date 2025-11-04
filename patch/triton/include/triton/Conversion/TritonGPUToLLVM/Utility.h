@@ -14,6 +14,7 @@
 #include "triton/Tools/LinearLayout.h"
 #include "triton/Tools/StrUtil.h"
 #include "llvm/ADT/STLExtras.h"
+#include <optional>
 
 #define DEBUG_TYPE "ttgpu_to_llvm"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -567,7 +568,10 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
                 std::function<Value(Value)> calcPaddedOffset,
                 Value affineOffset, uint64_t maskSpanAffineOffset,
                 RewriterBase &rewriter, const TargetInfoBase &targetInfo,
-                Operation *localLoadOp = nullptr, Value otherVal = Value(), Value ctaId = Value());
+                Operation *localLoadOp = nullptr,
+                Value otherVal = Value(), Value ctaId = Value(),
+                Value mbarPtr = Value()
+);
 
 // Lower an ld/st-like operation given a layout and a callback that creates the
 // PTX instruction Lowers to st when valArrays is empty, and to ld when it is
@@ -595,7 +599,12 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
                Type llvmElemTy, triton::gpu::MemDescType srcTy,
                SharedMemoryObject smemObj, RewriterBase &rewriter,
                const TargetInfoBase &targetInfo,
-               Operation *localLoadOp = nullptr, Value otherVal = Value(), Value ctaId = Value());
+               Operation *localLoadOp = nullptr,
+               Value otherVal = Value(), Value ctaId = Value(),
+               std::optional<Type> mbarllvmElementTy = std::nullopt,
+               std::optional<triton::gpu::MemDescType> mbarMemDescType = std::nullopt,
+               std::optional<SharedMemoryObject> mbarShmemObj = std::nullopt
+               );
 
 SmallVector<Value> unpackLLElements(Location loc, Value llvmStruct,
                                     RewriterBase &rewriter);

@@ -20,6 +20,7 @@
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "triton/Tools/Sys/GetEnv.hpp"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.h"
 #include "triton/Analysis/TXLUtility.h" // txl
@@ -399,7 +400,11 @@ void replaceMbarBufferUses(Operation* oldViewOp, Value newView) {
 void lowerMbarOps(Value& mbar, bool usedByTmaLoadOp) {
     auto mbarOp = mbar.getDefiningOp();
     OpBuilder builder(mbarOp);
+    SmallVector<Operation *> users;
     for (auto user : mbarOp->getUsers()){
+        users.push_back(user);
+    }
+    for (auto user : users){
         if (isa<tt::MbarExpectOp>(user)){
             auto mbarExpectOp = dyn_cast<tt::MbarExpectOp>(user);
             //Value pred = builder.create<arith::ConstantIntOp>(loc, 1, 1);
@@ -584,6 +589,7 @@ void lowerFragSmemStore(tt::FragSmemStoreOp& op) {
             loc,
             src,
             op->getOperand(1), // changed to memdesc
+            op->getNumOperands() > 2 ? op->getOperand(2) : Value(),
             regType
     );
     int ctaIdAttr = op.getCtaId();

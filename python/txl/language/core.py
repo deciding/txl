@@ -157,7 +157,7 @@ def frag_smem_load(smem, shape, layout, other=None, is_broadcast=False, cta_id=-
     return _semantic.frag_smem_load(smem, shape, layout, other, is_broadcast, cta_id)
 
 @builtin
-def frag_smem_store(smem, value, layout, cta_id=-1, _semantic=None) -> None:
+def frag_smem_store(smem, value, layout, cta_id=-1, mbar=None, _semantic=None) -> None:
     """
     support:
     1. support 2d -> squeezed 1d reg based frag store.
@@ -169,7 +169,7 @@ def frag_smem_store(smem, value, layout, cta_id=-1, _semantic=None) -> None:
         value = core.full((1,), value, value.type, _semantic=_semantic)
     layout = _unwrap_if_constexpr(layout)
     cta_id = _unwrap_if_constexpr(cta_id)
-    return _semantic.frag_smem_store(smem, value, layout, cta_id)
+    return _semantic.frag_smem_store(smem, value, layout, cta_id, mbar)
 
 @builtin
 def relayout(value, shape, layout, _semantic=None) -> tl.tensor:

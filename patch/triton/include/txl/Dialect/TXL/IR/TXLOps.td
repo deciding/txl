@@ -115,7 +115,7 @@ def TXL_RemoteSmemStoreOp : TXL_Op<"remote_smem_store"> {
   }];
 }
 
-def TXL_FragSmemLoadOp : TXL_Op<"frag_smem_load"> {
+def TXL_FragSmemLoadOp : TXL_Op<"frag_smem_load", [AttrSizedOperandSegments]> {
   let summary = "Load a distributed tensor from a buffer in local memory";
 
   let description = [{
@@ -124,6 +124,7 @@ def TXL_FragSmemLoadOp : TXL_Op<"frag_smem_load"> {
   let arguments = (ins
     Arg<TT_Tensor, "", [MemRead]>:$src,
     Optional<TT_Type>:$other,
+    Optional<I1>:$pred,
     TypeAttr: $regType,
     BoolAttr: $fullLayout,
     DefaultValuedAttr<I32Attr, "-1">: $ctaId
@@ -131,10 +132,10 @@ def TXL_FragSmemLoadOp : TXL_Op<"frag_smem_load"> {
 
   let results = (outs TT_Tensor:$result);
 
-  let assemblyFormat = [{$src `,` $other attr-dict `:` type($src) `,` type($other) `->` type($result) `(` $regType `)`}];
+  let assemblyFormat = [{$src (`other` $other^)? (`pred` $pred^)? attr-dict `:` functional-type(operands, $result) `(` $regType `)`}];
 }
 
-def TXL_FragSmemStoreOp : TXL_Op<"frag_smem_store"> {
+def TXL_FragSmemStoreOp : TXL_Op<"frag_smem_store", [AttrSizedOperandSegments]> {
   let summary = "Store a distributed tensor into a buffer in local memory";
 
   let description = [{
@@ -144,12 +145,14 @@ def TXL_FragSmemStoreOp : TXL_Op<"frag_smem_store"> {
     TT_Tensor:$src,
     Arg<TT_Tensor, "", [MemWrite]>:$dst,
     Optional<TT_Tensor>:$mbar,
+    Optional<I1>:$pred,
     TypeAttr: $regType,
     DefaultValuedAttr<I32Attr, "-1">: $ctaId
   );
 
   let assemblyFormat = [{
-    $src `,` $dst `,` (`mbar` $mbar^)? attr-dict `:` type($src) `(` $regType `)` `,` type($dst) `,` type($mbar)
+    $src `,` $dst (`mbar` $mbar^)? (`pred` $pred^)? attr-dict `:`
+    type($src) `(` $regType `)` `,` type($dst) (`,` type($mbar)^)? (`,` type($pred)^)?
   }];
 }
 
@@ -268,6 +271,15 @@ def TXL_WGDotWaitOp : TXL_Op<"dot_wait", [MemoryEffects<[MemWrite]>]> {
   let arguments = (ins
     I32Attr:$pendings
   );
+
+  let assemblyFormat = "attr-dict";
+}
+
+def TXL_FenceProxyAsyncOp : TXL_Op<"fence_proxy_async", [MemoryEffects<[MemWrite]>]> {
+  let summary = "fence proxy async and general";
+  let description = [{
+    fence proxy async
+  }];
 
   let assemblyFormat = "attr-dict";
 }

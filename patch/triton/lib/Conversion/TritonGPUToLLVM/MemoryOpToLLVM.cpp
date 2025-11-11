@@ -44,7 +44,7 @@ LogicalResult lowerLocalStore(Location loc, MLIRContext *ctx, Value regVal,
   }
   cvt = cvt.sublayout({kReg, kLane, kWarp}, {kOffset});
   lowerLocalLdSt(loc, ctx, cvt, inVals, llvmElemTy, memDescTy, smemObj,
-                 rewriter, targetInfo, nullptr, Value(), ctaId);
+                 rewriter, targetInfo, nullptr, Value(), Value(), ctaId);
 
   return success();
 }
@@ -190,7 +190,7 @@ public:
     }
 
     auto outVals = lowerLocalLdSt(loc, ctx, cvt, {}, llvmElemTy, memDescTy,
-                                  smemObj, rewriter, targetInfo, op, Value(), ctaId);
+                                  smemObj, rewriter, targetInfo, op, Value(), Value(), ctaId);
 
     Value result = packLLElements(loc, typeConverter, outVals, rewriter, regTy);
     rewriter.replaceOp(op, result);

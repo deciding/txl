@@ -100,7 +100,7 @@ def TXLGPU_SaveCtxOp : TXLGPU_Op<"save_ctx", [
   let assemblyFormat = "attr-dict";
 }
 
-def TXLGPU_FragLocalLoadOp : TXLGPU_Op<"frag_local_load"> {
+def TXLGPU_FragLocalLoadOp : TXLGPU_Op<"frag_local_load", [AttrSizedOperandSegments]> {
   let summary = "Load a distributed tensor from a buffer in local memory";
 
   let description = [{
@@ -109,16 +109,17 @@ def TXLGPU_FragLocalLoadOp : TXLGPU_Op<"frag_local_load"> {
   let arguments = (ins
     Arg<TTG_MemDescType, "", [MemRead]>:$src,
     Optional<TT_Type>:$other,
+    Optional<I1>:$pred,
     TypeAttr: $regType,
     BoolAttr: $fullLayout
   );
 
   let results = (outs TT_Tensor:$result);
 
-  let assemblyFormat = [{$src `,` $other attr-dict `:` type($src) `,` type($other) `->` type($result) `(` $regType `)`}];
+  let assemblyFormat = [{$src (`other` $other^)? (`pred` $pred^)? attr-dict `:` functional-type(operands, $result) `(` $regType `)`}];
 }
 
-def TXLGPU_FragLocalStoreOp : TXLGPU_Op<"frag_local_store"> {
+def TXLGPU_FragLocalStoreOp : TXLGPU_Op<"frag_local_store", [AttrSizedOperandSegments]> {
   let summary = "Store a distributed tensor into a buffer in local memory";
 
   let description = [{
@@ -128,11 +129,12 @@ def TXLGPU_FragLocalStoreOp : TXLGPU_Op<"frag_local_store"> {
     TT_Tensor:$src,
     Arg<TTG_MemDescType, "", [MemWrite]>:$dst,
     Optional<TTG_MemDescType>:$mbar,
+    Optional<I1>:$pred,
     TypeAttr: $regType
   );
 
   let assemblyFormat = [{
-    $src `,` $dst (`mbar` $mbar^)? attr-dict `:` type($src) `(` $regType `)` `,` type($dst) `,` type($mbar)
+    $src `,` $dst (`mbar` $mbar^)? (`pred` $pred^)? attr-dict `:` type($src) `(` $regType `)` `,` type($dst) (`,` type($mbar)^)? (`,` type($pred)^)?
   }];
 }
 

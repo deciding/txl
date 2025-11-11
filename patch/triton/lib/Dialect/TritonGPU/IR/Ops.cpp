@@ -328,6 +328,7 @@ struct CanonicalizeConvertFromConvert
       rewriter.replaceOpWithNewOp<FragSmemLoadOp>(op, op->getResult(0).getType(),
                                                sharedLoad.getSrc(),
                                                sharedLoad.getOther(),
+                                               sharedLoad.getPred(),
                                                sharedLoad.getRegType(),
                                                sharedLoad.getFullLayout());
 

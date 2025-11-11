@@ -183,7 +183,7 @@ public:
     }
 
     auto outVals = lowerLocalLdSt(loc, ctx, cvt, {}, llvmElemTy, memDescTy,
-                                  smemObj, rewriter, targetInfo, op, otherVal, ctaId);
+                                  smemObj, rewriter, targetInfo, op, otherVal, op.getPred(), ctaId);
 
     // txl pred, broadcast only triggered in 
     //  1. normal cases, i.e. warp and lanes are full. TODO: full specified by default or fullRegLayout?
@@ -344,7 +344,7 @@ LogicalResult lowerFragLocalStore(Location loc, MLIRContext *ctx, Operation* op,
   }
 
   lowerLocalLdSt(loc, ctx, cvt, inVals, llvmElemTy, memDescTy, smemObj,
-                 rewriter, targetInfo, op, Value(), ctaId,
+                 rewriter, targetInfo, op, Value(), fragLocalStore.getPred(), ctaId,
                  mbarllvmElemTy, mbarMemDescTy, mbarObj);
 
   return success();

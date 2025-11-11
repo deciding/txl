@@ -20,6 +20,7 @@ from .core import (
     smem_reshape,
     frag_smem_load,
     frag_smem_store,
+    fence_proxy_async,
     relayout,
     print_layout,
     mbar_alloc,

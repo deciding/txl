@@ -139,6 +139,7 @@ struct CvtFragSmemLoadToFragSmemLoad
       auto newFragSmemLoad = rewriter.replaceOpWithNewOp<FragSmemLoadOp>(op, op->getResult(0).getType(),
                                                fragSmemLoad.getSrc(),
                                                fragSmemLoad.getOther(),
+                                               fragSmemLoad.getPred(),
                                                fragSmemLoad.getRegType(),
                                                fragSmemLoad.getFullLayout()
                                                );
@@ -272,6 +273,7 @@ struct CvtElemWiseFragSmemLoadToFragSmemLoad
     auto newFragSmemLoad = rewriter.replaceOpWithNewOp<FragSmemLoadOp>(op, op->getResult(0).getType(),
                                              fragSmemLoad.getSrc(),
                                              fragSmemLoad.getOther(),
+                                             fragSmemLoad.getPred(),
                                              fragSmemLoad.getRegType(),
                                              fragSmemLoad.getFullLayout()
                                              );

@@ -1,12 +1,16 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "triton/Analysis/AxisInfo.h"
 #include "triton/Analysis/Utility.h"
+#include "triton/Dialect/TritonGPU/IR/Types.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "nvidia/include/Dialect/TXLGPU/IR/Dialect.h"
 #include "nvidia/include/Dialect/TXLGPU/Transforms/Passes.h"
@@ -21,6 +25,7 @@
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "triton/Tools/Sys/GetEnv.hpp"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.h"
 #include "triton/Analysis/TXLUtility.h" // txl
@@ -44,7 +49,86 @@ namespace txlgpu {
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
+bool isAsyncProxyRead(Operation *op) {
+  Value v; //TODO: suppose has result
+
+  while (true) {
+    if (!op)
+      break;
+    if (auto cvtOp = dyn_cast<ttg::ConvertLayoutOp>(op)) {
+      v = cvtOp->getOperand(0);
+      op = v.getDefiningOp();
+      continue;
+    }
+    if (auto transOp = dyn_cast<ttg::MemDescTransOp>(op)) {
+      v = transOp->getOperand(0);
+      op = v.getDefiningOp();
+      continue;
+    }
+    if (auto localAllocOp = dyn_cast<ttg::LocalAllocOp>(op)) {
+      if (localAllocOp->getNumOperands()>0) {
+        v = localAllocOp->getOperand(0);
+        op = v.getDefiningOp();
+        continue;
+      }
+    }
+    if (op->hasTrait<OpTrait::MemDescViewTrait>()) {
+      v = op->getOperand(0);
+      op = v.getDefiningOp();
+      continue;
+    }
+    break;
+  }
+  // We also accept block arguments as they appear in many MLIR tests
+  // If this is problematic we can totally drop them
+  //return isa<BlockArgument>(v) ||
+  return       (op &&
+         isa<triton::nvidia_gpu::WarpGroupDotOp,
+             triton::nvidia_gpu::TCGen5MMAOp,
+             triton::nvidia_gpu::TCGen5MMAScaledOp,
+             triton::nvidia_gpu::AsyncTMACopyGlobalToLocalOp,
+             triton::nvidia_gpu::AsyncTMAScatterOp,
+             triton::nvidia_gpu::AsyncTMAReduceOp>(op));
+}
+
+static void addingFenceProxyAsync(ttng::WarpGroupDotOp op){
+  OpBuilder builder(op);
+  auto valA = op->getOperand(0);
+  auto valB = op->getOperand(1);
+
+  bool isAAsyncRead = false;
+  if (isa<TypedValue<MemDescType>>(valA))
+    for (auto userA : valA.getUsers()){
+      if (isAsyncProxyRead(userA))
+          isAAsyncRead = true;
+    }
+  else {
+    // assume reg is async
+    isAAsyncRead = true;
+  }
+  bool isBAsyncRead = false;
+  if (isa<TypedValue<MemDescType>>(valB)) {
+    for (auto userB : valB.getUsers()){
+      if (isAsyncProxyRead(userB))
+          isBAsyncRead = true;
+    }
+  }
+  else {
+    // assume reg is async
+    isBAsyncRead = true;
+  }
+
+  if (!isAAsyncRead || !isBAsyncRead){
+    builder.create<triton::nvidia_gpu::FenceAsyncSharedOp>(op->getLoc(), false);
+  }
+}
+
 static void pipelineWgmma(ModuleOp moduleOp) {
+  // TODO: fence proxy async
+  //moduleOp->walk([&](ttng::WarpGroupDotOp op) {
+  //  addingFenceProxyAsync(op);
+  //});
+
   SmallVector<scf::ForOp> loops;
   moduleOp->walk([&](scf::ForOp forOp) { loops.push_back(forOp); });
 
@@ -557,6 +641,7 @@ void lowerFragSmemLoad(tt::FragSmemLoadOp& op) {
             resultTy,
             op->getOperand(0),
             other,
+            op.getPred(),
             op.getRegType(),
             op.getFullLayout()
     );
@@ -590,6 +675,7 @@ void lowerFragSmemStore(tt::FragSmemStoreOp& op) {
             src,
             op->getOperand(1), // changed to memdesc
             op->getNumOperands() > 2 ? op->getOperand(2) : Value(),
+            op.getPred(),
             regType
     );
     int ctaIdAttr = op.getCtaId();
@@ -1080,6 +1166,14 @@ void lowerLoads(ModuleOp moduleOp) {
 
 }
 
+void lowerFenceProxyAsync(ModuleOp moduleOp) {
+  moduleOp->walk([&](tt::FenceProxyAsyncOp op) {
+    OpBuilder builder(op);
+    builder.create<triton::nvidia_gpu::FenceAsyncSharedOp>(op->getLoc(), false);
+    op->erase();
+  });
+}
+
 class TXLGPUPipelinePass : public impl::TXLGPUPipelineBase<TXLGPUPipelinePass> {
 
 public:
@@ -1144,6 +1238,7 @@ public:
     });
 
     pipelineWgmma(m);
+    lowerFenceProxyAsync(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After wgmma\n");
       //m.dump();

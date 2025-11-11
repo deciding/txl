@@ -1992,14 +1992,26 @@ void init_triton_ir(py::module &&m) {
              self.create<tt::SmemStoreOp>(value, smem, ctaId);
            })
       .def("create_frag_smem_load",
-           [](TritonOpBuilder &self, Type resultTy, Value smem, std::optional<Value>& other, Type regType, bool fullLayout, int ctaId) -> Value {
+           [](TritonOpBuilder &self, Type resultTy, Value smem,
+               std::optional<Value>& other, std::optional<Value>& pred, Type regType, bool fullLayout,
+               int ctaId) -> Value {
              Value otherVal = other.value_or(Value());
-             auto res = self.create<tt::FragSmemLoadOp>(resultTy, smem, otherVal, regType, fullLayout, ctaId);
+             Value predVal = pred.value_or(Value());
+             auto res = self.create<tt::FragSmemLoadOp>(resultTy, smem, otherVal, predVal, regType, fullLayout, ctaId);
              return res;
            })
       .def("create_frag_smem_store",
-           [](TritonOpBuilder &self, Value smem, Value value, std::optional<Value>& mbar, Type regType, int ctaId) {
-             self.create<tt::FragSmemStoreOp>(value, smem, mbar.has_value() ? mbar.value() : Value(), regType, ctaId);
+           [](TritonOpBuilder &self, Value smem, Value value,
+               std::optional<Value>& mbar,
+               std::optional<Value>& pred, Type regType,
+               int ctaId) {
+             Value mbarVal = mbar.value_or(Value());
+             Value predVal = pred.value_or(Value());
+             self.create<tt::FragSmemStoreOp>(value, smem, mbarVal, predVal, regType, ctaId);
+           })
+      .def("create_fence_proxy_async",
+           [](TritonOpBuilder &self) -> void {
+             self.create<tt::FenceProxyAsyncOp>();
            })
       .def("create_relayout",
            [](TritonOpBuilder &self, Type resultTy, Value value, Type regType) -> Value {

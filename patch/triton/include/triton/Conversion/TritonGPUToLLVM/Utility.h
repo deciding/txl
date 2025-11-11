@@ -569,7 +569,9 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
                 Value affineOffset, uint64_t maskSpanAffineOffset,
                 RewriterBase &rewriter, const TargetInfoBase &targetInfo,
                 Operation *localLoadOp = nullptr,
-                Value otherVal = Value(), Value ctaId = Value(),
+                Value otherVal = Value(),
+                Value pred = Value(),
+                Value ctaId = Value(),
                 Value mbarPtr = Value()
 );
 
@@ -600,7 +602,9 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
                SharedMemoryObject smemObj, RewriterBase &rewriter,
                const TargetInfoBase &targetInfo,
                Operation *localLoadOp = nullptr,
-               Value otherVal = Value(), Value ctaId = Value(),
+               Value otherVal = Value(),
+               Value pred = Value(),
+               Value ctaId = Value(),
                std::optional<Type> mbarllvmElementTy = std::nullopt,
                std::optional<triton::gpu::MemDescType> mbarMemDescType = std::nullopt,
                std::optional<SharedMemoryObject> mbarShmemObj = std::nullopt

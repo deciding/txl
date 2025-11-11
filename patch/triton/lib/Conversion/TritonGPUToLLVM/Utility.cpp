@@ -693,7 +693,7 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
                 std::function<Value(Value)> calcPaddedOffset,
                 Value affineOffset, uint64_t maskSpanAffineOffset,
                 RewriterBase &rewriter, const TargetInfoBase &targetInfo,
-                Operation *localLoadOp, Value otherVal, Value ctaId, Value mbarPtr) {
+                Operation *localLoadOp, Value otherVal, Value pred, Value ctaId, Value mbarPtr) {
 
   bool isStore = !valsArray.empty();
   auto b = TritonLLVMOpBuilder(loc, rewriter);
@@ -701,26 +701,29 @@ lowerLdStShared(Location loc, MLIRContext *ctx, LinearLayout cvt,
   // txl: pred
   auto emitLdSt = [&](RewriterBase &rewriter, Location loc,
                       ArrayRef<Value> vals, Value shmemAddr, int idx,
-                      VectorType vecTy, Value pred) -> SmallVector<Value> {
+                      VectorType vecTy, Value predArg) -> SmallVector<Value> {
     auto length = vecTy.getNumElements();
+    if (pred) {
+        predArg = b.and_(pred, predArg);
+    }
     if (isStore) {
       Value valsVec =
           packLLVector(loc, ArrayRef<Value>(vals).slice(idx, length), rewriter);
       if (mbarPtr) {
           // nvidia-only
           targetInfo.storeDSharedMbar(rewriter, loc, shmemAddr, ctaId ? std::optional<Value>(ctaId) : std::nullopt, valsVec,
-                                  /*pred=*/pred, mbarPtr);
+                                  /*pred=*/predArg, mbarPtr);
       }
       else
           // general
           targetInfo.storeDShared(rewriter, loc, shmemAddr, ctaId ? std::optional<Value>(ctaId) : std::nullopt, valsVec,
-                                  /*pred=*/pred);
+                                  /*pred=*/predArg);
       return {};
     } else {
       assert(vals.empty());
       Value valsVec =
           targetInfo.loadDShared(rewriter, loc, shmemAddr, ctaId ? std::optional<Value>(ctaId) : std::nullopt, vecTy,
-                                 /*pred=*/pred, localLoadOp);
+                                 /*pred=*/predArg, localLoadOp);
       return unpackLLVector(loc, valsVec, rewriter);
     }
   };
@@ -833,7 +836,9 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
                Type llvmElemTy, triton::gpu::MemDescType srcTy,
                SharedMemoryObject smemObj, RewriterBase &rewriter,
                const TargetInfoBase &targetInfo, Operation *localLoadOp,
-               Value otherVal, Value ctaId, 
+               Value otherVal,
+               Value pred,
+               Value ctaId, 
                std::optional<Type> mbarllvmElementTy,
                std::optional<triton::gpu::MemDescType> mbarMemDescType,
                std::optional<SharedMemoryObject> mbarShmemObj) {
@@ -861,7 +866,7 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
       inVals = removeBroadcastSrc.apply(inVals);
     }
     auto outVals = lowerLocalLdSt(loc, ctx, prmtCvt, inVals, llvmElemTy, srcTy,
-                                  smemObj, rewriter, targetInfo, localLoadOp, otherVal, ctaId,
+                                  smemObj, rewriter, targetInfo, localLoadOp, otherVal, pred, ctaId,
                                   mbarllvmElementTy,
                                   mbarMemDescType,
                                   mbarShmemObj);
@@ -885,7 +890,7 @@ lowerLocalLdSt(Location loc, MLIRContext *ctx,
   auto maskSpanAffineOffset = smemObj.getMaskSpanOffsets(srcTy);
   return lowerLdStShared(
       loc, ctx, cvt, valsArray, llvmElemTy, smemObj.getBase(), calcPaddedOffset,
-      affineOffset, maskSpanAffineOffset, rewriter, targetInfo, localLoadOp, otherVal, ctaId, mbarShMemPtr);
+      affineOffset, maskSpanAffineOffset, rewriter, targetInfo, localLoadOp, otherVal, pred, ctaId, mbarShMemPtr);
 }
 
 bool emitTransferBetweenRegistersAndShared(

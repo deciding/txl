@@ -3,12 +3,12 @@ export TRITON_ALWAYS_COMPILE=1
 
 CMD=$1 # ncu, nsys
 
-REGEX="flash|txl|coopA"
+REGEX="flash|txl|coopA|softmax_kernel"
 
-OUTPUT="txl_fa_profile"
+#OUTPUT="txl_fa_profile"
 ### 3 levels of metrics
 
-ANALYSIS="full"
+#ANALYSIS="full"
 #ANALYSIS="detailed"
 
 #SECTIONS="Occupancy"
@@ -17,6 +17,7 @@ ANALYSIS="full"
 #SECTIONS="WorkloadDistribution"
 #SECTIONS="SourceCounters"
 #SECTIONS="WarpStateStats" # stalls
+#SECTIONS="LaunchStats" # spills
 
 #METRICS="smsp__thread_inst_executed.sum" # quite basic
 #METRICS="smsp__pcsamp_warps_issue_stalled_barrier,smsp__pcsamp_warps_issue_stalled_branch_resolving" # not tested
@@ -28,7 +29,6 @@ ANALYSIS="full"
 #METRICS="sm__cycles_active"
 #METRICS="sm__pipe_tma_cycles_active"
 #METRICS="sm__pipe_tensor_cycles_active"
-
 # NOTE: check stalls
 #METRICS="smsp__average_warp_latency_issue_stalled_gmma"
 #METRICS="smsp__average_warp_latency_issue_stalled_barrier"
@@ -37,9 +37,13 @@ ANALYSIS="full"
 #METRICS="smsp__warp_issue_stalled_gmma_per_warp_active" # mbar.arrive not significant
 #METRICS="smsp__warp_issue_stalled_wait_per_warp_active" # can be large
 #METRICS="smsp__warps_issue_stalled_long_scoreboard"
+# spill
+#METRICS="l1tex__t_bytes_pipe_lsu_mem_local_op_ld,l1tex__t_bytes_pipe_lsu_mem_local_op_st"
+METRICS="sm__sass_data_bytes_mem_local_op_ld,sm__sass_data_bytes_mem_local_op_st"
 
 
 PY_SCRIPT=python/txl/tutorials/02-flash-attention.py 
+#PY_SCRIPT=python/txl/tutorials/04-softmax.py
 #PY_SCRIPT=python/txl/tests/wgid.py
 #PY_SCRIPT="python/txl/tutorials/01-matmul.py -K 16384"
 #PY_SCRIPT="python/txl/tutorials/01-matmul.py -K 2048"

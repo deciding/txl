@@ -2,6 +2,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
@@ -10,6 +11,8 @@
 #include "llvm/Support/ErrorHandling.h"
 
 namespace mlir::triton{
+
+IntegerAttr getParentWithWGIDAttr(Operation *op);
 
 void setOpAttrWgId(Operation* op, int32_t wgid);
 

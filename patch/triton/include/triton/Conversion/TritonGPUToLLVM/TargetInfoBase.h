@@ -21,6 +21,8 @@ public:
   // conservatively emit a block-level barrier.
   virtual void barrier(Location loc, RewriterBase &rewriter,
                        bool isWarpSync = false) const = 0;
+  virtual void barrierWithId(Location loc, RewriterBase &rewriter,
+                       bool isWarpSync = false, int asyncId = -1, int numThreads = 128) const {};
 
   // Store/load a value from shared memory, either in the same CTA or, if
   // `ctaId` is non-nullopt, in another CTA in the same group.

@@ -90,7 +90,8 @@ def naive_softmax(x):
 """
 Totally triton
 """
-@triton.jit
+#@triton.jit
+@txl.jit
 def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n_rows, n_cols, BLOCK_SIZE: tl.constexpr,
                    LOG2_E: tl.constexpr,
                    num_stages: tl.constexpr):
@@ -773,7 +774,7 @@ def test_softmax(dump_dir=None, M=32*1024, N=32*1024):
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "ttg-utility"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
     knobs.autotuning.print=True
-    #knobs.compilation.always_compile=True
+    knobs.compilation.always_compile=True
     if dump_dir:
         knobs.compilation.dump_ir=True
         knobs.cache.dump_dir=dump_dir
@@ -843,6 +844,6 @@ def test_softmax(dump_dir=None, M=32*1024, N=32*1024):
 
 if __name__ == "__main__":
     #test_softmax('dump/1104sm', 8*1024, 32*1024)
-    test_softmax(M=1, N=32*1024)
+    test_softmax(M=8*1024, N=16*1024)
     #test_softmax()
     #test_softmax(size=32*1024)

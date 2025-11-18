@@ -189,3 +189,7 @@ triton3.3.x
 triton3.4.x
 *.ncu-rep
 *.chrome_trace
+*.json
+*.ptx
+*.whl
+*.tex

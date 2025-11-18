@@ -145,9 +145,21 @@ Value TargetInfo::ballot(RewriterBase &rewriter, Location loc, Type type,
 
 void TargetInfo::barrier(Location loc, RewriterBase &rewriter,
                          bool isWarpSync) const {
+    barrierWithId(loc, rewriter, isWarpSync);
+}
+
+void TargetInfo::barrierWithId(Location loc, RewriterBase &rewriter,
+                         bool isWarpSync, int asyncId, int numThreads) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
+  PTXBuilder ptxBuilder;
   if (isWarpSync) {
     rewriter.create<NVVM::SyncWarpOp>(loc, b.i32_val(0xffffffff));
+  } else if (asyncId != -1) {
+    auto &barSyncOp = *ptxBuilder.create<>("bar.sync");
+    barSyncOp(ptxBuilder.newConstantOperand(asyncId + 1), // TODO: hardcode bar begin = 1
+              ptxBuilder.newConstantOperand(128)); // TODO: hardcode
+    auto voidTy = void_ty(rewriter.getContext());
+    ptxBuilder.launch(rewriter, loc, voidTy);
   } else {
     b.barrier();
   }

@@ -1,14 +1,72 @@
 #include "triton/Analysis/Membar.h"
+#include "triton/Analysis/Allocation.h"
+#include "triton/Analysis/TXLUtility.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/LinearLayoutConversions.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
+#include "nvidia/include/Dialect/TXLGPU/IR/Dialect.h"
 
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include <deque>
 
+namespace ttng = mlir::triton::nvidia_gpu;
+
 namespace mlir {
+
+// txl
+static inline void insertBarrierTXL(OpBuilder &builder, Operation *op) {
+  //op->emitError("Insert Barrier");
+  //op->dump();
+  //llvm::outs() << "\n";
+  auto barrierOp = builder.create<mlir::gpu::BarrierOp>(op->getLoc());
+  auto attr = triton::getParentWithWGIDAttr(op);
+
+  int nameBarrierIdBegin = 1; // TODO align with python
+  int nameBarrierIdEnd = 8; // python should start from 8
+  if (attr) {
+    assert(attr.getType().isInteger(32) && "ttxg.wgid must be 32 bit int\n");
+    int32_t asyncTaskId = attr.getInt();
+
+    int barId = asyncTaskId + nameBarrierIdBegin;
+    assert(barId < nameBarrierIdEnd);
+    auto mod = op->getParentOfType<ModuleOp>();
+    int numWarps = mlir::triton::gpu::lookupNumWarps(op);
+    int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
+    int numThreads = numWarps * warpSize;
+    barrierOp->setAttr("bar_id", builder.getI64IntegerAttr(barId));
+    barrierOp->setAttr("num_threads", builder.getI64IntegerAttr(numThreads));
+  }
+}
+
+bool isFakeMemoryEffects(Operation* op){
+    bool fakeInTXL =  isa<triton::MbarExpectOp, triton::MbarWaitOp, triton::MbarArriveOp, triton::WGDotWaitOp, triton::FenceProxyAsyncOp, triton::TmaStoreOp, triton::TmaStoreWaitOp, triton::NamedBarrierArriveOp, triton::NamedBarrierWaitOp, triton::AsyncLoadWaitOp>(op);
+    bool fakeInTXLGPU = false;
+    return fakeInTXL || fakeInTXLGPU;
+}
+
+bool isTritonWrongSync(Operation* op){
+    bool isWrong =  isa<ttng::InitBarrierOp>(op); // smem_index ignored offset, making overlap
+    isWrong = isWrong || isa<ttng::AsyncTMACopyGlobalToLocalOp>(op); // tma_load + expect, as WAW
+    isWrong = isWrong || isa<ttng::WaitBarrierOp>(op); // wait on same mbar, treated as WRAWR
+    isWrong = isWrong || isa<ttng::BarrierExpectOp>(op); // init->expect, expect->expect, being WAW
+    // isWrong = isWrong || isa<ttng::AsyncTMACopyLocalToGlobalOp>(op); // tma_store with local_alloc necessary
+    return isWrong;
+}
+
+Interval<size_t> getWGBufferInterval(Interval<size_t> range, Operation* op){
+  auto attr = triton::getParentWithWGIDAttr(op);
+
+  if (attr) {
+    assert(attr.getType().isInteger(32) && "ttxg.wgid must be 32 bit int\n");
+    int32_t asyncTaskId = attr.getInt();
+    auto newOff = asyncTaskId * 300000;// TODO: hardcoded
+    Interval<size_t> newRange(range.start() + newOff, range.end() + newOff);
+    return newRange;
+  }
+  return range;
+}
 
 void MembarOrFenceAnalysis::run(FuncBlockInfoMapT &funcBlockInfoMap) {
   FunctionOpInterface funcOp =
@@ -56,10 +114,27 @@ void MembarOrFenceAnalysis::resolve(FunctionOpInterface funcOp,
     SmallVector<VirtualBlock> successors;
     Block::iterator startIt =
         block.second.isValid() ? std::next(block.second) : block.first->begin();
+    //llvm::outs() << "\n NEW BLOCK\n";
+    //inputBlockInfo.dump();
+    //llvm::outs() << "\n";
     for (Operation &op : llvm::make_range(startIt, block.first->end())) {
+      //op.dump();
+      //llvm::outs() << "\n";
       if (op.hasTrait<OpTrait::IsTerminator>() ||
           isa<RegionBranchOpInterface>(op)) {
+        //llvm::outs() << "\n IsTerminator\n";
+        //op.dump();
+        //llvm::outs() << "\n successor.size(): ";
+        //llvm::outs() << successors.size();
+        //llvm::outs() << "\n blockList.size(): ";
+        //llvm::outs() << blockList.size();
+        //llvm::outs() << "\n";
         visitTerminator(&op, successors);
+        //llvm::outs() << "\n successor.size(): ";
+        //llvm::outs() << successors.size();
+        //llvm::outs() << "\n blockList.size(): ";
+        //llvm::outs() << blockList.size();
+        //llvm::outs() << "\n";
         break;
       }
       update(&op, &inputBlockInfo, funcBlockInfoMap, builder);
@@ -159,39 +234,6 @@ void MembarOrFenceAnalysis::visitTerminator(
 }
 
 // txl
-static inline auto getParentWithWGIDAttr(Operation *op) -> IntegerAttr {
-  while (op) {
-    auto attr = op->getAttrOfType<IntegerAttr>("ttxg.wgid");
-    if (attr)
-      return attr;
-    op = op->getParentOp();
-  }
-  return nullptr; // Return nullptr if no parent has the attribute
-}
-
-// txl
-static inline void insertBarrierTXL(OpBuilder &builder, Operation *op) {
-  auto barrierOp = builder.create<mlir::gpu::BarrierOp>(op->getLoc());
-  auto attr = getParentWithWGIDAttr(op);
-
-  int nameBarrierIdBegin = 1; // TODO align with python
-  int nameBarrierIdEnd = 8; // python should start from 8
-  if (attr) {
-    assert(attr.getType().isInteger(32) && "ttxg.wgid must be 32 bit int\n");
-    int32_t asyncTaskId = attr.getInt();
-
-    int barId = asyncTaskId + nameBarrierIdBegin;
-    assert(barId < nameBarrierIdEnd);
-    auto mod = op->getParentOfType<ModuleOp>();
-    int numWarps = mlir::triton::gpu::lookupNumWarps(op);
-    int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
-    int numThreads = numWarps * warpSize;
-    barrierOp->setAttr("bar_id", builder.getI64IntegerAttr(barId));
-    barrierOp->setAttr("num_threads", builder.getI64IntegerAttr(numThreads));
-  }
-}
-
-// txl
 void MembarAnalysis::insertBarrier(Operation *op, OpBuilder *builder) {
   OpBuilder::InsertionGuard g(*builder);
   insertBarrierTXL(*builder, op);
@@ -206,15 +248,16 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
     return;
   }
 
-  if (isa<triton::gpu::AsyncWaitOp, triton::nvidia_gpu::TMAStoreWaitOp>(op) &&
-      !isa<gpu::BarrierOp>(op->getNextNode())) {
-    // If the current op is an async wait and the next op is not a barrier we
-    // insert a barrier op and sync
-    builder->setInsertionPointAfter(op);
-    insertBarrier(op, builder);
-    blockInfo->sync();
-    return;
-  }
+  // txl: what if is return, br?
+  //if (isa<triton::gpu::AsyncWaitOp, triton::nvidia_gpu::TMAStoreWaitOp>(op) &&
+  //    !isa<gpu::BarrierOp>(op->getNextNode())) {
+  //  // If the current op is an async wait and the next op is not a barrier we
+  //  // insert a barrier op and sync
+  //  builder->setInsertionPointAfter(op);
+  //  insertBarrier(op, builder);
+  //  blockInfo->sync();
+  //  return;
+  //}
 
   BlockInfo curBlockInfo;
   auto scratchBufferId = Allocation::InvalidBufferId;
@@ -227,6 +270,8 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
   } else {
     // Intra-function dependencies
     if (auto memoryEffectOpInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
+      if (!isFakeMemoryEffects(op)){
+
       // Explicit buffer
       SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>>
           effectInstances;
@@ -237,26 +282,27 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
             if (bufferId != Allocation::InvalidBufferId) {
               if (isa<MemoryEffects::Write>(effectInstance.getEffect()))
                 curBlockInfo
-                    .syncWriteIntervals[allocation->getAllocatedInterval(
-                        bufferId)]
+                    .syncWriteIntervals[getWGBufferInterval(allocation->getAllocatedInterval(
+                        bufferId), op)]
                     .insert(op);
               else if (isa<MemoryEffects::Read>(effectInstance.getEffect()))
                 curBlockInfo
-                    .syncReadIntervals[allocation->getAllocatedInterval(
-                        bufferId)]
+                    .syncReadIntervals[getWGBufferInterval(allocation->getAllocatedInterval(
+                        bufferId), op)]
                     .insert(op);
             }
           }
         }
       }
+      }
     }
     // If this op is may be signalling other threads asynchronously, make sure
     // all shared memory transactions are complete beforehand.
-    if (isa<triton::nvidia_gpu::ArriveBarrierOp>(op)) {
-      Interval<size_t> allIntervals(0, std::numeric_limits<size_t>::max());
-      curBlockInfo.syncWriteIntervals[allIntervals].insert(op);
-      curBlockInfo.syncReadIntervals[allIntervals].insert(op);
-    }
+    //if (isa<triton::nvidia_gpu::ArriveBarrierOp>(op)) {
+    //  Interval<size_t> allIntervals(0, std::numeric_limits<size_t>::max());
+    //  curBlockInfo.syncWriteIntervals[allIntervals].insert(op);
+    //  curBlockInfo.syncReadIntervals[allIntervals].insert(op);
+    //}
     // NOTE: txl this is before lowering to LLVM
     // THIS additional bar.sync make things slower
     //if (isa<triton::MbarArriveOp>(op)) {
@@ -291,10 +337,15 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
           "scratch buffer operations should not have any shared memory "
           "dependencies");
     }
-    auto interval = allocation->getAllocatedInterval(scratchBufferId);
+    auto interval = getWGBufferInterval(allocation->getAllocatedInterval(scratchBufferId), op);
     curBlockInfo.syncWriteIntervals[interval].insert(op);
     auto insertCTABarrier = blockInfo->isIntersected(curBlockInfo, filter);
-    if (insertCTABarrier) {
+    if (insertCTABarrier && !isTritonWrongSync(op)) {
+      //llvm::outs() << "\n BlockInfo scratch\n";
+      //blockInfo->dump();
+      //llvm::outs() << "\n";
+      //curBlockInfo.dump();
+      //llvm::outs() << "\n";
       builder->setInsertionPoint(op);
       insertBarrier(op, builder);
     }
@@ -303,7 +354,12 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
     if (insertCTABarrier || !isWarpSync)
       blockInfo->sync();
     curBlockInfo.syncReadIntervals[interval].insert(op);
-  } else if (blockInfo->isIntersected(curBlockInfo, filter)) {
+  } else if (blockInfo->isIntersected(curBlockInfo, filter) && !isTritonWrongSync(op)) {
+      //llvm::outs() << "\n BlockInfo\n";
+      //blockInfo->dump();
+      //llvm::outs() << "\n";
+      //curBlockInfo.dump();
+      //llvm::outs() << "\n";
     builder->setInsertionPoint(op);
     insertBarrier(op, builder);
     blockInfo->sync();
@@ -311,5 +367,8 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
   // Update the region info, even if barrier is inserted, we have to maintain
   // the current op's read/write buffers.
   blockInfo->join(curBlockInfo);
+  //llvm::outs() << "\n New Blockinfo\n";
+  //blockInfo->dump();
+  //llvm::outs() << "\n";
 }
 } // namespace mlir

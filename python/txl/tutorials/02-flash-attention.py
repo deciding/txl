@@ -26,6 +26,15 @@ try:
     from triton.tools.tensor_descriptor import TensorDescriptor
     DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
+    # profile
+    import triton.profiler.language as pl
+    import triton.profiler as proton
+    from txl.language.semantic import TXLSemantic
+
+    pl.enable_semantic("triton")
+    pl.enable_semantic_obj(TXLSemantic)
+
+
     print("TXL")
 except:
     class txl:
@@ -41,7 +50,7 @@ except:
                 pass
 
         @staticmethod
-        def jit(use_txl=False, diff_mode='ttir', diff_select=-1, log_dir=''):
+        def jit(use_txl=False, diff_mode='ttir', diff_select=-1, log_dir='', src_file=''):
             def decorator(func):
                 return func
             return decorator
@@ -56,11 +65,13 @@ except:
 
 
 def is_hip():
-    return triton.runtime.driver.active.get_current_target().backend == "hip"
+    #return triton.runtime.driver.active.get_current_target().backend == "hip"
+    return False
 
 
 def is_cuda():
-    return triton.runtime.driver.active.get_current_target().backend == "cuda"
+    #return triton.runtime.driver.active.get_current_target().backend == "cuda"
+    return True
 
 
 def supports_host_descriptor():
@@ -1521,13 +1532,6 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
 # PROFILING: TXL + TMA + FA3 Algo3 Pingpong + Intra Overlap
 ###################################################
 
-import triton.profiler.language as pl
-import triton.profiler as proton
-from txl.language.semantic import TXLSemantic
-
-pl.enable_semantic("triton")
-pl.enable_semantic_obj(TXLSemantic)
-
 @txl.autotune(
     configs=[
         txl.Config(
@@ -1874,6 +1878,734 @@ def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
                     if txl.is_warpgroup([2]):
                         desc_o.store([qo_offset_y+BLOCK_M//2, 0], acc.to(dtype))
 
+###################################################
+# TXL + TAWA
+###################################################
+
+@txl.autotune(
+    configs=[
+        txl.Config(
+            tma_ws_best_config,
+            num_stages=2,
+            num_warps=4,
+            num_warpgroups=3,
+            pre_hook = _host_descriptor_pre_hook,
+        )
+    ],
+    key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT"],
+ )
+@txl.jit
+#@txl.jit(diff_mode="llir")
+#@txl.jit(src_file="dump/fa1117/3WABGMTQLV7L7LEIYIXT3C3VKRQAQBHFZ5KDTN7AZI47XB5T767Q/_attn_fwd_ws_tma_txl_tawa.ptx")
+#@txl.jit(src_file="/workspace/_attn_fwd_ws_tma_txl_tawa.ptx")
+def _attn_fwd_ws_tma_txl_tawa(sm_scale, M,  #
+              Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #
+              HEAD_DIM: tl.constexpr,  #
+              BLOCK_M: tl.constexpr,  #
+              BLOCK_N: tl.constexpr,  #
+              FP8_OUTPUT: tl.constexpr,  #
+              STAGE: tl.constexpr,  #
+              warp_specialize: tl.constexpr,  #
+
+              #o_ptr,
+              #stride_om: tl.constexpr,
+              #stride_on: tl.constexpr,
+
+              # NOTE: txl
+              NUM_STAGES: tl.constexpr,  #
+              NUM_CONSUMERS: tl.constexpr  #
+              ):
+    dtype = tl.float8e5 if FP8_OUTPUT else tl.float16
+    tl.static_assert(BLOCK_N <= HEAD_DIM)
+    start_m = tl.program_id(0)
+    off_hz = tl.program_id(1)
+    off_z = off_hz // H
+    off_h = off_hz % H
+
+    y_dim = Z * H * N_CTX
+    # If no host desc, then make device desc
+    desc_q = _maybe_make_tensor_desc(desc_q, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_M, HEAD_DIM])
+    desc_v = _maybe_make_tensor_desc(desc_v, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_N, HEAD_DIM])
+    desc_k = _maybe_make_tensor_desc(desc_k, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_N, HEAD_DIM])
+    desc_o = _maybe_make_tensor_desc(desc_o, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_M, HEAD_DIM])
+
+    offset_y = off_z * (N_CTX * H) + off_h * N_CTX
+    qo_offset_y = offset_y + start_m * BLOCK_M
+
+    #cur_o_ptr = ((qo_offset_y + tl.arange(0, BLOCK_M//2)) * stride_om)[:, None] + tl.arange(0, stride_om)[None, :]
+
+
+    # load q: it will stay in SRAM throughout
+    #q = desc_q.load([qo_offset_y, 0])
+
+    bQ0 = txl.smem_alloc([BLOCK_M//2, HEAD_DIM], dtype=dtype) # bQ has only 1 buffer for reuse only
+    pMbar_bQ0 = txl.mbar_alloc(1)
+    bQ1 = txl.smem_alloc([BLOCK_M//2, HEAD_DIM], dtype=dtype)
+    pMbar_bQ1 = txl.mbar_alloc(1)
+    #bQ = txl.smem_alloc([BLOCK_M//2, HEAD_DIM], dtype=dtype) # bQ has only 1 buffer for reuse only
+    #pMbar_bQ = txl.mbar_alloc(1)
+    #bQi = txl.get_buffer(bQ, 0)
+    #pMbar_bQi = txl.get_buffer(pMbar_bQ, 0)
+    #bQ0i = txl.smem_slice(bQi, 0, BLOCK_M//2, 0)
+    #bQ1i = txl.smem_slice(bQi, BLOCK_M//2, BLOCK_M//2, 0)
+
+    bK = txl.smem_alloc([BLOCK_N, HEAD_DIM], dtype=dtype, num_stages=NUM_STAGES)
+    bV = txl.smem_alloc([BLOCK_N, HEAD_DIM], dtype=dtype, num_stages=NUM_STAGES)
+    pMbar_bK = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+    pMbar_bV = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+
+    #cMbar_QK1 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    #cMbar_PV1 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    #cMbar_QK2 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    #cMbar_PV2 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    cMbar_QK = txl.mbar_alloc(256, num_stages=NUM_STAGES)
+    cMbar_PV = txl.mbar_alloc(256, num_stages=NUM_STAGES)
+
+    # TODO: func type mismatch
+
+    # range of values handled by this stage
+    lo, hi = 0, N_CTX
+    offsetkv_y = offset_y + lo
+
+
+    if txl.is_warpgroup([0]):
+        txl.reg_dealloc(40)
+
+        bQ0i = txl.get_buffer(bQ0, 0)
+        pMbar_bQ0i = txl.get_buffer(pMbar_bQ0, 0)
+        bQ1i = txl.get_buffer(bQ1, 0)
+        pMbar_bQ1i = txl.get_buffer(pMbar_bQ1, 0)
+
+        txl.mbar_expect(pMbar_bQ0i, BLOCK_M // 2 * HEAD_DIM * 2)
+        txl.tma_load(bQ0i, desc_q, [qo_offset_y, 0], pMbar_bQ0i)
+        txl.mbar_expect(pMbar_bQ1i, BLOCK_M // 2 * HEAD_DIM * 2)
+        txl.tma_load(bQ1i, desc_q, [qo_offset_y+BLOCK_M//2, 0], pMbar_bQ1i)
+
+        #txl.mbar_expect(pMbar_bQi, BLOCK_M * HEAD_DIM * 2)
+        #txl.tma_load(bQi, desc_q, [qo_offset_y, 0], pMbar_bQi)
+
+        bufIdxW = 0 # write buffer
+        phase = 1
+
+        for start_n in range(lo, hi, BLOCK_N):
+            start_n = tl.multiple_of(start_n, BLOCK_N)
+
+            cur_mbar_bK = txl.get_buffer(pMbar_bK, bufIdxW)
+            cur_mbar_bV = txl.get_buffer(pMbar_bV, bufIdxW)
+            cur_bK = txl.get_buffer(bK, bufIdxW)
+            cur_bV = txl.get_buffer(bV, bufIdxW)
+
+            cur_mbar_QK = txl.get_buffer(cMbar_QK, bufIdxW) # wait for the same buffer
+            cur_mbar_PV = txl.get_buffer(cMbar_PV, bufIdxW)
+
+            # TODO: tma_expect_and_load
+            txl.mbar_wait(cur_mbar_QK, phase)
+            txl.mbar_expect(cur_mbar_bK, BLOCK_N * HEAD_DIM * 2)
+            txl.tma_load(cur_bK, desc_k, [offsetkv_y, 0], cur_mbar_bK)
+
+            txl.mbar_wait(cur_mbar_PV, phase)
+            txl.mbar_expect(cur_mbar_bV, BLOCK_N * HEAD_DIM * 2)
+            txl.tma_load(cur_bV, desc_v, [offsetkv_y, 0], cur_mbar_bV)
+
+            offsetkv_y += BLOCK_N
+            bufIdxW = (bufIdxW + 1) % NUM_STAGES
+            if bufIdxW == 0:
+                phase = phase^1
+
+    if txl.is_warpgroup([1, 2]):
+        txl.reg_alloc(232)
+
+        if txl.is_warpgroup([1]):
+            offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M//2)
+            #o_block_ptr = tl.make_block_ptr(
+            #    base=o_ptr + offset_y,
+            #    shape=(N_CTX, HEAD_DIM),
+            #    strides=(stride_om, stride_on),
+            #    offsets=(start_m * BLOCK_M, 0),
+            #    block_shape=(BLOCK_M//2, HEAD_DIM),
+            #    order=(1, 0),
+            #)
+            #cur_o_ptr = o_ptr+((qo_offset_y + tl.arange(0, BLOCK_M//2)) * stride_om)[:, None] + tl.arange(0, stride_om)[None, :]
+
+        else:
+            offs_m = start_m * BLOCK_M + tl.arange(BLOCK_M//2, BLOCK_M)
+            #o_block_ptr = tl.make_block_ptr(
+            #    base=o_ptr + offset_y,
+            #    shape=(N_CTX, HEAD_DIM),
+            #    strides=(stride_om, stride_on),
+            #    offsets=(start_m * BLOCK_M + BLOCK_M//2, 0),
+            #    block_shape=(BLOCK_M//2, HEAD_DIM),
+            #    order=(1, 0),
+            #)
+            #cur_o_ptr = o_ptr+((qo_offset_y + tl.arange(BLOCK_M//2, BLOCK_M)) * stride_om)[:, None] + tl.arange(0, stride_om)[None, :]
+
+        # initialize pointer to m and l
+        # These are in regs
+        m_i = tl.zeros([BLOCK_M//2], dtype=tl.float32) - float("inf")
+        l_i = tl.zeros([BLOCK_M//2], dtype=tl.float32) + 1.0
+        acc = tl.zeros([BLOCK_M//2, HEAD_DIM], dtype=tl.float32)
+
+        # load scales
+        qk_scale = sm_scale
+        qk_scale *= 1.44269504  # 1/log(2)
+
+        bQ0i = txl.get_buffer(bQ0, 0)
+        pMbar_bQ0i = txl.get_buffer(pMbar_bQ0, 0)
+        bQ1i = txl.get_buffer(bQ1, 0)
+        pMbar_bQ1i = txl.get_buffer(pMbar_bQ1, 0)
+
+        # wait Q
+        if txl.is_warpgroup([1]):
+            txl.mbar_wait(pMbar_bQ0i, 0)
+        if txl.is_warpgroup([2]):
+            txl.mbar_wait(pMbar_bQ1i, 0)
+        #txl.mbar_wait(pMbar_bQi, 0)
+
+        # -- prologue --
+
+        # TODO: write in txl.jit for reuse
+
+        ## load and wait K
+        cur_mbar_bK = txl.get_buffer(pMbar_bK, 0)
+        cur_bK = txl.get_buffer(bK, 0)
+        txl.mbar_wait(cur_mbar_bK, 0)
+
+        cur_mbar_QK = txl.get_buffer(cMbar_QK, 0)
+
+        if txl.is_warpgroup([1]):
+            qk = tl.dot(bQ0i, cur_bK.T)
+        else: # [2]
+            qk = tl.dot(bQ1i, cur_bK.T)
+        txl.dot_wait(0)
+        # load new K
+        txl.mbar_arrive(cur_mbar_QK)
+
+        # softmax
+        m_ij = tl.maximum(m_i, tl.max(qk, 1) * qk_scale)
+        qk = qk * qk_scale - m_ij[:, None]
+
+        p = tl.math.exp2(qk)
+        l_ij = tl.sum(p, 1)
+        # -- update m_i and l_i
+        alpha = tl.math.exp2(m_i - m_ij)
+        l_i = l_i * alpha + l_ij
+        # -- update output accumulator --
+        #acc = acc * alpha[:, None]
+
+        # update m_i and l_i
+        m_i = m_ij
+
+        # TXL: cast reordered
+        p = p.to(dtype)
+
+        bufIdxRK = 1
+        bufIdxRV = 0
+        phaseK = 0
+        phaseV = 0
+
+        # loop over k, v and update accumulator
+        for start_n in range(lo+BLOCK_N, hi, BLOCK_N):
+            start_n = tl.multiple_of(start_n, BLOCK_N)
+
+            # tawa: update acc
+            #p = p.to(dtype)
+            # tawa: rescale acc
+            #acc = acc * alpha[:, None]
+
+            # -- compute qk i+1 ----
+            cur_mbar_bK = txl.get_buffer(pMbar_bK, bufIdxRK)
+            cur_bK = txl.get_buffer(bK, bufIdxRK)
+            txl.mbar_wait(cur_mbar_bK, phaseK)
+
+            cur_mbar_QK = txl.get_buffer(cMbar_QK, bufIdxRK) # wait for the same buffer
+
+            if txl.is_warpgroup([1]):
+                qk = tl.dot(bQ0i, cur_bK.T)
+            else: # [2]
+                qk = tl.dot(bQ1i, cur_bK.T)
+            txl.dot_wait(0)
+
+            # -- compute pv i ----
+            cur_mbar_bV = txl.get_buffer(pMbar_bV, bufIdxRV)
+            cur_bV = txl.get_buffer(bV, bufIdxRV)
+            txl.mbar_wait(cur_mbar_bV, phaseV)
+
+            cur_mbar_PV = txl.get_buffer(cMbar_PV, bufIdxRV)
+
+            # note that this non transposed v for FP8 is only supported on Blackwell
+            # here we have a p layout convertion from mma to dot_op
+            acc = tl.dot(p, cur_bV, acc)
+
+            # TAWA: delayed QK arrive
+            txl.mbar_arrive(cur_mbar_QK)
+
+
+            # Softmax
+            m_ij = tl.maximum(m_i, tl.max(qk, 1) * qk_scale)
+            qk = qk * qk_scale - m_ij[:, None]
+
+            p = tl.math.exp2(qk)
+            l_ij = tl.sum(p, 1)
+            # -- update m_i and l_i
+            alpha = tl.math.exp2(m_i - m_ij)
+            l_i = l_i * alpha + l_ij
+
+
+            # TXL: cast reordered
+            p = p.to(dtype)
+
+
+            # tawa : PV
+            txl.dot_wait(0)
+            # -- update output accumulator --
+
+            # TXL: reordered
+            acc = acc * alpha[:, None]
+
+            # finish PV
+            #txl.dot_wait(0)
+            txl.mbar_arrive(cur_mbar_PV)
+
+
+            # update m_i and l_i
+            m_i = m_ij
+
+            bufIdxRK = (bufIdxRK + 1) % NUM_STAGES
+            if bufIdxRK == 0:
+                phaseK = phaseK ^ 1
+            bufIdxRV = (bufIdxRV + 1) % NUM_STAGES
+            if bufIdxRV == 0:
+                phaseV = phaseV ^ 1
+
+        # -- last iter --
+        # tawa: update acc
+        #p = p.to(dtype)
+        # tawa: rescale acc
+        #acc = acc * alpha[:, None]
+
+        # load v
+        cur_mbar_bV = txl.get_buffer(pMbar_bV, bufIdxRV)
+        cur_bV = txl.get_buffer(bV, bufIdxRV)
+        txl.mbar_wait(cur_mbar_bV, phaseV)
+
+        # note that this non transposed v for FP8 is only supported on Blackwell
+        acc = tl.dot(p, cur_bV, acc)
+        txl.dot_wait(0)
+        #txl.mbar_arrive(cur_mbar_PV)
+
+        # epilogue
+
+        m_i += tl.math.log2(l_i)
+        m_ptrs = M + off_hz * N_CTX + offs_m
+        tl.store(m_ptrs, m_i)
+        acc = acc / l_i[:, None]
+
+        if txl.is_warpgroup([1]):
+            desc_o.store([qo_offset_y, 0], acc.to(dtype))
+            #tl.store(o_block_ptr, acc.to(dtype))
+            #tl.store(cur_o_ptr, acc.to(dtype))
+        if txl.is_warpgroup([2]):
+            desc_o.store([qo_offset_y+BLOCK_M//2, 0], acc.to(dtype))
+            #tl.store(cur_o_ptr, acc.to(dtype))
+
+###################################################
+# TXL + TAWA2
+###################################################
+
+def _host_descriptor_pre_hook2(nargs):
+    NUM_CONSUMER_GROUPS = nargs.get("NUM_CONSUMERS", 1)
+    BLOCK_M = nargs["BLOCK_M"]
+    BLOCK_N = nargs["BLOCK_N"]
+    HEAD_DIM = nargs["HEAD_DIM"]
+    if not isinstance(nargs["desc_q"], TensorDescriptor):
+        return
+    nargs["desc_q"].block_shape = [BLOCK_M, HEAD_DIM]
+    nargs["desc_v"].block_shape = [BLOCK_N, HEAD_DIM]
+    nargs["desc_k"].block_shape = [BLOCK_N, HEAD_DIM]
+    nargs["desc_o"].block_shape = [BLOCK_M, HEAD_DIM]
+
+@txl.autotune(
+    configs=[
+        txl.Config(
+            tma_ws_best_config,
+            num_stages=2,
+            num_warps=4,
+            num_warpgroups=3,
+            pre_hook = _host_descriptor_pre_hook2,
+        )
+    ],
+    key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT"],
+ )
+@txl.jit
+def _attn_fwd_ws_tma_txl_tawa2(sm_scale, M,  #
+              Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #
+              HEAD_DIM: tl.constexpr,  #
+              BLOCK_M: tl.constexpr,  #
+              BLOCK_N: tl.constexpr,  #
+              FP8_OUTPUT: tl.constexpr,  #
+              STAGE: tl.constexpr,  #
+              warp_specialize: tl.constexpr,  #
+
+              # NOTE: txl
+              NUM_STAGES: tl.constexpr,  #
+              NUM_CONSUMERS: tl.constexpr  #
+              ):
+    dtype = tl.float8e5 if FP8_OUTPUT else tl.float16
+    tl.static_assert(BLOCK_N <= HEAD_DIM)
+    start_m = tl.program_id(0)
+    off_hz = tl.program_id(1)
+    off_z = off_hz // H
+    off_h = off_hz % H
+
+    y_dim = Z * H * N_CTX
+    # If no host desc, then make device desc
+    desc_q = _maybe_make_tensor_desc(desc_q, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_M, HEAD_DIM])
+    desc_v = _maybe_make_tensor_desc(desc_v, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_N, HEAD_DIM])
+    desc_k = _maybe_make_tensor_desc(desc_k, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_N, HEAD_DIM])
+    desc_o = _maybe_make_tensor_desc(desc_o, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_M, HEAD_DIM])
+
+    offset_y = off_z * (N_CTX * H) + off_h * N_CTX
+    qo_offset_y = offset_y + start_m * BLOCK_M
+
+    #cur_o_ptr = ((qo_offset_y + tl.arange(0, BLOCK_M//2)) * stride_om)[:, None] + tl.arange(0, stride_om)[None, :]
+
+
+    # load q: it will stay in SRAM throughout
+    #q = desc_q.load([qo_offset_y, 0])
+
+    #bQ0 = txl.smem_alloc([BLOCK_M//2, HEAD_DIM], dtype=dtype) # bQ has only 1 buffer for reuse only
+    #pMbar_bQ0 = txl.mbar_alloc(1)
+    #bQ1 = txl.smem_alloc([BLOCK_M//2, HEAD_DIM], dtype=dtype)
+    #pMbar_bQ1 = txl.mbar_alloc(1)
+
+    bQ = txl.smem_alloc([BLOCK_M, HEAD_DIM], dtype=dtype) # bQ has only 1 buffer for reuse only
+    pMbar_bQ = txl.mbar_alloc(1)
+
+    bK = txl.smem_alloc([BLOCK_N, HEAD_DIM], dtype=dtype, num_stages=NUM_STAGES)
+    bV = txl.smem_alloc([BLOCK_N, HEAD_DIM], dtype=dtype, num_stages=NUM_STAGES)
+    pMbar_bK = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+    pMbar_bV = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+
+    #cMbar_QK1 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    #cMbar_PV1 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    #cMbar_QK2 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    #cMbar_PV2 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    cMbar_QK = txl.mbar_alloc(256, num_stages=NUM_STAGES)
+    cMbar_PV = txl.mbar_alloc(256, num_stages=NUM_STAGES)
+
+    # TODO: func type mismatch
+
+    # range of values handled by this stage
+    lo, hi = 0, N_CTX
+    offsetkv_y = offset_y + lo
+
+    wgid = txl.warpgroup_id()
+    #if wgid == 2:
+    #    o_offset_y = qo_offset_y + BLOCK_M//2
+    #else:
+    #    o_offset_y = qo_offset_y
+
+    if wgid == 0:
+        txl.reg_dealloc(40)
+
+        #bQ0i = txl.get_buffer(bQ0, 0)
+        #pMbar_bQ0i = txl.get_buffer(pMbar_bQ0, 0)
+        #bQ1i = txl.get_buffer(bQ1, 0)
+        #pMbar_bQ1i = txl.get_buffer(pMbar_bQ1, 0)
+        bQi = txl.get_buffer(bQ, 0)
+        pMbar_bQi = txl.get_buffer(pMbar_bQ, 0)
+
+        txl.mbar_expect(pMbar_bQi, BLOCK_M * HEAD_DIM * 2)
+        txl.tma_load(bQi, desc_q, [qo_offset_y, 0], pMbar_bQi)
+        #txl.mbar_expect(pMbar_bQ1i, BLOCK_M // 2 * HEAD_DIM * 2)
+        #txl.tma_load(bQ1i, desc_q, [qo_offset_y+BLOCK_M//2, 0], pMbar_bQ1i)
+
+        bufIdxW = 0 # write buffer
+        phase = 1
+
+        for start_n in range(lo, hi, BLOCK_N):
+            start_n = tl.multiple_of(start_n, BLOCK_N)
+
+            cur_mbar_bK = txl.get_buffer(pMbar_bK, bufIdxW)
+            cur_mbar_bV = txl.get_buffer(pMbar_bV, bufIdxW)
+            cur_bK = txl.get_buffer(bK, bufIdxW)
+            cur_bV = txl.get_buffer(bV, bufIdxW)
+
+            cur_mbar_QK = txl.get_buffer(cMbar_QK, bufIdxW) # wait for the same buffer
+            cur_mbar_PV = txl.get_buffer(cMbar_PV, bufIdxW)
+
+            # TODO: tma_expect_and_load
+            txl.mbar_wait(cur_mbar_QK, phase)
+            txl.mbar_expect(cur_mbar_bK, BLOCK_N * HEAD_DIM * 2)
+            txl.tma_load(cur_bK, desc_k, [offsetkv_y, 0], cur_mbar_bK)
+
+            txl.mbar_wait(cur_mbar_PV, phase)
+            txl.mbar_expect(cur_mbar_bV, BLOCK_N * HEAD_DIM * 2)
+            txl.tma_load(cur_bV, desc_v, [offsetkv_y, 0], cur_mbar_bV)
+
+            offsetkv_y += BLOCK_N
+            bufIdxW = (bufIdxW + 1) % NUM_STAGES
+            if bufIdxW == 0:
+                phase = phase^1
+
+    else:
+        txl.reg_alloc(232)
+
+        offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        #if wgid == 1:
+        #    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M//2)
+
+        #else:
+        #    offs_m = start_m * BLOCK_M + tl.arange(BLOCK_M//2, BLOCK_M)
+
+        # initialize pointer to m and l
+        # These are in regs
+        #m_i = tl.zeros([BLOCK_M//2], dtype=tl.float32) - float("inf")
+        #l_i = tl.zeros([BLOCK_M//2], dtype=tl.float32) + 1.0
+        #acc = tl.zeros([BLOCK_M//2, HEAD_DIM], dtype=tl.float32)
+        m_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
+        l_i = tl.zeros([BLOCK_M], dtype=tl.float32) + 1.0
+        acc = tl.zeros([BLOCK_M, HEAD_DIM], dtype=tl.float32)
+
+        # load scales
+        qk_scale = sm_scale
+        qk_scale *= 1.44269504  # 1/log(2)
+
+        bQi = txl.get_buffer(bQ, 0)
+        pMbar_bQi = txl.get_buffer(pMbar_bQ, 0)
+        #bQ1i = txl.get_buffer(bQ1, 0)
+        #pMbar_bQ1i = txl.get_buffer(pMbar_bQ1, 0)
+
+        # wait Q
+        #if txl.is_warpgroup([1]):
+        #    txl.mbar_wait(pMbar_bQ0i, 0)
+        #if txl.is_warpgroup([2]):
+        #    txl.mbar_wait(pMbar_bQ1i, 0)
+        txl.mbar_wait(pMbar_bQi, 0)
+
+        # -- prologue --
+
+        # TODO: write in txl.jit for reuse
+
+        ## load and wait K
+        cur_mbar_bK = txl.get_buffer(pMbar_bK, 0)
+        cur_bK = txl.get_buffer(bK, 0)
+        txl.mbar_wait(cur_mbar_bK, 0)
+
+        cur_mbar_QK = txl.get_buffer(cMbar_QK, 0)
+
+        #if txl.is_warpgroup([1]):
+        #    qk = tl.dot(bQ0i, cur_bK.T)
+        #else: # [2]
+        #    qk = tl.dot(bQ1i, cur_bK.T)
+        qk = tl.dot(bQi, cur_bK.T)
+        txl.dot_wait(0)
+        # load new K
+        txl.mbar_arrive(cur_mbar_QK)
+
+        # softmax
+        m_ij = tl.maximum(m_i, tl.max(qk, 1) * qk_scale)
+        qk = qk * qk_scale - m_ij[:, None]
+
+        p = tl.math.exp2(qk)
+        l_ij = tl.sum(p, 1)
+        # -- update m_i and l_i
+        alpha = tl.math.exp2(m_i - m_ij)
+        l_i = l_i * alpha + l_ij
+        # -- update output accumulator --
+        #acc = acc * alpha[:, None]
+
+        # update m_i and l_i
+        m_i = m_ij
+
+        # update acc
+        p = p.to(dtype)
+
+        bufIdxRK = 1
+        bufIdxRV = 0
+        phaseK = 0
+        phaseV = 0
+
+        # loop over k, v and update accumulator
+        for start_n in range(lo+BLOCK_N, hi, BLOCK_N):
+            start_n = tl.multiple_of(start_n, BLOCK_N)
+
+            # -- compute qk i+1 ----
+            cur_mbar_bK = txl.get_buffer(pMbar_bK, bufIdxRK)
+            cur_bK = txl.get_buffer(bK, bufIdxRK)
+            txl.mbar_wait(cur_mbar_bK, phaseK)
+
+            cur_mbar_QK = txl.get_buffer(cMbar_QK, bufIdxRK) # wait for the same buffer
+
+            #if txl.is_warpgroup([1]):
+            #    qk = tl.dot(bQ0i, cur_bK.T)
+            #else: # [2]
+            #    qk = tl.dot(bQ1i, cur_bK.T)
+            qk = tl.dot(bQi, cur_bK.T)
+            txl.dot_wait(0)
+
+            # TXL: rescale acc
+            acc = acc * alpha[:, None]
+
+            # -- compute pv i ----
+            cur_mbar_bV = txl.get_buffer(pMbar_bV, bufIdxRV)
+            cur_bV = txl.get_buffer(bV, bufIdxRV)
+            txl.mbar_wait(cur_mbar_bV, phaseV)
+
+            cur_mbar_PV = txl.get_buffer(cMbar_PV, bufIdxRV)
+
+            # TXL: cast reordered
+            #p = p.to(dtype)
+
+            # note that this non transposed v for FP8 is only supported on Blackwell
+            # here we have a p layout convertion from mma to dot_op
+            acc = tl.dot(p, cur_bV, acc)
+            txl.dot_wait(0)
+
+            # TAWA: delayed QK arrive
+            txl.mbar_arrive(cur_mbar_QK)
+
+
+            # Softmax
+            m_ij = tl.maximum(m_i, tl.max(qk, 1) * qk_scale)
+            qk = qk * qk_scale - m_ij[:, None]
+
+            p = tl.math.exp2(qk)
+            l_ij = tl.sum(p, 1)
+            # -- update m_i and l_i
+            alpha = tl.math.exp2(m_i - m_ij)
+            l_i = l_i * alpha + l_ij
+            # -- update output accumulator --
+
+            # TXL: reordered
+            #acc = acc * alpha[:, None]
+            p = p.to(dtype)
+
+            # finish PV
+            #txl.dot_wait(0)
+            txl.mbar_arrive(cur_mbar_PV)
+
+
+            # update m_i and l_i
+            m_i = m_ij
+
+            bufIdxRK = (bufIdxRK + 1) % NUM_STAGES
+            if bufIdxRK == 0:
+                phaseK = phaseK ^ 1
+            bufIdxRV = (bufIdxRV + 1) % NUM_STAGES
+            if bufIdxRV == 0:
+                phaseV = phaseV ^ 1
+        # -- last iter --
+        acc = acc * alpha[:, None]
+        # load v
+        cur_mbar_bV = txl.get_buffer(pMbar_bV, bufIdxRV)
+        cur_bV = txl.get_buffer(bV, bufIdxRV)
+        txl.mbar_wait(cur_mbar_bV, phaseV)
+
+        # note that this non transposed v for FP8 is only supported on Blackwell
+        acc = tl.dot(p, cur_bV, acc)
+        txl.dot_wait(0)
+        #txl.mbar_arrive(cur_mbar_PV)
+
+        # epilogue
+        m_i += tl.math.log2(l_i)
+        acc = acc / l_i[:, None]
+        m_ptrs = M + off_hz * N_CTX + offs_m
+        tl.store(m_ptrs, m_i)
+
+        #if txl.is_warpgroup([1]):
+        #    desc_o.store([qo_offset_y, 0], acc.to(dtype))
+        #if txl.is_warpgroup([2]):
+        #    desc_o.store([qo_offset_y+BLOCK_M//2, 0], acc.to(dtype))
+        desc_o.store([qo_offset_y, 0], acc.to(dtype))
+
+@txl.autotune(
+    configs=[
+        txl.Config(
+            tma_ws_best_config,
+            num_stages=2,
+            num_warps=4,
+            num_warpgroups=3,
+            pre_hook = _host_descriptor_pre_hook,
+        )
+    ],
+    key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT"],
+ )
+@txl.jit
+def _attn_fwd_ws_tma_txl_test(sm_scale, M,  #
+              Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #
+              HEAD_DIM: tl.constexpr,  #
+              BLOCK_M: tl.constexpr,  #
+              BLOCK_N: tl.constexpr,  #
+              FP8_OUTPUT: tl.constexpr,  #
+              STAGE: tl.constexpr,  #
+              warp_specialize: tl.constexpr,  #
+              o_ptr,
+              stride_om: tl.constexpr,
+              stride_on: tl.constexpr,
+
+              # NOTE: txl
+              NUM_STAGES: tl.constexpr,  #
+              NUM_CONSUMERS: tl.constexpr  #
+              ):
+    dtype = tl.float8e5 if FP8_OUTPUT else tl.float16
+    tl.static_assert(BLOCK_N <= HEAD_DIM)
+    start_m = tl.program_id(0)
+    off_hz = tl.program_id(1)
+    off_z = off_hz // H
+    off_h = off_hz % H
+
+    y_dim = Z * H * N_CTX
+    # If no host desc, then make device desc
+    desc_q = _maybe_make_tensor_desc(desc_q, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_M, HEAD_DIM])
+    desc_v = _maybe_make_tensor_desc(desc_v, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_N, HEAD_DIM])
+    desc_k = _maybe_make_tensor_desc(desc_k, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_N, HEAD_DIM])
+    desc_o = _maybe_make_tensor_desc(desc_o, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                     block_shape=[BLOCK_M, HEAD_DIM])
+
+    offset_y = off_z * (N_CTX * H) + off_h * N_CTX
+    qo_offset_y = offset_y + start_m * BLOCK_M
+
+    #cur_o_ptr = ((qo_offset_y + tl.arange(0, BLOCK_M//2)) * stride_om)[:, None] + tl.arange(0, stride_om)[None, :]
+
+
+    # load q: it will stay in SRAM throughout
+    #q = desc_q.load([qo_offset_y, 0])
+
+    bQ0 = txl.smem_alloc([BLOCK_M//2, HEAD_DIM], dtype=dtype) # bQ has only 1 buffer for reuse only
+    pMbar_bQ0 = txl.mbar_alloc(1)
+    bQ1 = txl.smem_alloc([BLOCK_M//2, HEAD_DIM], dtype=dtype)
+    pMbar_bQ1 = txl.mbar_alloc(1)
+
+    bK = txl.smem_alloc([BLOCK_N, HEAD_DIM], dtype=dtype, num_stages=NUM_STAGES)
+    bV = txl.smem_alloc([BLOCK_N, HEAD_DIM], dtype=dtype, num_stages=NUM_STAGES)
+    pMbar_bK = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+    pMbar_bV = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+
+    #cMbar_QK1 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    #cMbar_PV1 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    #cMbar_QK2 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    #cMbar_PV2 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    cMbar_QK = txl.mbar_alloc(256, num_stages=NUM_STAGES)
+    cMbar_PV = txl.mbar_alloc(256, num_stages=NUM_STAGES)
+
+    # TODO: func type mismatch
+
+    # range of values handled by this stage
+    lo, hi = 0, N_CTX
+    offsetkv_y = offset_y + lo
+
 class _attention(torch.autograd.Function):
 
     @staticmethod
@@ -1930,6 +2662,9 @@ class _attention(torch.autograd.Function):
             2: _attn_fwd_ws_tma_txl2,
             3: _attn_fwd_ws_tma_txl3,
             4: _attn_fwd_ws_tma_txl4,
+            5: _attn_fwd_ws_tma_txl_tawa,
+            6: _attn_fwd_ws_tma_txl_tawa2,
+            7: _attn_fwd_ws_tma_txl_test,
         }
 
         if profiling:
@@ -1942,16 +2677,21 @@ class _attention(torch.autograd.Function):
             HEAD_DIM=HEAD_DIM_K,  #
             FP8_OUTPUT=q.dtype == torch.float8_e5m2,  #
             STAGE=stage,  #
+
+            #o_ptr=o,
+            #stride_om=o.stride(-2),
+            #stride_on=o.stride(-1),
+
             warp_specialize=False,  #
             **extra_kern_args)
 
         if profiling:
             proton.finalize()
 
-        ctx.save_for_backward(q, k, v, o, M)
-        ctx.sm_scale = sm_scale
-        ctx.HEAD_DIM = HEAD_DIM_K
-        ctx.causal = causal
+        #ctx.save_for_backward(q, k, v, o, M)
+        #ctx.sm_scale = sm_scale
+        #ctx.HEAD_DIM = HEAD_DIM_K
+        #ctx.causal = causal
         return o
 
     @staticmethod
@@ -2118,7 +2858,8 @@ for mode in ["fwd"]:
             configs.append(
                 triton.testing.Benchmark(
                     x_names=["N_CTX"],
-                    x_vals=[2**i for i in range(10, 15)],
+                    #x_vals=[2**i for i in range(10, 15)],
+                    x_vals=[2**i for i in range(14, 15)],
                     line_arg="provider",
                     line_vals=(["triton-fp16"] if Has_TXL else []) + (["triton-fp8"] if TORCH_HAS_FP8 else []) +
                     (["flash"] if HAS_FLASH else []),
@@ -2205,12 +2946,14 @@ def run_test(algo=0, dump_dir=None):
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=0, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=1, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)
-    test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=algo, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
     #test_op(1, 2, 1536, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
+    test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=algo, no_tune=no_tune, profiling=PROFILING)
 
     print("BENCH...")
     bench_flash_attention.run(save_path=".", print_data=True, algo=algo, no_tune=no_tune)
 
 if __name__ == "__main__":
-    run_test(4)
+    #run_test(6, dump_dir='dump/fa1113')
+    #run_test(5, dump_dir='dump/fa1117')
+    run_test(5)

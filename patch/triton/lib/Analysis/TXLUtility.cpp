@@ -22,6 +22,18 @@ namespace ttg = mlir::triton::gpu;
 
 namespace mlir::triton{
 
+// txl
+auto getParentWithWGIDAttr(Operation *op) -> IntegerAttr {
+  while (op) {
+    auto attr = op->getAttrOfType<IntegerAttr>("ttxg.wgid");
+    if (attr)
+      return attr;
+    op = op->getParentOp();
+  }
+  return nullptr; // Return nullptr if no parent has the attribute
+}
+
+
 void changeForOpArgType(scf::ForOp forOp, unsigned int opNum, Type newType){
     auto initArgs = forOp.getInitArgs();
 

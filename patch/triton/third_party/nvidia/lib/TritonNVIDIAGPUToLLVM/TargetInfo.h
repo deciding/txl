@@ -20,6 +20,9 @@ public:
   void barrier(Location loc, RewriterBase &rewriter,
                bool isWarpSync = false) const override;
 
+  void barrierWithId(Location loc, RewriterBase &rewriter,
+               bool isWarpSync = false, int asyncId = -1, int numThreads = 128) const override;
+
   void storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
                     std::optional<Value> ctaId, Value val,
                     Value pred) const override;

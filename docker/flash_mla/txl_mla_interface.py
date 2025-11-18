@@ -333,8 +333,8 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
             l_i = l_i + L1_reg # l0+l1
             m_i += tl.math.log2(l_i)
             accL = accL / l_i[:, None]
-            m_ptrs = M + off_z * (H * N_Q) + off_kvh * (heads_per_kv * N_Q) + offs_m
-            tl.store(m_ptrs, m_i) 
+            # m_ptrs = M + off_z * (H * N_Q) + off_kvh * (heads_per_kv * N_Q) + offs_m
+            # tl.store(m_ptrs, m_i) 
 
             # reg -> smem -> gmem
             txl.smem_store(cur_bZL0, accL.to(dtype)) # store to Vl0, which reused as PVl

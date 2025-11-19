@@ -175,8 +175,8 @@ class TXLSemantic(TritonSemantic):
         self.builder.create_frag_smem_store(
                 mem_desc.handle,
                 value.handle,
-                pred,
                 mbar.handle if mbar else None,
+                pred,
                 reg_ty.to_ir(self.builder),
                 cta_id
             )

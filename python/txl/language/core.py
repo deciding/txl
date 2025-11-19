@@ -169,6 +169,7 @@ def frag_smem_store(smem, value, layout, pred=None, cta_id=-1, mbar=None, _seman
         value = core.full((1,), value, value.type, _semantic=_semantic)
     layout = _unwrap_if_constexpr(layout)
     cta_id = _unwrap_if_constexpr(cta_id)
+    pred = _unwrap_if_constexpr(pred)
     return _semantic.frag_smem_store(smem, value, layout, pred, cta_id, mbar)
 
 @builtin

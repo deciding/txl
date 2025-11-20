@@ -200,13 +200,13 @@ def cluster_softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_s
 
         txl.mbar_expect(mbar, num_warps*4*2)
         if rid == 0:
-            txl.frag_smem_store(max_smem1, cur_max, layout_warp_reduce, 1, mbar)
-            txl.frag_smem_store(sum_smem1, cur_denom, layout_warp_reduce, 1, mbar)
+            txl.frag_smem_store(max_smem1, cur_max, layout_warp_reduce, None, 1, mbar)
+            txl.frag_smem_store(sum_smem1, cur_denom, layout_warp_reduce, None, 1, mbar)
             #txl.smem_store(max_smem1, cur_max, 1)
             #txl.smem_store(sum_smem1, cur_denom, 1)
         else:
-            txl.frag_smem_store(max_smem1, cur_max, layout_warp_reduce, 0, mbar)
-            txl.frag_smem_store(sum_smem1, cur_denom, layout_warp_reduce, 0, mbar)
+            txl.frag_smem_store(max_smem1, cur_max, layout_warp_reduce, None, 0, mbar)
+            txl.frag_smem_store(sum_smem1, cur_denom, layout_warp_reduce, None, 0, mbar)
             #txl.smem_store(max_smem1, cur_max, 0)
             #txl.smem_store(sum_smem1, cur_denom, 0)
         txl.mbar_wait(mbar, 0)

@@ -9,6 +9,6 @@ from flash_mla.flash_mla_interface import (
     flash_mla_sparse_fwd
 )
 
-from flash_mla.txl_nsa_interface import txl_mla
+from flash_mla.txl_nsa_interface import txl_mla, make_txl_mla_runner
 
-from flash_mla.txl_mla_interface import mla_test
+from flash_mla.txl_mla_interface import mla_test, make_mla_runner

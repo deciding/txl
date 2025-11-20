@@ -1975,15 +1975,15 @@ if __name__ == "__main__":
     parser.add_argument("-K", type=int, required=False, default=512)
     parser.add_argument("--K_range", type=int, nargs=2)
     parser.add_argument("--K_step", type=int, default=512)
-    parser.add_argument("--prec", type=str, choices=["fp8", "fp16"], default="fp16")
+    parser.add_argument("--prec", type=str, choices=["fp8", "fp16"], default="fp8")
     args = parser.parse_args()
 
-    dump_dir='dump/0930mm_split/'
-    #dump_dir = None
+    # dump_dir='dump/0930mm_split/'
+    dump_dir = None
 
     from triton import knobs
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
-    os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
+    # os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
     #knobs.runtime.override_arch='sm100'
     knobs.autotuning.print=True
     knobs.compilation.always_compile=True
@@ -2005,14 +2005,17 @@ if __name__ == "__main__":
 
         #validate(32, 32, 32, dtype)
         #validate(128, 128, 512, dtype, log=True)
-        validate(8192, 8192, args.K_range[0], dtype, log=True)
+        # validate(8192, 8192, args.K_range[0], dtype, log=True)
 
         #profile(8192, 8192, args.K_range[0], dtype)
-        exit()
+        # exit()
+        print(dtype)
 
         proton.start("matmul", hook="triton")
         #proton.deactivate()
-        for K in range(args.K_range[0], args.K_range[1] + 1, args.K_step):
-            bench(K, dtype)
+        # for K in range(args.K_range[0], args.K_range[1] + 1, args.K_step):
+        #     bench(K, dtype)
+        for k_seqlen in [256, 512, 1024, 2048, 4096, 8192, 16384]:
+            bench(k_seqlen, dtype)
         proton.finalize()
         show_profile(args.prec, "matmul")

@@ -2845,7 +2845,7 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=
 
 
 TORCH_HAS_FP8 = hasattr(torch, 'float8_e5m2')
-BATCH, N_HEADS, HEAD_DIM = 16, 32, 128
+BATCH, N_HEADS, HEAD_DIM = 4, 32, 128
 
 TORCH_HAS_FP8=False
 # vary seq length for fixed head and batch=4
@@ -2858,8 +2858,8 @@ for mode in ["fwd"]:
             configs.append(
                 triton.testing.Benchmark(
                     x_names=["N_CTX"],
-                    #x_vals=[2**i for i in range(10, 15)],
-                    x_vals=[2**i for i in range(14, 15)],
+                    x_vals=[2**i for i in range(10, 15)],
+                    # x_vals=[2**i for i in range(14, 15)],
                     line_arg="provider",
                     line_vals=(["triton-fp16"] if Has_TXL else []) + (["triton-fp8"] if TORCH_HAS_FP8 else []) +
                     (["flash"] if HAS_FLASH else []),
@@ -2948,7 +2948,7 @@ def run_test(algo=0, dump_dir=None):
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
     #test_op(1, 2, 1536, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
-    test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=algo, no_tune=no_tune, profiling=PROFILING)
+    # test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=algo, no_tune=no_tune, profiling=PROFILING)
 
     print("BENCH...")
     bench_flash_attention.run(save_path=".", print_data=True, algo=algo, no_tune=no_tune)
@@ -2956,4 +2956,4 @@ def run_test(algo=0, dump_dir=None):
 if __name__ == "__main__":
     #run_test(6, dump_dir='dump/fa1113')
     #run_test(5, dump_dir='dump/fa1117')
-    run_test(5)
+    run_test(4)

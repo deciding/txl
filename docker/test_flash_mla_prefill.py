@@ -7,7 +7,7 @@ import dataclasses
 import torch
 import triton
 
-from flash_mla import flash_mla_sparse_fwd, txl_mla
+from flash_mla import flash_mla_sparse_fwd, txl_mla, make_txl_mla_runner
 from lib import check_is_allclose
 
 @dataclasses.dataclass
@@ -116,13 +116,15 @@ def run_test(p: TestParam) -> bool:
             t.q.squeeze(0), t.kv.squeeze(0), t.indices.squeeze(0), sm_scale=sm_scale
         )
     
-    def run_ans_txl():
-        return txl_mla(
-           q_nope, q_pe, kv_nope, kv_pe, t.indices.squeeze(0), sm_scale=sm_scale
-        )
+    runner = make_txl_mla_runner(q_nope, q_pe, kv_nope, kv_pe, t.indices.squeeze(0), sm_scale=sm_scale)
+
+    # def run_ans_txl():
+    #     return txl_mla(
+    #        q_nope, q_pe, kv_nope, kv_pe, t.indices.squeeze(0), sm_scale=sm_scale
+    #     )
 
     ans_out, ans_max_logits, ans_lse = run_ans_fmla()
-    ans_out_txl, ans_max_logits_txl, ans_lse_txl = run_ans_txl()
+    ans_out_txl, ans_max_logits_txl, ans_lse_txl = runner()
 
     torch.cuda.synchronize()
 
@@ -131,7 +133,8 @@ def run_test(p: TestParam) -> bool:
         prefill_ans_time: float = triton.testing.do_bench(run_ans_fmla, warmup=10, rep=20) / 1000  # type: ignore
         prefill_flops = flop / prefill_ans_time / 1e12
         print(f"FlashMLA Prefill:  {prefill_ans_time * 1e6:4.0f} us, {prefill_flops:.3f} TFlops")
-        prefill_ans_time_txl: float = triton.testing.do_bench(run_ans_txl, warmup=10, rep=20) / 1000  # type: ignore
+        torch.cuda.synchronize()
+        prefill_ans_time_txl: float = triton.testing.do_bench(runner, warmup=10, rep=20) / 1000  # type: ignore
         prefill_flops_txl = flop / prefill_ans_time_txl / 1e12
         print(f"TXL MLA Prefill:   {prefill_ans_time_txl * 1e6:4.0f} us, {prefill_flops_txl:.3f} TFlops")
 

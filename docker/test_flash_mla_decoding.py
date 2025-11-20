@@ -260,30 +260,32 @@ def test_flash_mla(t: TestParam):
             indices=indices_in_kvcache
         )
     
-    def txl_mla():
-        return flash_mla.mla_test(
-            q_value,
-            k_value,
-            q_pe,
-            k_pe,
-            1 / math.sqrt(576),
-            algo = 0,
-        )
+    runner = flash_mla.make_mla_runner(q_value, k_value, q_pe, k_pe, 1 / math.sqrt(576), algo = 0)
+
+    # def txl_mla():
+    #     return flash_mla.mla_test(
+    #         q_value,
+    #         k_value,
+    #         q_pe,
+    #         k_pe,
+    #         1 / math.sqrt(576),
+    #         algo = 0,
+    #     )
 
     out_ans, lse_ans = run_flash_mla()
-    txl_ans_out = txl_mla().permute(0, 2, 1, 3).contiguous()
+    txl_ans_out = runner().permute(0, 2, 1, 3).contiguous()
     out_ref, lse_ref = reference_torch(cache_seqlens, block_table, q, blocked_k, t.dv, t.is_causal, abs_indices)
     assert check_is_allclose("out", out_ans, out_ref, abs_tol=8e-4, rel_tol=2.01 / 128, cos_diff_tol=5e-6)
     assert check_is_allclose("lse", lse_ans, lse_ref, abs_tol=1e-6, rel_tol=8.01 / 65536)
     assert check_is_allclose("txl_out", txl_ans_out, out_ref, abs_tol=8e-4, rel_tol=2.01 / 128, cos_diff_tol=5e-6)
     print("Correctness check passed!")
-    print(f"ref_out result sample: {out_ref[0, 0, 0, :8]}")
-    print(f"flash_mla_out result sample: {out_ans[0, 0, 0, :8]}")
-    print(f"txl_mla_out result sample: {txl_ans_out[0, 0, 0, :8]}")
+    # print(f"ref_out result sample: {out_ref[0, 0, 0, :8]}")
+    # print(f"flash_mla_out result sample: {out_ans[0, 0, 0, :8]}")
+    # print(f"txl_mla_out result sample: {txl_ans_out[0, 0, 0, :8]}")
     print("===============================")
     print("Running performance test...")
     if t.test_performance:
-        time_usage_txl: float = triton.testing.do_bench(txl_mla) / 1000  # type: ignore
+        torch.cuda.synchronize()
         time_usage: float = triton.testing.do_bench(run_flash_mla) / 1000  # type: ignore
         mean_attended_seqlens = cache_seqlens.float().mean().item() if t.topk is None else t.topk
         compute_volume_flop = t.b * t.h_q * t.s_q * sum([
@@ -299,6 +301,8 @@ def test_flash_mla(t: TestParam):
         ])
         achieved_tflops = compute_volume_flop / time_usage / 1e12
         achieved_gBps = memory_volume_B / time_usage / 1e9
+        torch.cuda.synchronize()
+        time_usage_txl: float = triton.testing.do_bench(runner) / 1000  # type: ignore
         achieved_tflops_txl = compute_volume_flop / time_usage_txl / 1e12
         achieved_gBps_txl = memory_volume_B / time_usage_txl / 1e9
 
@@ -355,8 +359,9 @@ def main(torch_dtype):
 
     testcases = correctness_cases + corner_cases + performance_cases
     testcases = [
-        TestParam(132, 64, 256, is_varlen=False, is_causal=False, is_fp8=False, topk=None, test_performance=True),
-        # TestParam(132, 2, 4096, is_varlen=False, is_causal=False, is_fp8=False, topk=None, test_performance=True)
+        # TestParam(132, 64, 256, is_varlen=False, is_causal=False, is_fp8=False, topk=None, test_performance=True),
+        TestParam(132, 2, s_k, is_varlen=False, is_causal=False, is_fp8=False, topk=None, test_performance=True)
+        for s_k in [1024, 2048, 4096, 8192, 16384]
     ]
 
     # Prune out unsupported cases
@@ -364,7 +369,9 @@ def main(torch_dtype):
     if cc_major == 10:
         testcases = [t for t in testcases if (t.is_fp8 and t.topk is not None)]
 
+    import time
     for testcase in testcases:
+        time.sleep(0.2)
         test_flash_mla(testcase)
 
 

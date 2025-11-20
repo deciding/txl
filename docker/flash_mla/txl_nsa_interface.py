@@ -559,3 +559,78 @@ def txl_mla(
             kv_pe.stride(0),
             num_warps=4, num_warpgroups=3)
     return out, max_logits, lse
+
+def make_txl_mla_runner(
+    q_nope: torch.Tensor,
+    q_pe: torch.Tensor,
+    kv_nope: torch.Tensor,
+    kv_pe: torch.Tensor,
+    indices: torch.Tensor,
+    sm_scale: float,
+    d_v: int = 512,
+    dump_dir=None,
+):
+    
+    from triton import knobs
+
+    knobs.runtime.override_arch = "sm90"
+    # knobs.autotuning.print = True
+    # knobs.compilation.always_compile = True
+
+    if dump_dir is not None:
+        knobs.compilation.dump_ir = True
+        knobs.cache.dump_dir = dump_dir
+
+    B_H = 64
+    B_TOPK = 64
+    D_Q = 576
+    D_K = D_Q
+    D_V = d_v 
+
+    s_q = q_nope.size(0)
+    s_kv = kv_nope.size(0)
+    top_k = indices.size(2)
+    h_q = q_nope.size(1)
+    h_kv = kv_nope.size(1)
+    assert h_kv == 1
+
+    d_qk = D_Q
+    d_v = D_V
+
+    qk_scale = sm_scale * 1.44269504
+
+    out = torch.empty((s_q, h_q, d_v), dtype=q_nope.dtype, device=q_nope.device)
+    max_logits = torch.empty((s_q, h_q), dtype=torch.float32, device=q_nope.device)
+    lse = torch.empty((s_q, h_q), dtype=torch.float32, device=q_nope.device)
+
+    q_nope_desc = TensorDescriptor(q_nope, (s_q * h_q, 512), (512, 1), [B_H, 512])
+    q_pe_desc   = TensorDescriptor(q_pe,   (s_q * h_q, 64),  (64, 1),  [B_H, 64])
+    o_desc      = TensorDescriptor(out,    (s_q * h_q, d_v), (d_v, 1), [B_H, D_V])
+    max_logits_desc = TensorDescriptor(max_logits, (s_q * h_q,), (1,), [B_H])
+    lse_desc        = TensorDescriptor(lse,        (s_q * h_q,), (1,), [B_H])
+
+    NUM_HEAD_BLOCKS = h_q // B_H
+
+    grid = (NUM_HEAD_BLOCKS * s_q,) 
+
+    def runner():
+        txl_mla0[grid](
+            q_nope_desc, q_pe_desc,
+            kv_nope, kv_pe,
+            o_desc,
+            max_logits_desc, lse_desc,
+            indices,
+            qk_scale,
+            s_q, s_kv,
+            B_H, D_Q, D_V,
+            NUM_HEAD_BLOCKS,
+            top_k,
+            B_TOPK,
+            kv_nope.stride(0),
+            kv_pe.stride(0),
+            num_warps=4,
+            num_warpgroups=3,
+        )
+        return out, max_logits, lse
+
+    return runner

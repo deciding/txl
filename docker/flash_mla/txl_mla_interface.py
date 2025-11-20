@@ -510,6 +510,60 @@ def mla_test(q, kv, qpe, kpe, sm_scale, algo=0):
 
     return o
 
+def make_mla_runner(q, kv, qpe, kpe, sm_scale, algo=0):
+    HEAD_DIM_Q = q.shape[-1]
+    HEAD_DIM_Z = kv.shape[-1]
+    HEAD_DIM_PE = qpe.shape[-1]
+    assert HEAD_DIM_Q == HEAD_DIM_Z
+    NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
+
+    o = torch.empty_like(q)
+    M = torch.empty((q.shape[0], q.shape[1], q.shape[2]),
+                    device=q.device, dtype=torch.float32)
+
+    if supports_host_descriptor():
+        y_dim = q.shape[0] * q.shape[1] * q.shape[2]
+        kv_dim = kv.shape[0] * kv.shape[1] * kv.shape[2]
+        dummy_block = [1, 1]
+        desc_q  = TensorDescriptor(q,  shape=[y_dim, HEAD_DIM_Z], strides=[HEAD_DIM_Z, 1], block_shape=dummy_block)
+        desc_kv = TensorDescriptor(kv, shape=[kv_dim, HEAD_DIM_Z], strides=[HEAD_DIM_Z, 1], block_shape=dummy_block)
+        desc_qpe = TensorDescriptor(qpe, shape=[y_dim, HEAD_DIM_PE], strides=[HEAD_DIM_PE, 1], block_shape=dummy_block)
+        desc_kpe = TensorDescriptor(kpe, shape=[kv_dim, HEAD_DIM_PE], strides=[HEAD_DIM_PE, 1], block_shape=dummy_block)
+        desc_o   = TensorDescriptor(o,  shape=[y_dim, HEAD_DIM_Z], strides=[HEAD_DIM_Z, 1], block_shape=dummy_block)
+    else:
+        desc_q, desc_kv, desc_qpe, desc_kpe, desc_o = q, kv, qpe, kpe, o
+
+    def alloc_fn(size: int, align: int, _):
+        return torch.empty(size, dtype=torch.int8, device="cuda")
+
+    triton.set_allocator(alloc_fn)
+
+    q_heads_per_kv_heads = q.shape[1] // kv.shape[1]
+    total_q_seqlen = q_heads_per_kv_heads * q.shape[2]
+
+    def grid(META):
+        return (triton.cdiv(total_q_seqlen, META["BLOCK_M"]),
+                kv.shape[1] * NUM_SMS, 1)
+
+    algo_map = {0: mla_txl}
+    kern = algo_map[algo]
+
+    def run_once():
+        kern[grid](
+            sm_scale, M,
+            q.shape[0], q.shape[1], kv.shape[1],
+            desc_q, desc_kv, desc_o,
+            q.shape[2], kv.shape[2],
+            desc_qpe, desc_kpe,
+            PE_DIM=HEAD_DIM_PE,
+            D=HEAD_DIM_Z,
+            NUM_SMS=NUM_SMS,
+        )
+        return o
+
+    return run_once
+
+
 def ref_mla(q, kv, qpe, kpe, sm_scale):
     Z, H, N_Q, R0 = q.shape
     _, KV_HEADS, KV_SEQ_LEN, _ = kv.shape

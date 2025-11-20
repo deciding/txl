@@ -35,7 +35,8 @@ txl_image = (
 def run_demo():
     import subprocess, sys, os, torch, time
     def get_gpu_type():
-    
+        sm = torch.cuda.get_device_properties("cuda").multi_processor_count
+        print(f"SM count: {sm}")
         try:
             # Execute nvidia-smi command to query GPU details
             result = subprocess.run(['nvidia-smi', '-q'], capture_output=True, text=True, check=True)
@@ -112,5 +113,6 @@ def run_demo():
         import torch
         main(torch.float16)
 
+    get_gpu_type()
     import_cuBLAS_lib()
     test_demo2()

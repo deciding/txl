@@ -98,7 +98,7 @@ def run_txl_mla(q, block_table, blocked_k, max_seqlen_pad, block_size, b, s_q, c
 
     runner = make_mla_runner(q_value, k_value, q_pe, k_pe, 1 / math.sqrt(576), algo = 0,)
 
-    out_txl = runner()
+    out_txl = runner().permute(0, 2, 1, 3).contiguous()
     torch.cuda.synchronize()
     t = triton.testing.do_bench(runner)
 
@@ -442,8 +442,7 @@ def run_flash_mla_tilelang(q, block_table, blocked_k, max_seqlen_pad, block_size
 
     assert d > dv, "mla with rope dim should be larger than no rope dim"
     q_nope, q_pe = q[..., :dv].contiguous(), q[..., dv:].contiguous()
-    blocked_k_nope, blocked_k_pe = blocked_k[..., :dv].contiguous(), blocked_k[...,
-                                                                               dv:].contiguous()
+    blocked_k_nope, blocked_k_pe = blocked_k[..., :dv].contiguous(), blocked_k[...,dv:].contiguous()
 
     dpe = d - dv
     num_kv_splits = 1
@@ -452,8 +451,7 @@ def run_flash_mla_tilelang(q, block_table, blocked_k, max_seqlen_pad, block_size
 
     out_partial = torch.empty(b, h_q, num_kv_splits, dv, dtype=dtype, device=q.device)
     glse = torch.empty(b, h_q, num_kv_splits, dtype=dtype, device=q.device)
-    kernel = mla_decode_tilelang(b, h_q, h_kv, max_seqlen_pad, dv, dpe, BLOCK_N, BLOCK_H,
-                                 num_kv_splits, block_size)
+    kernel = mla_decode_tilelang(b, h_q, h_kv, max_seqlen_pad, dv, dpe, BLOCK_N, BLOCK_H, num_kv_splits, block_size)
 
     def flash_mla_tilelang():
         out = kernel(
@@ -572,7 +570,7 @@ def compare_a(target, b, s_q, cache_seqlens, h_q, h_kv, d, dv, causal, dtype):
 
 available_targets = [
     "torch",
-    # "tilelang",
+    "tilelang",
     "flash_mla",
     # "flashinfer",
     # "flash_mla_triton",
@@ -583,7 +581,7 @@ shape_configs = [{
     "b":
         batch,
     "s_q":
-        2,
+        1, # tilelang can run only when s_q=1
     "cache_seqlens":
         torch.tensor([seqlen for i in range(batch)], dtype=torch.int32, device="cuda"),
     "h_q":

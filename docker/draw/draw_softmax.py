@@ -13,9 +13,9 @@ bf16_torch = np.array([2042, 1136, 1307, 1412, 1443])
 methods = ["Quack", "Txl", "Torch"]
 
 colors = {
-    "Quack": "#f1c40f",
+    "Quack": "#2ecc71",
     "Txl":           "#e74c3c",
-    "Torch":         "#1abc9c",
+    "Torch":         "#8e44ad",
 }
 
 data = {

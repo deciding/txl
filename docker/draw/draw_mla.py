@@ -21,7 +21,7 @@ colors = {
     "Txl":           "#e74c3c",
     "Triton":         "#1abc9c",
     "TileLang":       "#ff6fb3",
-    "Flashinfer": "#3498db",
+    "Flashinfer": "#e67e22",
 }
 
 data = {

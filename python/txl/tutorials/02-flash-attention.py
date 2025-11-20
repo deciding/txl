@@ -1540,11 +1540,10 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
             num_warps=4,
             num_warpgroups=3,
             pre_hook = _host_descriptor_pre_hook,
-            #ir_override='dump/LNZRDQJRUVQP3KVJM5NGKARBSO3YM73N4M6D4UPZNFKU34LAERNA/_attn_fwd_ws_tma_txl4.ttgir',
         )
     ],
     key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT"],
- )
+)
 @txl.jit
 def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
               Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #
@@ -1562,6 +1561,7 @@ def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
 
     with pl.scope("kernel"):
         dtype = tl.float8e5 if FP8_OUTPUT else tl.float16
+        byte_count: tl.constexpr = 2 if dtype == tl.float16 else 1
         tl.static_assert(BLOCK_N <= HEAD_DIM)
         start_m = tl.program_id(0)
         off_hz = tl.program_id(1)
@@ -1619,10 +1619,10 @@ def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
                 pMbar_bQ1i = txl.get_buffer(pMbar_bQ1, 0)
 
                 with pl.scope("waitQ"):
-                    txl.mbar_expect(pMbar_bQ0i, BLOCK_M // 2 * HEAD_DIM * 2)
+                    txl.mbar_expect(pMbar_bQ0i, BLOCK_M // 2 * HEAD_DIM * byte_count)
                     txl.tma_load(bQ0i, desc_q, [qo_offset_y, 0], pMbar_bQ0i)
                     txl.mbar_wait(pMbar_bQ0i, 0)
-                    txl.mbar_expect(pMbar_bQ1i, BLOCK_M // 2 * HEAD_DIM * 2)
+                    txl.mbar_expect(pMbar_bQ1i, BLOCK_M // 2 * HEAD_DIM * byte_count)
                     txl.tma_load(bQ1i, desc_q, [qo_offset_y+BLOCK_M//2, 0], pMbar_bQ1i)
                     txl.mbar_wait(pMbar_bQ1i, 0)
 
@@ -1645,13 +1645,13 @@ def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
                     with pl.scope("waitQK"):
                         txl.mbar_wait(cur_mbar_QK1, phase)
                         txl.mbar_wait(cur_mbar_QK2, phase)
-                    txl.mbar_expect(cur_mbar_bK, BLOCK_N * HEAD_DIM * 2)
+                    txl.mbar_expect(cur_mbar_bK, BLOCK_N * HEAD_DIM * byte_count)
                     txl.tma_load(cur_bK, desc_k, [offsetkv_y, 0], cur_mbar_bK)
 
                     with pl.scope("waitPV"):
                         txl.mbar_wait(cur_mbar_PV1, phase)
                         txl.mbar_wait(cur_mbar_PV2, phase)
-                    txl.mbar_expect(cur_mbar_bV, BLOCK_N * HEAD_DIM * 2)
+                    txl.mbar_expect(cur_mbar_bV, BLOCK_N * HEAD_DIM * byte_count)
                     txl.tma_load(cur_bV, desc_v, [offsetkv_y, 0], cur_mbar_bV)
 
                     offsetkv_y += BLOCK_N
@@ -1671,7 +1671,8 @@ def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
                     txl.bar_arrive(8, 256)
                 else:
                     offs_m = start_m * BLOCK_M + tl.arange(BLOCK_M//2, BLOCK_M)
-
+                # if txl.tid(0) == 129:
+                #     txl.print('here1')
                 # initialize pointer to m and l
                 # These are in regs
                 m_i = tl.zeros([BLOCK_M//2], dtype=tl.float32) - float("inf")
@@ -2847,7 +2848,7 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=
 TORCH_HAS_FP8 = hasattr(torch, 'float8_e5m2')
 BATCH, N_HEADS, HEAD_DIM = 4, 32, 128
 
-TORCH_HAS_FP8=False
+TORCH_HAS_FP8 = True
 # vary seq length for fixed head and batch=4
 configs = []
 for mode in ["fwd"]:

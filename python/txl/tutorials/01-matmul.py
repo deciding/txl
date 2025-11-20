@@ -1098,6 +1098,7 @@ def matmul_persistent_ws_tma_txl_kernel(
     WARP_SPECIALIZE: tl.constexpr,  #
 ):
     dtype = tl.float8e4nv if FP8_OUTPUT else tl.float16
+    byte_count: tl.constexpr = 2 if dtype == tl.float16 else 1
     num_tiles = tl.cdiv(M, BLOCK_SIZE_M) * tl.cdiv(N, BLOCK_SIZE_N)
     num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
     num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
@@ -1144,15 +1145,15 @@ def matmul_persistent_ws_tma_txl_kernel(
                 b0_buf = txl.get_buffer(b0, bufIdx)
 
                 txl.mbar_wait(mbar_c1, phase)
-                txl.mbar_expect(mbar_p_a0, BLOCK_SIZE_M//2*BLOCK_SIZE_K*2)
+                txl.mbar_expect(mbar_p_a0, BLOCK_SIZE_M//2*BLOCK_SIZE_K*byte_count)
                 txl.tma_load(a0_buf, a_desc, [offs_am, offs_k], mbar_p_a0)
 
                 txl.mbar_wait(mbar_c2, phase)
-                txl.mbar_expect(mbar_p_b0, BLOCK_SIZE_N*BLOCK_SIZE_K*2)
+                txl.mbar_expect(mbar_p_b0, BLOCK_SIZE_N*BLOCK_SIZE_K*byte_count)
                 txl.tma_load(b0_buf, b_desc, [offs_bn, offs_k], mbar_p_b0)
 
 
-                txl.mbar_expect(mbar_p_a1, BLOCK_SIZE_M//2*BLOCK_SIZE_K*2)
+                txl.mbar_expect(mbar_p_a1, BLOCK_SIZE_M//2*BLOCK_SIZE_K*byte_count)
                 txl.tma_load(a1_buf, a_desc, [offs_am + BLOCK_SIZE_M // 2, offs_k], mbar_p_a1)
 
                 offs_k += BLOCK_SIZE_K
@@ -1176,14 +1177,11 @@ def matmul_persistent_ws_tma_txl_kernel(
             offs_bn = pid_n * BLOCK_SIZE_N
             offs_k = 0
             accumulator = tl.zeros((BLOCK_SIZE_M//2, BLOCK_SIZE_N), dtype=tl.float32)
-
             for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
                 mbar_p_b0 = txl.get_buffer(mbar_producer_b0, bufIdx)
 
                 b0_buf = txl.get_buffer(b0, bufIdx)
-
                 txl.mbar_wait(mbar_p_b0, phase)
-
                 if txl.is_warpgroup([1]):
                     mbar_p_a0 = txl.get_buffer(mbar_producer_a0, bufIdx)
                     mbar_c1 = txl.get_buffer(mbar_consumer1, bufIdx)
@@ -1899,7 +1897,7 @@ def run_test(expect, fn, a, b, label, enabled=True, log=False):
             print()
             print(expect)
             print(actual)
-            print((expect-actual).mean(dim=0))
+            print((expect-actual.to(expect.dtype)).mean(dim=0))
         passed = torch.allclose(expect, actual.to(expect.dtype), atol=1.0)
         icon = "✅" if passed else "❌"
     else:
@@ -1927,9 +1925,9 @@ def validate(M, N, K, dtype, log=False):
 
     #run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
     #run_test(naive_result, lambda a, b: matmul_tma_persistent_txl(a, b), a, b, "TXL TMA Persistent", log=log)
-    #run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
+    run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
     #run_test(naive_result, lambda a, b: matmul_tma_ws_nn_persistent_txl(a, bn), a, bn, "TXL TMA WS NN Persistent", log=log)
-    run_test(naive_result, lambda a, b: matmul_separate_tma_txl(a, b), a, b, "TXL TMA split k", log=log)
+    # run_test(naive_result, lambda a, b: matmul_separate_tma_txl(a, b), a, b, "TXL TMA split k", log=log)
 
     return
 
@@ -1979,7 +1977,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # dump_dir='dump/0930mm_split/'
-    dump_dir = None
+    dump_dir = '/workspace/dump'
 
     from triton import knobs
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
@@ -2004,12 +2002,12 @@ if __name__ == "__main__":
         torch.manual_seed(0)
 
         #validate(32, 32, 32, dtype)
-        #validate(128, 128, 512, dtype, log=True)
+        # validate(128, 128, 512, dtype, log=True)
         # validate(8192, 8192, args.K_range[0], dtype, log=True)
 
         #profile(8192, 8192, args.K_range[0], dtype)
         # exit()
-        print(dtype)
+        # print(dtype)
 
         proton.start("matmul", hook="triton")
         #proton.deactivate()

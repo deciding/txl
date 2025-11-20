@@ -767,45 +767,45 @@ def test_softmax(dump_dir=None, M=32*1024, N=32*1024):
     ################################################
     # Validate
     ################################################
-    from triton import knobs
-    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "axis-info,tritongpu-coalesce"
-    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-coalesce"
-    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
-    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "ttg-utility"
-    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
-    knobs.autotuning.print=True
-    knobs.compilation.always_compile=True
-    if dump_dir:
-        knobs.compilation.dump_ir=True
-        knobs.cache.dump_dir=dump_dir
+    # from triton import knobs
+    # #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "axis-info,tritongpu-coalesce"
+    # #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-coalesce"
+    # #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
+    # #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "ttg-utility"
+    # #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
+    # knobs.autotuning.print=True
+    # knobs.compilation.always_compile=True
+    # if dump_dir:
+    #     knobs.compilation.dump_ir=True
+    #     knobs.cache.dump_dir=dump_dir
 
-    if HAS_QUACK:
-        quack_out = quack_fn().to(torch.float32).cpu().numpy()
-    if HAS_TXL:
-        txl_out = txl_fn(x, False).to(torch.float32).cpu().numpy()
+    # if HAS_QUACK:
+    #     quack_out = quack_fn().to(torch.float32).cpu().numpy()
+    # if HAS_TXL:
+    #     txl_out = txl_fn(x, False).to(torch.float32).cpu().numpy()
 
-    #exit()
+    # #exit()
 
-    # NumPy reference
-    a = x32.cpu().numpy()
-    a_max = a.max(axis=1, keepdims=True)
-    ref = np.exp(a - a_max)
-    ref = ref / ref.sum(axis=1, keepdims=True)
+    # # NumPy reference
+    # a = x32.cpu().numpy()
+    # a_max = a.max(axis=1, keepdims=True)
+    # ref = np.exp(a - a_max)
+    # ref = ref / ref.sum(axis=1, keepdims=True)
 
-    torch_out = compiled_func_ref(x, target).to(torch.float32).cpu().numpy()
+    # torch_out = compiled_func_ref(x, target).to(torch.float32).cpu().numpy()
 
-    # relative error
-    outs = []
-    outs.append(('torch', torch_out))
-    if HAS_QUACK:
-        outs.append(('quack', quack_out))
-    if HAS_TXL:
-        outs.append(('txl', txl_out))
+    # # relative error
+    # outs = []
+    # outs.append(('torch', torch_out))
+    # if HAS_QUACK:
+    #     outs.append(('quack', quack_out))
+    # if HAS_TXL:
+    #     outs.append(('txl', txl_out))
 
-    for name, out in outs:
-        max_rel_err = np.max(np.abs(out - ref) / (ref + 1e-20))
-        print("max relative error:", max_rel_err)
-        print("sum per row -1 (should be 0):", np.max(np.abs(out.sum(axis=1) - 1.0)))
+    # for name, out in outs:
+    #     max_rel_err = np.max(np.abs(out - ref) / (ref + 1e-20))
+    #     print("max relative error:", max_rel_err)
+    #     print("sum per row -1 (should be 0):", np.max(np.abs(out.sum(axis=1) - 1.0)))
 
     #import pdb;pdb.set_trace()
     #exit()

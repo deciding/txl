@@ -88,10 +88,14 @@ def _host_descriptor_pre_hook(nargs):
     BLOCK_M = nargs["BLOCK_M"] // NUM_CONSUMER_GROUPS
     BLOCK_N = nargs["BLOCK_N"]
     HEAD_DIM = nargs["HEAD_DIM"]
+    FP8_OUTPUT = nargs.get("FP8_OUTPUT", False)
     if not isinstance(nargs["desc_q"], TensorDescriptor):
         return
     nargs["desc_q"].block_shape = [BLOCK_M, HEAD_DIM]
-    nargs["desc_v"].block_shape = [BLOCK_N, HEAD_DIM]
+    if FP8_OUTPUT:
+        nargs["desc_v"].block_shape = [HEAD_DIM, BLOCK_N]
+    else:
+        nargs["desc_v"].block_shape = [BLOCK_N, HEAD_DIM]
     nargs["desc_k"].block_shape = [BLOCK_N, HEAD_DIM]
     nargs["desc_o"].block_shape = [BLOCK_M, HEAD_DIM]
 
@@ -1572,8 +1576,13 @@ def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
         # If no host desc, then make device desc
         desc_q = _maybe_make_tensor_desc(desc_q, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
                                          block_shape=[BLOCK_M, HEAD_DIM])
-        desc_v = _maybe_make_tensor_desc(desc_v, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
-                                         block_shape=[BLOCK_N, HEAD_DIM])
+        if FP8_OUTPUT: #v_shape = (BATCH, H, HEAD_DIM, N_CTX)
+            y_dim_v = Z * H * HEAD_DIM
+            desc_v = _maybe_make_tensor_desc(desc_v, shape=[y_dim_v, N_CTX], strides=[N_CTX, 1],
+                                            block_shape=[HEAD_DIM, BLOCK_N])
+        else:
+            desc_v = _maybe_make_tensor_desc(desc_v, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
+                                            block_shape=[BLOCK_N, HEAD_DIM])
         desc_k = _maybe_make_tensor_desc(desc_k, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
                                          block_shape=[BLOCK_N, HEAD_DIM])
         desc_o = _maybe_make_tensor_desc(desc_o, shape=[y_dim, HEAD_DIM], strides=[HEAD_DIM, 1],
@@ -1591,7 +1600,10 @@ def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
         pMbar_bQ1 = txl.mbar_alloc(1)
 
         bK = txl.smem_alloc([BLOCK_N, HEAD_DIM], dtype=dtype, num_stages=NUM_STAGES)
-        bV = txl.smem_alloc([BLOCK_N, HEAD_DIM], dtype=dtype, num_stages=NUM_STAGES)
+        if FP8_OUTPUT:
+            bV = txl.smem_alloc([HEAD_DIM, BLOCK_N], dtype=dtype, num_stages=NUM_STAGES)
+        else:
+            bV = txl.smem_alloc([BLOCK_N, HEAD_DIM], dtype=dtype, num_stages=NUM_STAGES)
         pMbar_bK = txl.mbar_alloc(1, num_stages=NUM_STAGES)
         pMbar_bV = txl.mbar_alloc(1, num_stages=NUM_STAGES)
 
@@ -1652,7 +1664,10 @@ def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
                         txl.mbar_wait(cur_mbar_PV1, phase)
                         txl.mbar_wait(cur_mbar_PV2, phase)
                     txl.mbar_expect(cur_mbar_bV, BLOCK_N * HEAD_DIM * byte_count)
-                    txl.tma_load(cur_bV, desc_v, [offsetkv_y, 0], cur_mbar_bV)
+                    if FP8_OUTPUT:
+                        txl.tma_load(cur_bV, desc_v, [off_hz * HEAD_DIM, start_n], cur_mbar_bV)
+                    else:
+                        txl.tma_load(cur_bV, desc_v, [offsetkv_y, 0], cur_mbar_bV)
 
                     offsetkv_y += BLOCK_N
                     bufIdxW = (bufIdxW + 1) % NUM_STAGES
@@ -1797,7 +1812,10 @@ def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
                     #    txl.bar_wait(WG2_BAR, WG_NUM_THREADS)
 
                     # note that this non transposed v for FP8 is only supported on Blackwell
-                    acc = tl.dot(p, cur_bV, acc)
+                    if FP8_OUTPUT:
+                        acc = tl.dot(p, cur_bV.T, acc)
+                    else:
+                        acc = tl.dot(p, cur_bV, acc)
 
                     with pl.scope("dotQK"):
                         txl.dot_wait(1)
@@ -1864,7 +1882,10 @@ def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
                     txl.mbar_wait(cur_mbar_bV, phaseV)
 
                     # note that this non transposed v for FP8 is only supported on Blackwell
-                    acc = tl.dot(p, cur_bV, acc)
+                    if FP8_OUTPUT:
+                        acc = tl.dot(p, cur_bV.T, acc)
+                    else:
+                        acc = tl.dot(p, cur_bV, acc)
                     txl.dot_wait(0)
                     #txl.mbar_arrive(cur_mbar_PV)
 
@@ -2615,7 +2636,7 @@ class _attention(torch.autograd.Function):
         HEAD_DIM_Q, HEAD_DIM_K = q.shape[-1], k.shape[-1]
         # when v is in float8_e5m2 it is transposed.
         HEAD_DIM_V = v.shape[-1]
-        assert HEAD_DIM_Q == HEAD_DIM_K and HEAD_DIM_K == HEAD_DIM_V
+        assert HEAD_DIM_Q == HEAD_DIM_K
         assert HEAD_DIM_K in {16, 32, 64, 128, 256}
         o = torch.empty_like(q)
         stage = 3 if causal else 1
@@ -2630,10 +2651,16 @@ class _attention(torch.autograd.Function):
         if supports_host_descriptor():
             # Note that on Hopper we cannot perform a FP8 dot with a non-transposed second tensor
             y_dim = q.shape[0] * q.shape[1] * q.shape[2]
+            dtype = q.dtype
 
             dummy_block = [1, 1]
             desc_q = TensorDescriptor(q, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
-            desc_v = TensorDescriptor(v, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
+            if dtype == torch.float8_e5m2:
+                n_ctx = v.shape[3]
+                y_dim_v = v.shape[0] * v.shape[1] * v.shape[2]
+                desc_v = TensorDescriptor(v, shape=[y_dim_v, n_ctx], strides=[n_ctx, 1], block_shape=dummy_block)
+            else:
+                desc_v = TensorDescriptor(v, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
             desc_k = TensorDescriptor(k, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
             desc_o = TensorDescriptor(o, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
         else:
@@ -2781,19 +2808,20 @@ if Has_TXL:
 #@pytest.mark.parametrize("causal", [True])  # FIXME: Non-causal tests do not pass at the moment.
 #@pytest.mark.parametrize("warp_specialize", [False, True] if is_blackwell() else [False])
 def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=False, profiling=False):
-    #torch.manual_seed(20)
-    #q = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5))
-    #k = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5))
-    #v = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5))
-    q = (torch.randn((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE))
-    k = (torch.randn((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE))
-    v = (torch.randn((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE))
-    #sm_scale = 0.5
-    #sm_scale = 1.0
+    torch.manual_seed(20)
+    q = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=torch.float16, device=DEVICE).normal_(mean=0.0, std=0.5))
+    k = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=torch.float16, device=DEVICE).normal_(mean=0.0, std=0.5))
+    v = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=torch.float16, device=DEVICE).normal_(mean=0.0, std=0.5))
     q1 = q.permute(0,2,1,3).contiguous()
     k1 = k.permute(0,2,1,3).contiguous()
     v1 = v.permute(0,2,1,3).contiguous()
-
+    if dtype == torch.float8_e5m2:
+        v = v.permute(0,1,3,2).contiguous().to(torch.float8_e5m2)
+        q = q.to(torch.float8_e5m2)
+        k = k.to(torch.float8_e5m2)
+    print(f"q sample: {q[0,0,0,:8]}")
+    print(f"k sample: {k[0,0,0,:8]}")
+    print(f"v sample: {v[0,0,0,:8]}")
     test_outs = []
     # txl
     if HAS_FLASH:
@@ -2834,8 +2862,13 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=
 
     ## OLD
     for actual_out in test_outs:
+        if dtype == torch.float8_e5m2:
+            actual_out = actual_out.to(torch.float16)
+        print(actual_out.shape)
         print(f"Output max diff: {(actual_out - ref_out).abs().max().item()}")
         print(f"Output mean diff: {(actual_out - ref_out).abs().mean().item()}")
+        print(f"actual sample: {actual_out[0,0,0,:8]}")
+        print(f"ref sample:    {ref_out[0,0,0,:8]}")
         assert torch.allclose(ref_out, actual_out, atol=1e-2, rtol=0)
 
     #rtol = 0.0
@@ -2849,6 +2882,7 @@ TORCH_HAS_FP8 = hasattr(torch, 'float8_e5m2')
 BATCH, N_HEADS, HEAD_DIM = 4, 32, 128
 
 TORCH_HAS_FP8 = True
+TORCH_HAS_FP16 = True
 # vary seq length for fixed head and batch=4
 configs = []
 for mode in ["fwd"]:
@@ -2862,9 +2896,9 @@ for mode in ["fwd"]:
                     x_vals=[2**i for i in range(10, 15)],
                     # x_vals=[2**i for i in range(14, 15)],
                     line_arg="provider",
-                    line_vals=(["triton-fp16"] if Has_TXL else []) + (["triton-fp8"] if TORCH_HAS_FP8 else []) +
+                    line_vals=(["triton-fp16"] if TORCH_HAS_FP16 else []) + (["triton-fp8"] if TORCH_HAS_FP8 else []) +
                     (["flash"] if HAS_FLASH else []),
-                    line_names=(["Triton [FP16]"] if Has_TXL else [])  + (["Triton [FP8]"] if TORCH_HAS_FP8 else []) +
+                    line_names=(["Triton [FP16]"] if TORCH_HAS_FP16 else [])  + (["Triton [FP8]"] if TORCH_HAS_FP8 else []) +
                     (["Flash-3"] if HAS_FLASH else []),
                     styles=[("red", "-"), ("blue", "-"), ("green", "-")],
                     ylabel="TFLOPS",
@@ -2886,15 +2920,30 @@ def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, dev
     BATCH = int(16384 / N_CTX)
     assert mode in ["fwd", "bwd"]
     dtype = torch.float16
-    q = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
-    k = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
-    v = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
+    # q = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
+    # k = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
+    # v = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
     if "triton" in provider:
+        if mode == "fwd" and "fp8" in provider:
+            v_shape = (BATCH, H, HEAD_DIM, N_CTX)
+        else:
+            v_shape = (BATCH, H, N_CTX, HEAD_DIM)
+        q = torch.randn(
+                (BATCH, H, N_CTX, HEAD_DIM),
+                dtype=dtype,
+                device=device,
+                requires_grad=True,
+            )
+        k = torch.randn(
+            (BATCH, H, N_CTX, HEAD_DIM),
+            dtype=dtype,
+            device=device,
+            requires_grad=True,
+        )
+        v = torch.randn(v_shape, dtype=dtype, device=device, requires_grad=True)
         if mode == "fwd" and "fp8" in provider:
             q = q.to(torch.float8_e5m2)
             k = k.to(torch.float8_e5m2)
-            v = v.permute(0, 1, 3, 2).contiguous()
-            v = v.permute(0, 1, 3, 2)
             v = v.to(torch.float8_e5m2)
         sm_scale = 1/math.sqrt(HEAD_DIM)
         fn = lambda: attention(q, k, v, causal, sm_scale, algo, no_tune)
@@ -2940,14 +2989,14 @@ def run_test(algo=0, dump_dir=None):
     no_tune=True # has best config
     #no_tune=False # no best config
 
-    print("TEST...")
+    # print("TEST...")
     #test_op(1, 2, 1024, 128, False, dtype=torch.float16, no_tune=no_tune)
 
     PROFILING=False
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=0, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=1, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)
-    #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
+    # test_op(16, 32, 1024, 128, False, dtype=torch.float8_e5m2, algo=4, no_tune=no_tune, profiling=PROFILING)
     #test_op(1, 2, 1536, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
     # test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=algo, no_tune=no_tune, profiling=PROFILING)
 

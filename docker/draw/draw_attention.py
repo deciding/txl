@@ -21,11 +21,9 @@ fp16_c_tile   = np.array([340, 440, 520, 570, 560])
 fp16_c_tk     = np.array([330, 430, 510, 560, 550])
 
 # FP8, causal = False Txl 还没有支持 FP8
-fp8_nc_fa3    = np.array([550, 750, 850, 900, 880])
-fp8_nc_tawa   = np.array([500, 700, 780, 820, 800])
-fp8_nc_triton = np.array([420, 600, 700, 730, 710])
-fp8_nc_tile   = np.array([440, 620, 720, 760, 740])
-fp8_nc_tk     = np.array([430, 610, 710, 750, 730])
+fp8_nc_fa3    = np.array([587, 770, 850, 900, 980])
+fp8_nc_txl   = np.array([547, 627, 676, 703, 706])
+fp8_nc_triton = np.array([520, 610, 690, 716, 723])
 
 # FP8, causal = True Txl 还没有支持 FP8
 fp8_c_fa3     = np.array([600, 800, 900, 950, 930])
@@ -62,7 +60,7 @@ data = {
     },
     ("FP8, causal=False"): {
         "FA3 (CUTLASS)": fp8_nc_fa3,
-        "Txl":           fp8_nc_tawa,
+        "Txl":           fp8_nc_txl,
         "Triton":         fp8_nc_triton,
     },
     ("FP8, causal=True"): {
@@ -128,7 +126,7 @@ plot_panel(
     axes[1, 0],
     "FP8, causal=false",
     data[("FP8, causal=False")],
-    ylim=(0, 1000),
+    ylim=(0, 1250),
     yticks=[0, 250, 500, 750, 1000],
     methods=methods_down,
 )
@@ -136,7 +134,7 @@ plot_panel(
     axes[1, 1],
     "FP8, causal=true",
     data[("FP8, causal=True")],
-    ylim=(0, 1000),
+    ylim=(0, 1250),
     yticks=[0, 250, 500, 750, 1000],
     methods=methods_down,
 )

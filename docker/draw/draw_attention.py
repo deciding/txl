@@ -13,24 +13,22 @@ fp16_nc_triton= np.array([390, 460, 500, 520, 540])
 fp16_nc_tile  = np.array([447, 590, 610, 570, 600])
 fp16_nc_tk    = np.array([453, 597, 599, 610, 590])
 
-# FP16, causal = True Txl 还没有支持 causal attention
-fp16_c_fa3    = np.array([420, 520, 620, 680, 650])
-fp16_c_tawa   = np.array([380, 480, 580, 630, 620])
-fp16_c_triton = np.array([320, 420, 500, 550, 540])
-fp16_c_tile   = np.array([340, 440, 520, 570, 560])
-fp16_c_tk     = np.array([330, 430, 510, 560, 550])
+# FP16, causal = True
+fp16_c_fa3    = np.array([387, 512, 589, 613,622])
+fp16_c_txl   = np.array([335, 429, 497, 539, 573])
+fp16_c_triton = np.array([238, 376, 421, 473, 500]) 
+fp16_c_tile   = np.array([346, 436, 511, 478, 509])
+fp16_c_tk     = np.array([302, 421, 437, 457, 477])
 
-# FP8, causal = False Txl 还没有支持 FP8
+# FP8, causal = False 
 fp8_nc_fa3    = np.array([587, 770, 850, 900, 980])
 fp8_nc_txl   = np.array([547, 627, 676, 703, 706])
 fp8_nc_triton = np.array([520, 610, 690, 716, 723])
 
-# FP8, causal = True Txl 还没有支持 FP8
-fp8_c_fa3     = np.array([600, 800, 900, 950, 930])
-fp8_c_tawa    = np.array([540, 720, 800, 840, 820])
-fp8_c_triton  = np.array([450, 630, 720, 760, 740])
-fp8_c_tile    = np.array([470, 650, 740, 780, 760])
-fp8_c_tk      = np.array([460, 640, 730, 770, 750])
+# FP8, causal = True 
+fp8_c_fa3     = np.array([379, 578, 738, 812, 864])
+fp8_c_txl    = np.array([343, 485, 591, 639, 664])
+fp8_c_triton  = np.array([333, 418, 558, 623, 679])
 # ===============================================================
 
 methods_up = ["FA3 (CUTLASS)", "Txl", "Triton", "TileLang", "ThunderKittens"]
@@ -53,7 +51,7 @@ data = {
     },
     ("FP16, causal=True"): {
         "FA3 (CUTLASS)": fp16_c_fa3,
-        "Txl":           fp16_c_tawa,
+        "Txl":           fp16_c_txl,
         "Triton":         fp16_c_triton,
         "TileLang":       fp16_c_tile,
         "ThunderKittens": fp16_c_tk,
@@ -65,7 +63,7 @@ data = {
     },
     ("FP8, causal=True"): {
         "FA3 (CUTLASS)": fp8_c_fa3,
-        "Txl":           fp8_c_tawa,
+        "Txl":           fp8_c_txl,
         "Triton":         fp8_c_triton,
     },
 }

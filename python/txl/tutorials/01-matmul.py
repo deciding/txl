@@ -34,6 +34,9 @@ from contextlib import contextmanager
 from typing import Optional
 import txl
 
+from example_gemm import matmul as tilelang_matmul
+from example_tilelang_gemm_fp8 import matmul as tilelang_matmul_fp8
+
 if torch.cuda.is_available():
     from triton._C.libtriton import nvidia
     cublas_workspace = torch.empty(32 * 1024 * 1024, device="cuda", dtype=torch.uint8)
@@ -2009,27 +2012,49 @@ def torch_matmul(a, b):
         c = torch.matmul(a, b.T)
     return c
 
+def matmul_tilelang(a, b):
+    # Check constraints.
+    assert a.shape[1] == b.shape[1], "Incompatible dimensions"  # b is transposed
+    assert a.dtype == b.dtype, "Incompatible dtypes"
+
+    M, K = a.shape
+    N, K = b.shape
+    dtype = a.dtype
+
+    if dtype == torch.float8_e4m3fn:
+        kernel = tilelang_matmul_fp8(M, N, K, 128, 256, 128, 'float8_e4m3')
+    else:
+        kernel = tilelang_matmul(M, N, K, 128, 256, 64)
+
+    bytes_per_elem = a.element_size()
+    flops_str = f"flops{bytes_per_elem * 8}"
+
+    dtype_str = str(dtype).split('.')[-1]
+    with proton.scope(f"matmul_tilelang_{dtype_str} [M={M}, N={N}, K={K}]",
+                    {"bytes": bytes_per_elem * (M * K + N * K + M * N), flops_str: 2. * M * N * K}):
+        c = kernel(a, b)
+    return c
 
 @contextmanager
-def proton_context():
-    proton.activate(0)
+def proton_context(session):
+    proton.activate(session)
     try:
         yield
     finally:
-        proton.deactivate(0)
+        proton.deactivate(session)
 
 
-def bench_fn(label, reps, warmup_reps, fn, *args):
+def bench_fn(label, reps, warmup_reps, session, fn, *args):
     print(f"Benchmarking {label}: ...", end="")
     for _ in range(warmup_reps):
         fn(*args)
-    with proton_context():
+    with proton_context(session):
         for _ in range(reps):
             fn(*args)
     print(f"\rBenchmarking {label}: done")
 
 
-def bench(K, dtype, reps=100, warmup_reps=25):
+def bench(K, dtype, session, reps=100, warmup_reps=25):
     M = 8192
     N = 8192
     a = torch.randn((M, K), device="cuda", dtype=torch.float16).to(dtype)
@@ -2041,15 +2066,18 @@ def bench(K, dtype, reps=100, warmup_reps=25):
     #     bench_fn("cublas", reps, warmup_reps, cublas_matmul, a, b)
     #if dtype == torch.float16:
     #    bench_fn("torch", reps, warmup_reps, torch_matmul, a, b)
-    #bench_fn("naive", reps, warmup_reps, matmul, a, b.T)
+    # bench_fn("naive", reps, warmup_reps, matmul, a, b.T)
     #bench_fn("persistent", reps, warmup_reps, matmul_persistent, a, b.T)
-    #bench_fn("tma", reps, warmup_reps, lambda a, b: matmul_tma(a, b, False), a, b)
+    # bench_fn("tma", reps, warmup_reps, lambda a, b: matmul_tma(a, b, False), a, b)
 
     #bench_fn("async_load", reps, warmup_reps, matmul, a, bn)
     #bench_fn("async_load_txl", reps, warmup_reps, matmul_async_load_txl, a, bn)
     #bench_fn("naive_tma_txl", reps, warmup_reps, matmul_naive_tma_txl, a, b) #0
     #bench_fn("tma_persistent_txl", reps, warmup_reps, matmul_tma_persistent_txl, a, b) #1
-    bench_fn("tma_ws_persistent_txl", reps, warmup_reps, matmul_tma_ws_persistent_txl, a, b) #2
+    bench_fn("cublas", reps, warmup_reps, session, cublas_matmul, a, b)
+    bench_fn("tma_ws_persistent_txl", reps, warmup_reps, session, matmul_tma_ws_persistent_txl, a, b) #2
+    bench_fn(f"tma_ws_persistent_triton", reps, warmup_reps, session, lambda a, b: matmul_tma_persistent(a, b, True), a, b)
+    bench_fn("tilelang", reps, warmup_reps, session, matmul_tilelang, a, b)
     #bench_fn("tma_ws_nn_persistent_txl", reps, warmup_reps, matmul_tma_ws_nn_persistent_txl, a, bn)
     return
     warp_specialize = [False, True] if HAS_WARP_SPECIALIZE else [False]
@@ -2122,22 +2150,13 @@ def validate(M, N, K, dtype, log=False):
     print()
 
 
-# def show_profile(precision, profile_name):
-#     import triton.profiler.viewer as proton_viewer
-#     metric_names = ["time/ms"]
-#     if precision == 'fp8':
-#         metric_names = ["tflop8/s"] + metric_names
-#     elif precision == 'fp16':
-#         metric_names = ["tflop16/s"] + metric_names
-#     file_name = f"{profile_name}.hatchet"
-#     tree, metrics = proton_viewer.parse(metric_names, file_name)
-#     proton_viewer.print_tree(tree, metrics)
-
-def show_profile(profile_name):
+def show_profile(precision, profile_name):
     import triton.profiler.viewer as proton_viewer
     metric_names = ["time/ms"]
-    metric_names = ["tflop8/s"] + metric_names
-    metric_names = ["tflop16/s"] + metric_names
+    if precision == 'fp8':
+        metric_names = ["tflop8/s"] + metric_names
+    elif precision == 'fp16':
+        metric_names = ["tflop16/s"] + metric_names
     file_name = f"{profile_name}.hatchet"
     tree, metrics = proton_viewer.parse(metric_names, file_name)
     proton_viewer.print_tree(tree, metrics)
@@ -2193,13 +2212,24 @@ if __name__ == "__main__":
         # exit()
         # print(dtype)
 
-        proton.start("matmul", hook="triton")
+        session = proton.start("matmul_fp16", hook="triton")
         proton.deactivate()
         # for K in range(args.K_range[0], args.K_range[1] + 1, args.K_step):
         #     bench(K, dtype)
-        for dtype in [torch.float8_e4m3fn, torch.float16]:
+        for dtype in [torch.float16]:
             for k_seqlen in [256, 512, 1024, 2048, 4096, 8192, 16384]:
-                bench(k_seqlen, dtype)
+                bench(k_seqlen, dtype, session)
         proton.finalize()
 
-        show_profile("matmul")
+        show_profile("fp16","matmul_fp16")
+
+        session = proton.start("matmul_fp8", hook="triton")
+        proton.deactivate()
+        # for K in range(args.K_range[0], args.K_range[1] + 1, args.K_step):
+        #     bench(K, dtype)
+        for dtype in [torch.float8_e4m3fn]:
+            for k_seqlen in [256, 512, 1024, 2048, 4096, 8192, 16384]:
+                bench(k_seqlen, dtype, session)
+        proton.finalize()
+
+        show_profile("fp8","matmul_fp8")

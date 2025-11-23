@@ -6,21 +6,30 @@ requirements_file = root_dir / "requirements.txt"
 txl_wheel_file = local_dir / "txl-3.4.0-cp312-cp312-linux_x86_64.whl"
 
 test_file = root_dir / "python" / "txl" / "tutorials" / "01-matmul.py"
+# test_file = local_dir / "tilelang" / "benchmark_tilelang_matmul.py"
+tilelang_gemm_fp8_file = local_dir / "tilelang" / "example_tilelang_gemm_fp8.py"
+tilelang_gemm_file = local_dir / "tilelang" / "example_gemm.py"
 
 app = App(name="txl")  # Note: this is optional since Modal 0.57
 volume = Volume.from_name("txl-dump", create_if_missing=True) # create a cloud volume to store compiled dump files
 
 txl_image = (
-    Image.debian_slim(python_version="3.12")
+    Image.from_registry(
+        "nvidia/cuda:12.4.0-devel-ubuntu22.04",  
+        add_python="3.12",                       
+    )
     #Image.from_dockerfile(path="./Dockerfile")
     .workdir("/workspace")
     .add_local_file(txl_wheel_file, remote_path="/workspace/", copy=True) # copy the local code to the image
     .run_commands( "ls .")
     .pip_install_from_requirements(requirements_file) # local file not remote file
+    .pip_install("tilelang")
     .run_commands(
         "pip install /workspace/txl-3.4.0-cp312-cp312-linux_x86_64.whl",
     )
     .add_local_file(test_file, remote_path="/workspace/test_txl.py", copy=False) # copy after image build, no need rebuild
+    .add_local_file(tilelang_gemm_fp8_file, remote_path="/workspace/example_tilelang_gemm_fp8.py", copy=False)
+    .add_local_file(tilelang_gemm_file, remote_path="/workspace/example_gemm.py", copy=False)
 )
 
 # Example function that uses the image
@@ -100,6 +109,7 @@ def run_demo():
         ctypes.CDLL(str(cudart_dir / "libcudart.so.12"), mode=ctypes.RTLD_GLOBAL)
         ctypes.CDLL(str(cublas_dir / "libcublasLt.so.12"), mode=ctypes.RTLD_GLOBAL)
         ctypes.CDLL(str(cublas_dir / "libcublas.so.12"), mode=ctypes.RTLD_GLOBAL)
-
-    import_cuBLAS_lib()
-    test_demo()
+    if get_gpu_type():
+        print("Running on H100 SXM")
+        import_cuBLAS_lib()
+        test_demo()

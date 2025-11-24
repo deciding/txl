@@ -34,6 +34,9 @@ from contextlib import contextmanager
 from typing import Optional
 import txl
 
+from example_gemm import matmul as tilelang_matmul
+from example_tilelang_gemm_fp8 import matmul as tilelang_matmul_fp8
+
 if torch.cuda.is_available():
     from triton._C.libtriton import nvidia
     cublas_workspace = torch.empty(32 * 1024 * 1024, device="cuda", dtype=torch.uint8)
@@ -1073,6 +1076,19 @@ filename = 'dump/3H2OJ5D5CYZY5Q4QRKILSI7DZ5IUKDPDDLUQYE6POPBUMHJUGKNA/matmul_per
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
+# @txl.autotune(
+#     configs=[
+#         txl.Config({"BLOCK_SIZE_M": BM, "BLOCK_SIZE_N": BN, "BLOCK_SIZE_K": BK, "GROUP_SIZE_M": 8, "NUM_CONSUMER_GROUPS": 2, "NUM_STAGES": s,},
+#             num_stages=s,
+#             num_warps=4,
+#             num_warpgroups=3,
+#             pre_hook=matmul_tma_set_block_size_hook
+#         )
+#         for BM in [128] for BN in [128, 256] for BK in [64, 128] for s in [3,4,5]
+#     ],
+#     key=["M", "N", "K"],
+#     use_cuda_graph=True,
+# )
 #@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='llir', log_dir='dump')
 #@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='llir')
 #@txl.jit(launch_metadata=_matmul_launch_metadata, src_file=filename)
@@ -1098,6 +1114,7 @@ def matmul_persistent_ws_tma_txl_kernel(
     WARP_SPECIALIZE: tl.constexpr,  #
 ):
     dtype = tl.float8e4nv if FP8_OUTPUT else tl.float16
+    byte_count: tl.constexpr = 2 if dtype == tl.float16 else 1
     num_tiles = tl.cdiv(M, BLOCK_SIZE_M) * tl.cdiv(N, BLOCK_SIZE_N)
     num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
     num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
@@ -1144,15 +1161,15 @@ def matmul_persistent_ws_tma_txl_kernel(
                 b0_buf = txl.get_buffer(b0, bufIdx)
 
                 txl.mbar_wait(mbar_c1, phase)
-                txl.mbar_expect(mbar_p_a0, BLOCK_SIZE_M//2*BLOCK_SIZE_K*2)
+                txl.mbar_expect(mbar_p_a0, BLOCK_SIZE_M//2*BLOCK_SIZE_K*byte_count)
                 txl.tma_load(a0_buf, a_desc, [offs_am, offs_k], mbar_p_a0)
 
                 txl.mbar_wait(mbar_c2, phase)
-                txl.mbar_expect(mbar_p_b0, BLOCK_SIZE_N*BLOCK_SIZE_K*2)
+                txl.mbar_expect(mbar_p_b0, BLOCK_SIZE_N*BLOCK_SIZE_K*byte_count)
                 txl.tma_load(b0_buf, b_desc, [offs_bn, offs_k], mbar_p_b0)
 
 
-                txl.mbar_expect(mbar_p_a1, BLOCK_SIZE_M//2*BLOCK_SIZE_K*2)
+                txl.mbar_expect(mbar_p_a1, BLOCK_SIZE_M//2*BLOCK_SIZE_K*byte_count)
                 txl.tma_load(a1_buf, a_desc, [offs_am + BLOCK_SIZE_M // 2, offs_k], mbar_p_a1)
 
                 offs_k += BLOCK_SIZE_K
@@ -1176,14 +1193,165 @@ def matmul_persistent_ws_tma_txl_kernel(
             offs_bn = pid_n * BLOCK_SIZE_N
             offs_k = 0
             accumulator = tl.zeros((BLOCK_SIZE_M//2, BLOCK_SIZE_N), dtype=tl.float32)
-
             for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
                 mbar_p_b0 = txl.get_buffer(mbar_producer_b0, bufIdx)
 
                 b0_buf = txl.get_buffer(b0, bufIdx)
-
                 txl.mbar_wait(mbar_p_b0, phase)
+                if txl.is_warpgroup([1]):
+                    mbar_p_a0 = txl.get_buffer(mbar_producer_a0, bufIdx)
+                    mbar_c1 = txl.get_buffer(mbar_consumer1, bufIdx)
+                    a0_buf = txl.get_buffer(a0, bufIdx)
+                    txl.mbar_wait(mbar_p_a0, phase)
+                    accumulator = tl.dot(a0_buf, b0_buf.T, accumulator) # accumulator is reg, no contention among buffers
+                    txl.dot_wait(0)
+                    txl.mbar_arrive(mbar_c1)
+                if txl.is_warpgroup([2]): # TODO: else test
+                    mbar_p_a1 = txl.get_buffer(mbar_producer_a1, bufIdx)
+                    mbar_c2 = txl.get_buffer(mbar_consumer2, bufIdx)
+                    a1_buf = txl.get_buffer(a1, bufIdx)
+                    txl.mbar_wait(mbar_p_a1, phase)
+                    accumulator = tl.dot(a1_buf, b0_buf.T, accumulator)
+                    txl.dot_wait(0)
+                    txl.mbar_arrive(mbar_c2)
 
+                offs_k += BLOCK_SIZE_K
+                bufIdx = (bufIdx + 1) % NUM_STAGES
+                if bufIdx == 0: # TODO: pipelinestate
+                    phase = phase^1
+
+            c = accumulator.to(dtype)
+            if txl.is_warpgroup([1]):
+                c_desc.store([offs_am, offs_bn], c)
+            if txl.is_warpgroup([2]):
+                c_desc.store([offs_am + BLOCK_SIZE_M//2, offs_bn], c)
+
+@txl.autotune(
+    configs=[
+        txl.Config(
+            {
+                "BLOCK_SIZE_M": 128,
+                "BLOCK_SIZE_N": 256,
+                "BLOCK_SIZE_K": 128,
+                "GROUP_SIZE_M": 8,
+                "NUM_CONSUMER_GROUPS": 2,
+                "NUM_STAGES": 4,
+            },
+            num_stages=4,
+            num_warps=4,
+            num_warpgroups=3,
+            pre_hook=matmul_tma_set_block_size_hook
+        ),
+    ],
+    key=["M", "N", "K"],
+    use_cuda_graph=True,
+)
+@txl.jit(launch_metadata=_matmul_launch_metadata)
+def matmul_persistent_ws_tma_txl_kernel_fp8(
+    a_desc,
+    b_desc,
+    c_desc,
+    M,
+    N,
+    K,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    BLOCK_SIZE_K: tl.constexpr,  #
+    GROUP_SIZE_M: tl.constexpr,  #
+    FP8_OUTPUT: tl.constexpr,  #
+    NUM_CONSUMER_GROUPS: tl.constexpr,
+    NUM_STAGES: tl.constexpr,
+
+    # 3.4.x
+    #EPILOGUE_SUBTILE: tl.constexpr,  #
+    NUM_SMS: tl.constexpr,  #
+    WARP_SPECIALIZE: tl.constexpr,  #
+):
+    dtype = tl.float8e4nv if FP8_OUTPUT else tl.float16
+    byte_count: tl.constexpr = 2 if dtype == tl.float16 else 1
+    num_tiles = tl.cdiv(M, BLOCK_SIZE_M) * tl.cdiv(N, BLOCK_SIZE_N)
+    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
+    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
+    num_pid_in_group = GROUP_SIZE_M * num_pid_n
+
+    a0 = txl.smem_alloc([BLOCK_SIZE_M//2, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+    a1 = txl.smem_alloc([BLOCK_SIZE_M//2, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+    b0 = txl.smem_alloc([BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+
+    mbar_producer_a0 = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+    mbar_producer_a1 = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+    mbar_producer_b0 = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+    mbar_consumer1 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+    mbar_consumer2 = txl.mbar_alloc(128, num_stages=NUM_STAGES)
+
+
+    if txl.is_warpgroup([0]):
+
+        phase = 1
+        bufIdx = 0
+        for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
+            group_id = pid // num_pid_in_group
+            first_pid_m = group_id * GROUP_SIZE_M
+            group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+            pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+            pid_n = (pid % num_pid_in_group) // group_size_m
+            #pid_m = pid % num_pid_m
+            #pid_n = pid // num_pid_m
+
+            offs_am = pid_m * BLOCK_SIZE_M
+            offs_bn = pid_n * BLOCK_SIZE_N
+            offs_k = 0
+
+            for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
+                mbar_c1 = txl.get_buffer(mbar_consumer1, bufIdx)
+                mbar_c2 = txl.get_buffer(mbar_consumer2, bufIdx)
+
+                mbar_p_a0 = txl.get_buffer(mbar_producer_a0, bufIdx)
+                mbar_p_a1 = txl.get_buffer(mbar_producer_a1, bufIdx)
+                mbar_p_b0 = txl.get_buffer(mbar_producer_b0, bufIdx)
+
+                a0_buf = txl.get_buffer(a0, bufIdx)
+                a1_buf = txl.get_buffer(a1, bufIdx)
+                b0_buf = txl.get_buffer(b0, bufIdx)
+
+                txl.mbar_wait(mbar_c1, phase)
+                txl.mbar_expect(mbar_p_a0, BLOCK_SIZE_M//2*BLOCK_SIZE_K*byte_count)
+                txl.tma_load(a0_buf, a_desc, [offs_am, offs_k], mbar_p_a0)
+
+                txl.mbar_wait(mbar_c2, phase)
+                txl.mbar_expect(mbar_p_b0, BLOCK_SIZE_N*BLOCK_SIZE_K*byte_count)
+                txl.tma_load(b0_buf, b_desc, [offs_bn, offs_k], mbar_p_b0)
+
+
+                txl.mbar_expect(mbar_p_a1, BLOCK_SIZE_M//2*BLOCK_SIZE_K*byte_count)
+                txl.tma_load(a1_buf, a_desc, [offs_am + BLOCK_SIZE_M // 2, offs_k], mbar_p_a1)
+
+                offs_k += BLOCK_SIZE_K
+                bufIdx = (bufIdx + 1) % NUM_STAGES
+                if bufIdx == 0:
+                    phase = phase^1
+
+    if txl.is_warpgroup([1, 2]): # TODO: else
+        phase = 0
+        bufIdx = 0
+        for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
+            group_id = pid // num_pid_in_group
+            first_pid_m = group_id * GROUP_SIZE_M
+            group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+            pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+            pid_n = (pid % num_pid_in_group) // group_size_m
+            #pid_m = pid % num_pid_m
+            #pid_n = pid // num_pid_m
+
+            offs_am = pid_m * BLOCK_SIZE_M
+            offs_bn = pid_n * BLOCK_SIZE_N
+            offs_k = 0
+            accumulator = tl.zeros((BLOCK_SIZE_M//2, BLOCK_SIZE_N), dtype=tl.float32)
+            for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
+                mbar_p_b0 = txl.get_buffer(mbar_producer_b0, bufIdx)
+
+                b0_buf = txl.get_buffer(b0, bufIdx)
+                txl.mbar_wait(mbar_p_b0, phase)
                 if txl.is_warpgroup([1]):
                     mbar_p_a0 = txl.get_buffer(mbar_producer_a0, bufIdx)
                     mbar_c1 = txl.get_buffer(mbar_consumer1, bufIdx)
@@ -1239,14 +1407,22 @@ def matmul_tma_ws_persistent_txl(a, b):
             NUM_SMS,
             triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N),
         ), )
-
-    matmul_persistent_ws_tma_txl_kernel[grid](
+    if dtype == torch.float8_e4m3fn:
+        matmul_persistent_ws_tma_txl_kernel_fp8[grid](
         a_desc, b_desc, c_desc,  #
         M, N, K,  #
         FP8_OUTPUT=dtype == torch.float8_e4m3fn,  #
         NUM_SMS=NUM_SMS,  #
         WARP_SPECIALIZE=False,  #
     )
+    if dtype == torch.float16:
+        matmul_persistent_ws_tma_txl_kernel[grid](
+            a_desc, b_desc, c_desc,  #
+            M, N, K,  #
+            FP8_OUTPUT=dtype == torch.float8_e4m3fn,  #
+            NUM_SMS=NUM_SMS,  #
+            WARP_SPECIALIZE=False,  #
+        )
     return c
 
 ##########################################
@@ -1836,27 +2012,49 @@ def torch_matmul(a, b):
         c = torch.matmul(a, b.T)
     return c
 
+def matmul_tilelang(a, b):
+    # Check constraints.
+    assert a.shape[1] == b.shape[1], "Incompatible dimensions"  # b is transposed
+    assert a.dtype == b.dtype, "Incompatible dtypes"
+
+    M, K = a.shape
+    N, K = b.shape
+    dtype = a.dtype
+
+    if dtype == torch.float8_e4m3fn:
+        kernel = tilelang_matmul_fp8(M, N, K, 128, 256, 128, 'float8_e4m3')
+    else:
+        kernel = tilelang_matmul(M, N, K, 128, 256, 64)
+
+    bytes_per_elem = a.element_size()
+    flops_str = f"flops{bytes_per_elem * 8}"
+
+    dtype_str = str(dtype).split('.')[-1]
+    with proton.scope(f"matmul_tilelang_{dtype_str} [M={M}, N={N}, K={K}]",
+                    {"bytes": bytes_per_elem * (M * K + N * K + M * N), flops_str: 2. * M * N * K}):
+        c = kernel(a, b)
+    return c
 
 @contextmanager
-def proton_context():
-    proton.activate(0)
+def proton_context(session):
+    proton.activate(session)
     try:
         yield
     finally:
-        proton.deactivate(0)
+        proton.deactivate(session)
 
 
-def bench_fn(label, reps, warmup_reps, fn, *args):
+def bench_fn(label, reps, warmup_reps, session, fn, *args):
     print(f"Benchmarking {label}: ...", end="")
     for _ in range(warmup_reps):
         fn(*args)
-    with proton_context():
+    with proton_context(session):
         for _ in range(reps):
             fn(*args)
     print(f"\rBenchmarking {label}: done")
 
 
-def bench(K, dtype, reps=100, warmup_reps=25):
+def bench(K, dtype, session, reps=100, warmup_reps=25):
     M = 8192
     N = 8192
     a = torch.randn((M, K), device="cuda", dtype=torch.float16).to(dtype)
@@ -1864,19 +2062,22 @@ def bench(K, dtype, reps=100, warmup_reps=25):
 
     b = bn.T.contiguous()
 
-    if cublas is not None:
-        bench_fn("cublas", reps, warmup_reps, cublas_matmul, a, b)
+    # if cublas is not None:
+    #     bench_fn("cublas", reps, warmup_reps, cublas_matmul, a, b)
     #if dtype == torch.float16:
     #    bench_fn("torch", reps, warmup_reps, torch_matmul, a, b)
-    #bench_fn("naive", reps, warmup_reps, matmul, a, b.T)
+    # bench_fn("naive", reps, warmup_reps, matmul, a, b.T)
     #bench_fn("persistent", reps, warmup_reps, matmul_persistent, a, b.T)
-    #bench_fn("tma", reps, warmup_reps, lambda a, b: matmul_tma(a, b, False), a, b)
+    # bench_fn("tma", reps, warmup_reps, lambda a, b: matmul_tma(a, b, False), a, b)
 
     #bench_fn("async_load", reps, warmup_reps, matmul, a, bn)
     #bench_fn("async_load_txl", reps, warmup_reps, matmul_async_load_txl, a, bn)
     #bench_fn("naive_tma_txl", reps, warmup_reps, matmul_naive_tma_txl, a, b) #0
     #bench_fn("tma_persistent_txl", reps, warmup_reps, matmul_tma_persistent_txl, a, b) #1
-    bench_fn("tma_ws_persistent_txl", reps, warmup_reps, matmul_tma_ws_persistent_txl, a, b) #2
+    bench_fn("cublas", reps, warmup_reps, session, cublas_matmul, a, b)
+    bench_fn("tma_ws_persistent_txl", reps, warmup_reps, session, matmul_tma_ws_persistent_txl, a, b) #2
+    bench_fn(f"tma_ws_persistent_triton", reps, warmup_reps, session, lambda a, b: matmul_tma_persistent(a, b, True), a, b)
+    bench_fn("tilelang", reps, warmup_reps, session, matmul_tilelang, a, b)
     #bench_fn("tma_ws_nn_persistent_txl", reps, warmup_reps, matmul_tma_ws_nn_persistent_txl, a, bn)
     return
     warp_specialize = [False, True] if HAS_WARP_SPECIALIZE else [False]
@@ -1899,7 +2100,7 @@ def run_test(expect, fn, a, b, label, enabled=True, log=False):
             print()
             print(expect)
             print(actual)
-            print((expect-actual).mean(dim=0))
+            print((expect-actual.to(expect.dtype)).mean(dim=0))
         passed = torch.allclose(expect, actual.to(expect.dtype), atol=1.0)
         icon = "✅" if passed else "❌"
     else:
@@ -1927,9 +2128,9 @@ def validate(M, N, K, dtype, log=False):
 
     #run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
     #run_test(naive_result, lambda a, b: matmul_tma_persistent_txl(a, b), a, b, "TXL TMA Persistent", log=log)
-    #run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
+    run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
     #run_test(naive_result, lambda a, b: matmul_tma_ws_nn_persistent_txl(a, bn), a, bn, "TXL TMA WS NN Persistent", log=log)
-    run_test(naive_result, lambda a, b: matmul_separate_tma_txl(a, b), a, b, "TXL TMA split k", log=log)
+    # run_test(naive_result, lambda a, b: matmul_separate_tma_txl(a, b), a, b, "TXL TMA split k", log=log)
 
     return
 
@@ -1975,15 +2176,15 @@ if __name__ == "__main__":
     parser.add_argument("-K", type=int, required=False, default=512)
     parser.add_argument("--K_range", type=int, nargs=2)
     parser.add_argument("--K_step", type=int, default=512)
-    parser.add_argument("--prec", type=str, choices=["fp8", "fp16"], default="fp16")
+    parser.add_argument("--prec", type=str, choices=["fp8", "fp16"], default="fp8")
     args = parser.parse_args()
 
-    dump_dir='dump/0930mm_split/'
-    #dump_dir = None
+    # dump_dir='dump/0930mm_split/'
+    dump_dir = '/workspace/dump'
 
     from triton import knobs
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
-    os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
+    # os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
     #knobs.runtime.override_arch='sm100'
     knobs.autotuning.print=True
     knobs.compilation.always_compile=True
@@ -2004,15 +2205,31 @@ if __name__ == "__main__":
         torch.manual_seed(0)
 
         #validate(32, 32, 32, dtype)
-        #validate(128, 128, 512, dtype, log=True)
-        validate(8192, 8192, args.K_range[0], dtype, log=True)
+        # validate(128, 128, 512, dtype, log=True)
+        # validate(8192, 8192, args.K_range[0], dtype, log=True)
 
         #profile(8192, 8192, args.K_range[0], dtype)
-        exit()
+        # exit()
+        # print(dtype)
 
-        proton.start("matmul", hook="triton")
-        #proton.deactivate()
-        for K in range(args.K_range[0], args.K_range[1] + 1, args.K_step):
-            bench(K, dtype)
+        session = proton.start("matmul_fp16", hook="triton")
+        proton.deactivate()
+        # for K in range(args.K_range[0], args.K_range[1] + 1, args.K_step):
+        #     bench(K, dtype)
+        for dtype in [torch.float16]:
+            for k_seqlen in [256, 512, 1024, 2048, 4096, 8192, 16384]:
+                bench(k_seqlen, dtype, session)
         proton.finalize()
-        show_profile(args.prec, "matmul")
+
+        show_profile("fp16","matmul_fp16")
+
+        session = proton.start("matmul_fp8", hook="triton")
+        proton.deactivate()
+        # for K in range(args.K_range[0], args.K_range[1] + 1, args.K_step):
+        #     bench(K, dtype)
+        for dtype in [torch.float8_e4m3fn]:
+            for k_seqlen in [256, 512, 1024, 2048, 4096, 8192, 16384]:
+                bench(k_seqlen, dtype, session)
+        proton.finalize()
+
+        show_profile("fp8","matmul_fp8")

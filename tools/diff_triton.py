@@ -2,18 +2,20 @@
 FROM_DIR='.'
 
 PATCH_DIR="patch/triton"
-NEW_PATCH_DIR="patch/triton3.4.x-proton"
+NEW_PATCH_DIR="patch/triton3.5.x"
 
 # src_commit
 REPO_PATH = '/ssd2/zhangzn/triton-old/'
 # trg_commit
 NEW_REPO_PATH = '/ssd2/zhangzn/triton-latest/'
 
-src_commit  = "release/3.4.x"
-#trg_commit  = "release/3.4.x"
-trg_commit  = "5231471"
+#src_commit  = "release/3.4.x"
+src_commit  = "5231471"
+trg_commit  = "release/3.5.x"
 
 files = []
+files.append(f"{FROM_DIR}/setup.py")
+
 files.append(f"{FROM_DIR}/bin/RegisterTritonDialects.h")
 
 files.append(f"{FROM_DIR}/include/CMakeLists.txt")
@@ -21,6 +23,8 @@ files.append(f"{FROM_DIR}/include/CMakeLists.txt")
 files.append(f"{FROM_DIR}/include/triton/Analysis/Allocation.h")
 files.append(f"{FROM_DIR}/include/triton/Analysis/TXLUtility.h")
 
+files.append(f"{FROM_DIR}/include/triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h")
+files.append(f"{FROM_DIR}/include/triton/Conversion/TritonGPUToLLVM/Utility.h")
 files.append(f"{FROM_DIR}/include/triton/Conversion/TritonToTritonGPU/Passes.td")
 
 #include/txl
@@ -32,6 +36,10 @@ files.append(f"{FROM_DIR}/lib/Analysis/Membar.cpp")
 files.append(f"{FROM_DIR}/lib/Analysis/TXLUtility.cpp")
 
 files.append(f"{FROM_DIR}/lib/Conversion/TritonGPUToLLVM/AllocateWarpGroups.cpp")
+files.append(f"{FROM_DIR}/lib/Conversion/TritonGPUToLLVM/ConvertLayoutOpToLLVM.cpp")
+files.append(f"{FROM_DIR}/lib/Conversion/TritonGPUToLLVM/MemoryOpToLLVM.cpp")
+files.append(f"{FROM_DIR}/lib/Conversion/TritonGPUToLLVM/ReduceOpToLLVM.cpp")
+files.append(f"{FROM_DIR}/lib/Conversion/TritonGPUToLLVM/Utility.cpp")
 files.append(f"{FROM_DIR}/lib/Conversion/TritonToTritonGPU/TritonGPUConversion.cpp")
 files.append(f"{FROM_DIR}/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp")
 
@@ -40,18 +48,23 @@ files.append(f"{FROM_DIR}/lib/Dialect/CMakeLists.txt")
 #lib/Dialect/TXL
 
 files.append(f"{FROM_DIR}/lib/Dialect/Triton/Transforms/RewriteTensorPointer.cpp")
+files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/IR/Dialect.cpp")
+files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/IR/Ops.cpp")
+files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp")
 files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Coalesce.cpp")
 files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/OptimizeThreadLocality.cpp")
 files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/RemoveLayoutConversions.cpp")
-#files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/TaskIdPropagate.cpp")
+files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/ReorderInstructions.cpp")
 files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Utility.cpp")
-#files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/WSCodePartition.cpp")
-#files.append(f"{FROM_DIR}/lib/Dialect/TritonGPU/Transforms/WSDataPartition.cpp")
 files.append(f"{FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/CMakeLists.txt")
+files.append(f"{FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/OptimizeDescriptorEncoding.cpp")
 files.append(f"{FROM_DIR}/lib/Dialect/TritonNvidiaGPU/Transforms/PlanCTA.cpp")
 
+files.append(f"{FROM_DIR}/python/build_helpers.py")
 files.append(f"{FROM_DIR}/python/src/ir.cc")
 files.append(f"{FROM_DIR}/python/src/passes.cc")
+
+files.append(f"{FROM_DIR}/python/triton/compiler/compiler.py")
 
 files.append(f"{FROM_DIR}/third_party/nvidia/backend/compiler.py")
 
@@ -68,15 +81,40 @@ files.append(f"{FROM_DIR}/third_party/nvidia/lib/Dialect/CMakeLists.txt")
 #third_party/nvidia/lib/TXLGPUToLLVM
 
 files.append(f"{FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/BarrierOpToLLVM.cpp")
+files.append(f"{FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/CMakeLists.txt")
+files.append(f"{FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ConvertLayoutOpToLLVM.cpp")
 files.append(f"{FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/LoadStoreOpToLLVM.cpp")
+files.append(f"{FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/MemoryOpToLLVM.cpp")
+files.append(f"{FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.cpp")
+files.append(f"{FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.h")
+files.append(f"{FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TritonGPUToLLVM.cpp")
 
 files.append(f"{FROM_DIR}/third_party/nvidia/triton_nvidia.cc")
+
+# proton
+files.append(f"{FROM_DIR}/third_party/proton/Dialect/lib/ProtonToProtonGPU/ProtonToProtonGPUPass.cpp")
+files.append(f"{FROM_DIR}/third_party/proton/proton/language.py")
 
 import sys
 import os
 import shutil
 import subprocess
 from pathlib import Path
+
+def git_diff_files_str(file1, file2):
+    """Diff two files in a git repository"""
+    try:
+        result = subprocess.run(
+            ['git', 'diff', '--no-index', file1, file2],
+            capture_output=True, text=True
+        )
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        # git diff returns non-zero when there are differences, which is normal
+        if e.returncode == 1:
+            return e.stdout
+        print(f"Error diffing files: {e.stderr}")
+        return None
 
 def git_diff_files(file1, file2):
     """Diff two files in a git repository"""
@@ -108,7 +146,7 @@ def git_diff_commits(repo_path, file_path, commit1, commit2):
         print(f"Error diffing files: {e.stderr}")
         return None
 
-init = 31
+init = 0
 for idx, fn in enumerate(files[init:]):
     idx += init
     txl_full_path = os.path.join(os.getcwd(), PATCH_DIR, fn)
@@ -125,8 +163,12 @@ for idx, fn in enumerate(files[init:]):
     (git_diff_commits(REPO_PATH, fn, src_commit, trg_commit))
     print(f"{idx}. TXL Diff: {fn}")
     (git_diff_files(triton_full_path, txl_full_path))
+    res = (git_diff_files_str(triton_full_path, txl_full_path))
+    with open('.tmp.txt', 'w') as f:
+        f.write(res)
 
-    print(f"vim -O {new_triton_path} {txl_full_path}")
+    #print(f"vim -O {new_triton_path} {txl_full_path}")
+    print(f"vim -O .tmp.txt {txl_full_path}")
 
     cont = input("CONTINUE?")
     if cont.strip() != 'q':
@@ -134,6 +176,10 @@ for idx, fn in enumerate(files[init:]):
     else:
         break
 
+print("basic change finished")
+exit()
+
+# Manual please
 txl_dirs = [
     "include/txl",
     "lib/Dialect/TXL",
@@ -180,7 +226,7 @@ files = [
         "include/triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUOps.td",
         "third_party/nvidia/include/Dialect/NVGPU/IR/NVGPUOps.td",
 ]
-init=4
+init=0
 for idx, fn in enumerate(files[init:]):
     idx += init
     print(f"{idx}. Release Diff: {fn}")

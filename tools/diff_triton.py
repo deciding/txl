@@ -21,7 +21,7 @@ files.append(f"{FROM_DIR}/bin/RegisterTritonDialects.h")
 files.append(f"{FROM_DIR}/include/CMakeLists.txt")
 
 files.append(f"{FROM_DIR}/include/triton/Analysis/Allocation.h")
-files.append(f"{FROM_DIR}/include/triton/Analysis/TXLUtility.h")
+#files.append(f"{FROM_DIR}/include/triton/Analysis/TXLUtility.h")
 
 files.append(f"{FROM_DIR}/include/triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h")
 files.append(f"{FROM_DIR}/include/triton/Conversion/TritonGPUToLLVM/Utility.h")
@@ -33,7 +33,7 @@ files.append(f"{FROM_DIR}/lib/Analysis/Allocation.cpp")
 files.append(f"{FROM_DIR}/lib/Analysis/AxisInfo.cpp")
 files.append(f"{FROM_DIR}/lib/Analysis/CMakeLists.txt")
 files.append(f"{FROM_DIR}/lib/Analysis/Membar.cpp")
-files.append(f"{FROM_DIR}/lib/Analysis/TXLUtility.cpp")
+#files.append(f"{FROM_DIR}/lib/Analysis/TXLUtility.cpp")
 
 files.append(f"{FROM_DIR}/lib/Conversion/TritonGPUToLLVM/AllocateWarpGroups.cpp")
 files.append(f"{FROM_DIR}/lib/Conversion/TritonGPUToLLVM/ConvertLayoutOpToLLVM.cpp")
@@ -146,7 +146,7 @@ def git_diff_commits(repo_path, file_path, commit1, commit2):
         print(f"Error diffing files: {e.stderr}")
         return None
 
-init = 0
+init = 51
 for idx, fn in enumerate(files[init:]):
     idx += init
     txl_full_path = os.path.join(os.getcwd(), PATCH_DIR, fn)
@@ -168,7 +168,7 @@ for idx, fn in enumerate(files[init:]):
         f.write(res)
 
     #print(f"vim -O {new_triton_path} {txl_full_path}")
-    print(f"vim -O .tmp.txt {txl_full_path}")
+    print(f"vim -O .tmp.txt {new_triton_path}")
 
     cont = input("CONTINUE?")
     if cont.strip() != 'q':
@@ -177,7 +177,6 @@ for idx, fn in enumerate(files[init:]):
         break
 
 print("basic change finished")
-exit()
 
 # Manual please
 txl_dirs = [
@@ -214,9 +213,13 @@ def copy_with_full_path_overwrite(old_parent, new_parent, dir_to_copy):
     # Copy the directory tree
     shutil.copytree(src_path, dest_path)
 
-#for txl_dir in txl_dirs:
-#    copy_with_full_path_overwrite(PATCH_DIR, NEW_PATCH_DIR, txl_dir)
+init=6
+for idx, txl_dir in enumerate(txl_dirs[init:]):
+    copy_with_full_path_overwrite(PATCH_DIR, NEW_PATCH_DIR, txl_dir)
+print("txl copied")
 #exit()
+
+# Also copy manualy TXLUtility
 
 
 # CHECK CHANGE OF IR
@@ -226,7 +229,7 @@ files = [
         "include/triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUOps.td",
         "third_party/nvidia/include/Dialect/NVGPU/IR/NVGPUOps.td",
 ]
-init=0
+init=4
 for idx, fn in enumerate(files[init:]):
     idx += init
     print(f"{idx}. Release Diff: {fn}")
@@ -237,6 +240,8 @@ for idx, fn in enumerate(files[init:]):
         continue
     else:
         break
+print("ir changes checked")
+#exit()
 
 # CHECK Base passes I used from triton
 #include/txl
@@ -322,11 +327,17 @@ files.append(
 )
 files.append(
     (
+        f"./third_party/nvidia/backend/compiler.py",
+        f"./python/txl/compiler/compiler.py",
+    )
+)
+files.append(
+    (
         f"./python/triton/compiler/code_generator.py",
         f"./python/txl/compiler/code_generator.py",
     )
 )
-init = 4
+init = 5
 for idx, (triton_fn, txl_fn) in enumerate(files[init:]):
     idx += init
     txl_full_path = txl_fn
@@ -339,7 +350,12 @@ for idx, (triton_fn, txl_fn) in enumerate(files[init:]):
     print(f"{idx}. TXL Diff: {txl_fn}")
     (git_diff_files(triton_full_path, txl_full_path))
 
-    print(f"vim -O {new_triton_full_path} {txl_fn}")
+    res = (git_diff_files_str(triton_full_path, new_triton_full_path))
+
+    with open('.tmp.txt', 'w') as f:
+        f.write(res)
+
+    print(f"vim -O .tmp.txt {txl_full_path}")
 
     cont = input("CONTINUE?")
     if cont.strip() != 'q':

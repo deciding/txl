@@ -4,6 +4,7 @@ import copy
 import hashlib
 import inspect
 import itertools
+import threading
 import re
 import textwrap
 from collections import defaultdict
@@ -21,6 +22,7 @@ from triton.runtime import _async_compile
 from triton.runtime.cache import get_cache_key
 from triton._utils import find_paths_if, get_iterable_path, type_canonicalisation_dict, canonicalize_dtype
 from triton.runtime import JITFunction
+from triton.runtime.jit import compute_cache_key
 
 from triton._C.libtriton import get_cache_invalidating_env_vars
 
@@ -383,8 +385,6 @@ def create_specialize_impl(specialize_extra):
             return ("constexpr", arg.cache_key)
         elif isinstance(arg, constexpr):
             return ("constexpr", arg)
-        elif hasattr(arg, "tma_desc_cpu_ptr"):
-            return ("nvTmaDesc", None)
         elif isinstance(arg, tuple):
             spec = [specialize_impl(x) for x in arg]
             make_tuple = lambda vals: type(arg)(*vals) if hasattr(arg, "_fields") else tuple(vals)
@@ -504,8 +504,12 @@ class JITCallable:
     def __init__(self, fn):
         self.fn = fn
         self.signature = inspect.signature(fn)
-        self.raw_src, self.starting_line_number = inspect.getsourcelines(fn)
+        try:
+            self.raw_src, self.starting_line_number = inspect.getsourcelines(fn)
+        except OSError as e:
+            raise ValueError("@jit functions should be defined in a Python file") from e
         self._fn_name = get_full_name(fn)
+        self._hash_lock = threading.RLock()
 
         # function source code (without decorators)
         src = textwrap.dedent("".join(self.raw_src))
@@ -537,7 +541,9 @@ class JITCallable:
     @property
     def cache_key(self):
         # TODO : hash should be attribute of `self`
-        if self.hash is None:
+        with self._hash_lock:
+            if self.hash is not None:
+                return self.hash
             # Set a placeholder hash to break recursion in case the function
             # transitively calls itself. The full hash is set after.
             self.hash = f"recursion:{self._fn_name}"
@@ -615,7 +621,7 @@ class TXLJITFunction(JITFunction):
         self.compile = compile
         self.ASTSource = ASTSource
         binder = create_function_from_signature(self.signature, self.params, backend)
-        return {}, target, backend, binder
+        return {}, {}, target, backend, binder
 
     def run(self, *args, grid, warmup, **kwargs):
         kwargs["debug"] = kwargs.get("debug", self.debug) or knobs.runtime.debug
@@ -633,13 +639,12 @@ class TXLJITFunction(JITFunction):
         for hook in self.pre_run_hooks:
             hook(*args, **kwargs)
 
-        kernel_cache, target, backend, binder = self.device_caches[device]
+        kernel_cache, kernel_key_cache, target, backend, binder = self.device_caches[device]
         # specialization is list[tuple[str, Any]], where first element of tuple is
         # the type and the second parameter is the 'specialization' value.
         bound_args, specialization, options = binder(*args, **kwargs)
 
-        # compute cache key
-        key = str(specialization) + str(options)
+        key = compute_cache_key(kernel_key_cache, specialization, options)
         kernel = kernel_cache.get(key, None)
 
         # Kernel is not cached; we have to compile.
@@ -690,7 +695,7 @@ class TXLJITFunction(JITFunction):
         self.txl_options = {'num_warpgroups': 1}
 
     def _do_compile(self, key, signature, device, constexprs, options, attrs, warmup):
-        kernel_cache, target, backend, _ = self.device_caches[device]
+        kernel_cache, _, target, backend, _ = self.device_caches[device]
 
         if self._call_hook(knobs.runtime.jit_cache_hook, key, signature, device, constexprs, options, [attrs], warmup):
             return None
@@ -823,151 +828,3 @@ def jit(
 
     else:
         return decorator
-
-
-# -----------------------------------------------------------------------------
-# Utilities for mocking tensors
-# -----------------------------------------------------------------------------
-
-
-class MockTensor:
-    """
-    Can be used in place of real tensors when calling:
-        kernel.warmup(MockTensor(torch.float32), ...)
-    """
-
-    @staticmethod
-    def wrap_dtype(arg):
-        if arg.__class__.__name__ == "dtype" and arg.__module__ == "torch":
-            return MockTensor(arg)
-        return arg
-
-    def __init__(self, dtype):
-        self.dtype = dtype
-
-    @staticmethod
-    def data_ptr():
-        return 0  # optimistically assumes multiple of 16
-
-    @staticmethod
-    def ptr_range():
-        return 0  # optimistically assumes 32 bit pointer range
-
-
-class TensorWrapper:
-
-    def __init__(self, base, dtype):
-        self.dtype = dtype
-        self.base = base
-        self.data = base.data
-        self.device = base.device
-        self.shape = self.base.shape
-
-    def data_ptr(self):
-        return self.base.data_ptr()
-
-    def stride(self, *args):
-        return self.base.stride(*args)
-
-    def __str__(self) -> str:
-        return f"TensorWrapper[{self.dtype}]({self.base})"
-
-    def element_size(self):
-        return self.base.element_size()
-
-    def cpu(self):
-        return TensorWrapper(self.base.cpu(), self.dtype)
-
-    def copy_(self, other):
-        self.base.copy_(other.base)
-
-    def clone(self):
-        return TensorWrapper(self.base.clone(), self.dtype)
-
-    def to(self, device):
-        return TensorWrapper(self.base.to(device), self.dtype)
-
-    def new_empty(self, sizes):
-        return TensorWrapper(self.base.new_empty(sizes), self.dtype)
-
-
-def reinterpret(tensor, dtype):
-    if isinstance(tensor, TensorWrapper):
-        if dtype == tensor.base.dtype:
-            # Reinterpreting to the original interpretation; return the base.
-            return tensor.base
-        else:
-            # Reinterpreting a wrapped tensor to a different type.
-            return TensorWrapper(tensor.base, dtype)
-    elif hasattr(tensor, "data_ptr"):
-        # A new wrapper is needed around an unwrapped tensor.
-        return TensorWrapper(tensor, dtype)
-    else:
-        raise TypeError(f"Cannot reinterpret a {type(tensor)}.")
-
-
-def get_jit_fn_file_line(fn):
-    base_fn = fn
-    while not isinstance(base_fn, JITCallable):
-        base_fn = base_fn.fn
-    file_name = base_fn.fn.__code__.co_filename
-    begin_line = base_fn.starting_line_number
-    # Match the following pattern:
-    # @triton.autotune(...) <- foo.__code__.co_firstlineno
-    # @triton.heuristics(...)
-    # @triton.jit
-    # def foo(...): <- this line is the first line
-    for idx, line in enumerate(base_fn.raw_src):
-        if line.strip().startswith("def "):
-            begin_line += idx
-            break
-    return file_name, begin_line
-
-
-class BoundConstexprFunction(JITCallable):
-
-    def __init__(self, instance, fn):
-        self.__self__ = instance
-        self.__func__ = fn
-
-    def __call__(self, *args, **kwargs):
-        return self.__func__(self.__self__, *args, **kwargs)
-
-
-class ConstexprFunction(JITCallable):
-
-    def __init__(self, fn):
-        super().__init__(fn)
-
-    def __get__(self, obj, objclass):
-        # Create a bound function to support constexpr_function methods
-        if obj is not None:
-            return BoundConstexprFunction(obj, self)
-        return self
-
-    def __call__(self, *args, _semantic=None, **kwargs):
-        from triton.language.core import _unwrap_if_constexpr, constexpr
-        # de-constexpr arguments and discard the _semantic keyword argument:
-        args = [_unwrap_if_constexpr(x) for x in args]
-        kwargs = {k: _unwrap_if_constexpr(v) for (k, v) in kwargs.items()}
-
-        # call the raw Python function f:
-        res = self.fn(*args, **kwargs)
-
-        if _semantic is None:
-            # Not called by triton code generator, e.g. in host code, another constexpr function, or even an aggreate's __init__ function
-            return res
-
-        # convert result back to a Triton constexpr:
-        if knobs.runtime.interpret:
-            return res  # No constexpr in interpreter
-        return constexpr(res)
-
-
-def constexpr_function(fn):
-    """
-    Wraps an arbitrary Python function so that it can be called at
-    compile-time on constexpr arguments in a Triton function and
-    returns a constexpr result.
-    """
-    return ConstexprFunction(fn)

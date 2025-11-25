@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=3
+export CUDA_VISIBLE_DEVICES=1
 export TRITON_ALWAYS_COMPILE=1
 
 CMD=$1 # ncu, nsys
@@ -39,7 +39,9 @@ REGEX="flash|txl|coopA|softmax_kernel"
 #METRICS="smsp__warps_issue_stalled_long_scoreboard"
 # spill
 #METRICS="l1tex__t_bytes_pipe_lsu_mem_local_op_ld,l1tex__t_bytes_pipe_lsu_mem_local_op_st"
-METRICS="sm__sass_data_bytes_mem_local_op_ld,sm__sass_data_bytes_mem_local_op_st"
+#METRICS="sm__sass_data_bytes_mem_local_op_ld,sm__sass_data_bytes_mem_local_op_st"
+# denormal
+METRICS="sm__sass_thread_inst_executed_op_fp16_pred_on,sm__sass_thread_inst_executed_op_fp32_pred_on"
 
 
 PY_SCRIPT=python/txl/tutorials/02-flash-attention.py 

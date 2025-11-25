@@ -193,7 +193,7 @@ struct BarrierExpectConversion
     }
 
     auto id = getThreadId(rewriter, loc);
-+    Value pred = b.icmp_eq(id, b.i32_val(executingThreadId)); // txl
+    Value pred = b.icmp_eq(id, b.i32_val(executingThreadId)); // txl
     pred = b.and_(pred, adaptor.getPred());
     ::mlir::triton::PTXBuilder ptxBuilder;
     const std::string ptx =

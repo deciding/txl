@@ -1313,9 +1313,10 @@ getMsgToUnpackedOffsetLayout(const LinearLayout &packedLayout,
 
 // txl
 int getWarpOffset(Operation *op) {
-  int wgId = getOpAttrWgId(op);
-  if (wgId != -1) {
-    return 4 * wgId; // each WG has 4 warps
+  auto wgIds = getOpAttrWgIds(op);
+  if (wgIds.size()) {
+    assert(wgIds.size() == 1 && "currently only support 1 wgid for tma load/store");
+    return 4 * *std::min_element(wgIds.begin(), wgIds.end());
   }
   return 0;
 }

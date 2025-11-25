@@ -1,3 +1,5 @@
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -142,35 +144,161 @@ bool isTMALoad(Operation *op) {
   return isa<tt::TmaLoadOp>(op);
 }
 
+static Operation* updateParentSCFResultType(Operation *parent,
+                                      unsigned resIdx,
+                                      Type newType,
+                                      PatternRewriter &rewriter) {
+    if (auto ifOp = dyn_cast<scf::IfOp>(parent)) {
+        // ---- Build new result type list ----
+        SmallVector<Type> newTypes(ifOp->getResultTypes().begin(),
+                                   ifOp->getResultTypes().end());
+        newTypes[resIdx] = newType;
+
+        // ---- Create new IfOp ----
+        auto newIf = rewriter.create<scf::IfOp>(
+            ifOp.getLoc(), newTypes, ifOp.getCondition(), /*withElseRegion*/ true);
+
+        // Inline regions
+        rewriter.inlineRegionBefore(ifOp.getThenRegion(),
+                                    newIf.getThenRegion(),
+                                    newIf.getThenRegion().end());
+        rewriter.inlineRegionBefore(ifOp.getElseRegion(),
+                                    newIf.getElseRegion(),
+                                    newIf.getElseRegion().end());
+
+        // Replace uses
+        rewriter.replaceOp(ifOp, newIf.getResults());
+        return newIf;
+    }
+
+    if (auto forOp = dyn_cast<scf::ForOp>(parent)) {
+        // ---- New result type list ----
+        SmallVector<Type> newTypes(forOp->getResultTypes().begin(),
+                                   forOp->getResultTypes().end());
+        newTypes[resIdx] = newType;
+
+        // ---- Create new ForOp ----
+        auto newFor = rewriter.create<scf::ForOp>(
+            forOp.getLoc(),
+            forOp.getLowerBound(),
+            forOp.getUpperBound(),
+            forOp.getStep(),
+            //newTypes,
+            forOp.getInitArgs()); // TODO: need to change initargs to change type
+
+        // Inline region bodies
+        rewriter.inlineRegionBefore(forOp.getRegion(),
+                                    newFor.getRegion(),
+                                    newFor.getRegion().end());
+
+        // Replace
+        rewriter.replaceOp(forOp, newFor.getResults());
+        return newFor;
+    }
+
+    if (auto whileOp = dyn_cast<scf::WhileOp>(parent)) {
+        // ---- New result type list ----
+        SmallVector<Type> newTypes(whileOp->getResultTypes().begin(),
+                                   whileOp->getResultTypes().end());
+        newTypes[resIdx] = newType;
+
+        // ---- Create new WhileOp ----
+        auto newWhile = rewriter.create<scf::WhileOp>(
+            whileOp.getLoc(), newTypes, whileOp.getInits());
+
+        // Inline condition & body regions
+        rewriter.inlineRegionBefore(whileOp.getBefore(),
+                                    newWhile.getBefore(),
+                                    newWhile.getBefore().end());
+        rewriter.inlineRegionBefore(whileOp.getAfter(),
+                                    newWhile.getAfter(),
+                                    newWhile.getAfter().end());
+
+        // Replace uses
+        rewriter.replaceOp(whileOp, newWhile.getResults());
+        return newWhile;
+    }
+
+    parent->emitError("Unsupported parent op: expected scf.if/for/while");
+    return nullptr;
+}
+
 
 // smem_alloc's tma_load users
 // TODO: assume all the same, if we want to reuse smem, just dealloc all and realloc
+// Normally op is SmemAlloc or MbarAlloc
+// 1. used for getting LocalAlloc user for inferring encoding
+// 2. used for getting tma users for inferring encoding
+// 3. used for getting GetBufferOp users for lowering
 template<typename OpTy>
-SmallVector<OpTy> getSmemAllocUsers(Operation *op) {
-  SmallVector<OpTy> ops;
-  for (auto user0 : op->getUsers()) {
-    if (isa<OpTy>(user0)) {
-      ops.push_back(dyn_cast<OpTy>(user0));
+SmallVector<std::tuple<OpTy, Value>> getSmemAllocUsers(Operation *op, Value alloc) {
+  SmallVector<std::tuple<OpTy, Value>> ops;
+  SmallVector<std::tuple<Operation*, int, Value>> checkers;
+  checkers.push_back({op, -1, alloc});
+  while(!checkers.empty()) {
+    auto [curOp, resNum, usedVal] = checkers.back();
+    checkers.pop_back();
+    SmallVector<OpOperand *> uses;
+    
+    if (resNum > -1) {
+        for (OpOperand &u : curOp->getResult(resNum).getUses())
+            uses.push_back(&u);
+    } else {
+        for (OpOperand &u : curOp->getUses())
+            uses.push_back(&u);
     }
 
-    if (isa<tt::GetBufferOp>(user0)) {
-      for (auto user : user0->getUsers()) {
+    for (auto use : uses){
+        auto user = use->getOwner();
+        auto opNum = use->getOperandNumber();
         if (isa<OpTy>(user)) {
-          ops.push_back(dyn_cast<OpTy>(user));
+          ops.push_back({dyn_cast<OpTy>(user), usedVal});
+          continue;
         }
-        if (isa<ttg::ConvertLayoutOp>(user)) {
-          for (auto user1 : user->getUsers()) {
-            if (isa<OpTy>(user1)) {
-              ops.push_back(dyn_cast<OpTy>(user1));
+
+        if (isa<tt::GetBufferOp>(user)){
+            checkers.push_back({user, -1, usedVal}); // bypass
+        }
+        else if (isa<ttg::ConvertLayoutOp>(user)){
+            checkers.push_back({user, -1, usedVal}); // bypass
+        }
+        else if (isa<scf::YieldOp>(user)){
+            auto parent = user->getParentOp();
+            if (usedVal) {
+                Type newType = usedVal.getType();
+                PatternRewriter rewriter(op->getContext());
+                parent = updateParentSCFResultType(parent, opNum, newType, rewriter);
+                user->setOperand(opNum, usedVal);
             }
-          }
+            checkers.push_back({parent, opNum, parent->getResult(opNum)});
+        }
+        else if (isa<arith::SelectOp>(user)){
+            if (usedVal) {
+                OpBuilder builder(user);
+                Type newType = usedVal.getType();
+
+                auto selectOp = dyn_cast<arith::SelectOp>(user);
+                auto newOp = builder.create<arith::SelectOp>(
+                    user->getLoc(),
+                    newType,                 // NEW RESULT TYPE
+                    selectOp.getCondition(),
+                    selectOp.getTrueValue(),
+                    selectOp.getFalseValue()
+                );
+
+                user->replaceAllUsesWith(newOp);
+                user->erase();
+                user = newOp;
+                user->setOperand(opNum, usedVal);
+            }
+            checkers.push_back({user, -1, user->getResult(0)});
         }
       }
-    }
   }
   return ops;
 }
 
+// DEPRECATED
 template<typename OpTy>
 OpTy getSmemAllocRoot(Value &smem){
     auto op = smem.getDefiningOp<OpTy>();
@@ -235,7 +363,10 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
   // Try to use local alloc encoding if possible.
   // local_alloc(smem_alloc)
   ttg::SharedEncodingTrait localAllocEnc;
-  SmallVector<ttg::LocalAllocOp> localAllocs = getSmemAllocUsers<ttg::LocalAllocOp>(op);
+  SmallVector<std::tuple<ttg::LocalAllocOp, Value>> localAllocPairs = getSmemAllocUsers<ttg::LocalAllocOp>(op, Value{});
+  SmallVector<ttg::LocalAllocOp> localAllocs;
+  for (auto &[localAlloc, dummy] : localAllocPairs)
+      localAllocs.push_back(localAlloc);
 
   if (localAllocs.size()) {
     for (ttg::LocalAllocOp localAlloc : localAllocs) {
@@ -262,7 +393,10 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
   auto ctaLayout = ttg::getCTALayout(ty.getEncoding());
   auto order = ttg::getOrder(ty);
 
-  SmallVector<tt::TmaLoadOp> tmaLoads = getSmemAllocUsers<tt::TmaLoadOp>(op);
+  SmallVector<std::tuple<tt::TmaLoadOp, Value>> tmaLoadPairs = getSmemAllocUsers<tt::TmaLoadOp>(op, Value{});
+  SmallVector<tt::TmaLoadOp> tmaLoads;
+  for (auto &[tmaLoad, dummy] : tmaLoadPairs)
+      tmaLoads.push_back(tmaLoad);
   // tma_load overwrites local_alloc enc
   if (tmaLoads.size()) {
     // For TMA, the encoding compatible with it takes precedence over local
@@ -273,7 +407,10 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
     return ttng::getEncodingFromDescriptor(op, ty, desc);
   }
 
-  SmallVector<tt::TmaStoreOp> tmaStores = getSmemAllocUsers<tt::TmaStoreOp>(op);
+  SmallVector<std::tuple<tt::TmaStoreOp, Value>> tmaStorePairs = getSmemAllocUsers<tt::TmaStoreOp>(op, Value{});
+  SmallVector<tt::TmaStoreOp> tmaStores;
+  for (auto &[tmaStore, dummy] : tmaStorePairs)
+      tmaStores.push_back(tmaStore);
   // tma_load overwrites local_alloc enc
   if (tmaStores.size()) {
     // For TMA, the encoding compatible with it takes precedence over local
@@ -284,7 +421,10 @@ ttg::SharedEncodingTrait getSharedEncodingTXL(Operation *op) {
     return ttng::getEncodingFromDescriptor(op, ty, desc);
   }
 
-  SmallVector<tt::TmaGatherOp> tmaGathers = getSmemAllocUsers<tt::TmaGatherOp>(op);
+  SmallVector<std::tuple<tt::TmaGatherOp, Value>> tmaGatherPairs = getSmemAllocUsers<tt::TmaGatherOp>(op, Value{});
+  SmallVector<tt::TmaGatherOp> tmaGathers;
+  for (auto &[tmaGather, dummy] : tmaGatherPairs)
+      tmaGathers.push_back(tmaGather);
   // tma_load overwrites local_alloc enc
   if (tmaGathers.size()) {
     // For TMA, the encoding compatible with it takes precedence over local
@@ -425,15 +565,36 @@ void replaceSmemBufferUses(
       auto uses = oldViewOp->getResult(0).getUses();
       SmallVector<OpOperand *> opds;
       for (OpOperand& use : uses){
-          opds.push_back(&use);
+          Operation *user = use.getOwner();
+          auto opNum = use.getOperandNumber();
+          // case 1: GetBufferOp get yielded
+          // TODO: only consider one level of if/for
+          if (isa<scf::YieldOp>(user)) {
+              auto yieldParent = user->getParentOp();
+              assert(yieldParent && "yield always has parent");
+              auto yieldRes = yieldParent->getResult(opNum);
+              for (OpOperand& childUse : yieldRes.getUses()) {
+                  opds.push_back(&childUse);
+              }
+          }
+          else if (isa<arith::SelectOp>(user)) {
+              for (OpOperand& childUse : user->getResult(0).getUses()) {
+                  opds.push_back(&childUse);
+              }
+          }
+          else {
+            opds.push_back(&use); 
+          }
+
       }
       for (OpOperand *use: opds){
         Operation *user = use->getOwner();
+        auto opNum = use->getOperandNumber();
 
         // TODO: now need to enumerate all possible users of GetBufferOp
 
         if (auto asyncLoadOp = dyn_cast<tt::AsyncLoadOp>(user)) {
-            if (use->getOperandNumber() == 0)
+            if (opNum == 0)
                 asyncLoadOp->setOperand(0, newView);
         }
         else if (auto tmaLoadOp = dyn_cast<tt::TmaLoadOp>(user)) {
@@ -484,11 +645,25 @@ void replaceMbarBufferUses(Operation* oldViewOp, Value newView) {
 void lowerMbarOps(Value& mbar, bool usedByTmaLoadOp) {
     auto mbarOp = mbar.getDefiningOp();
     OpBuilder builder(mbarOp);
-    SmallVector<Operation *> users;
-    for (auto user : mbarOp->getUsers()){
-        users.push_back(user);
+    SmallVector<std::pair<Operation *, Value>> userMbars;
+    SmallVector<Value> catchValues;
+    catchValues.push_back(mbar);
+    while (!catchValues.empty()) {
+      auto curVal = catchValues.back();
+      catchValues.pop_back();
+      for (auto& use : curVal.getUses()){
+          auto user = use.getOwner();
+          auto opNum = use.getOperandNumber();
+          if (isa<scf::YieldOp>(user)){
+              auto parent = user->getParentOp();
+              auto parentResult = parent->getResult(opNum);
+              catchValues.push_back(parentResult);
+          }
+          else 
+            userMbars.push_back({user, curVal});
+      }
     }
-    for (auto user : users){
+    for (auto &[user, mbar] : userMbars){
         if (isa<tt::MbarExpectOp>(user)){
             auto mbarExpectOp = dyn_cast<tt::MbarExpectOp>(user);
             //Value pred = builder.create<arith::ConstantIntOp>(loc, 1, 1);
@@ -529,17 +704,18 @@ void lowerSmemAlloc(tt::SmemAllocOp op){
     auto alloc = createAlloc(op, op.getNumStages(), sharedEnc);
     // these loads/tma_loads binds with local_alloc
     // TODO: add loads
-    auto getBufferOps = getSmemAllocUsers<tt::GetBufferOp>(op);
+    auto getBufferPairs = getSmemAllocUsers<tt::GetBufferOp>(op, alloc);
     assert(isa<triton::gpu::MemDescType>(alloc.getType()) &&
            "Expected MemDescType");
     auto allocDescType = cast<triton::gpu::MemDescType>(alloc.getType());
 
     Value buffer;
-    for (auto getBufferOp : getBufferOps){
-        buffer = lowerGetBufferOp(getBufferOp, alloc);
+    for (auto &[getBufferOp, allocVal] : getBufferPairs){
+        buffer = lowerGetBufferOp(getBufferOp, allocVal);
         replaceSmemBufferUses(getBufferOp, buffer, allocDescType);
         getBufferOp->erase();
     }
+    // DEPRECATED edge case
     replaceSmemBufferUses(op, alloc, allocDescType);
     op->erase();
 
@@ -570,19 +746,27 @@ void lowerMbar(tt::MbarAllocOp& op) {
 
     Value barrierAlloc = createBarrierAlloc(op);
 
-    auto getBufferOps = getSmemAllocUsers<tt::GetBufferOp>(op);
+    auto getBufferPairs = getSmemAllocUsers<tt::GetBufferOp>(op, barrierAlloc);
 
     Value buffer;
+    // not used
     bool usedByTmaLoadOp = false;
-    for (auto getBufferOp : getBufferOps){
+    for (auto &[getBufferOp, allocVal] : getBufferPairs){
+        //llvm::outs() << "\n MbarAlloc GetBufferOp \n";
+        //getBufferOp->dump();
+        //llvm::outs() << "\n MbarAlloc Val \n";
+        //llvm::outs() << allocVal;
+        //llvm::outs() << "\n";
+
         usedByTmaLoadOp = hasTMALoadUsers(getBufferOp);
-        buffer = lowerGetBufferOp(getBufferOp, barrierAlloc);
+        buffer = lowerGetBufferOp(getBufferOp, allocVal);
         replaceMbarBufferUses(getBufferOp, buffer);
         getBufferOp->erase();
         lowerMbarOps(buffer, usedByTmaLoadOp); // removed
     }
 
     usedByTmaLoadOp = hasTMALoadUsers(op);
+    // DEPRECATED edge case
     replaceMbarBufferUses(op, barrierAlloc);
     op->erase();
     lowerMbarOps(barrierAlloc, usedByTmaLoadOp);

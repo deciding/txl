@@ -170,7 +170,49 @@ TritonGPUConversionTarget::TritonGPUConversionTarget(
         }
         return false;
   });
+  addDynamicallyLegalOp<triton::TmaLoadOp>([&](triton::TmaLoadOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
   addDynamicallyLegalOp<triton::TmaStoreOp>([&](triton::TmaStoreOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
+  addDynamicallyLegalOp<triton::MbarArriveOp>([&](triton::MbarArriveOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
+  addDynamicallyLegalOp<triton::MbarWaitOp>([&](triton::MbarWaitOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
+  addDynamicallyLegalOp<triton::MbarExpectOp>([&](triton::MbarExpectOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
+  addDynamicallyLegalOp<triton::GetBufferOp>([&](triton::GetBufferOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
+  addDynamicallyLegalOp<triton::SmemAllocOp>([&](triton::SmemAllocOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
+  addDynamicallyLegalOp<triton::MbarAllocOp>([&](triton::MbarAllocOp op) -> bool {
         if (typeConverter.isLegal(op)) {
           return true;
         }

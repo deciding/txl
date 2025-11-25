@@ -21,13 +21,13 @@ static inline void insertBarrierTXL(OpBuilder &builder, Operation *op) {
   //op->dump();
   //llvm::outs() << "\n";
   auto barrierOp = builder.create<mlir::gpu::BarrierOp>(op->getLoc());
-  auto attr = triton::getParentWithWGIDAttr(op);
+  auto wgIds = triton::findWgidsRecursive(op);
 
   int nameBarrierIdBegin = 1; // TODO align with python
   int nameBarrierIdEnd = 8; // python should start from 8
-  if (attr) {
-    assert(attr.getType().isInteger(32) && "ttxg.wgid must be 32 bit int\n");
-    int32_t asyncTaskId = attr.getInt();
+  if (wgIds.size()) {
+    // TODO: a better way to combine multiple wgids and numThreads
+    int32_t asyncTaskId = *std::min_element(wgIds.begin(), wgIds.end());
 
     int barId = asyncTaskId + nameBarrierIdBegin;
     assert(barId < nameBarrierIdEnd);
@@ -36,7 +36,7 @@ static inline void insertBarrierTXL(OpBuilder &builder, Operation *op) {
     int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
     int numThreads = numWarps * warpSize;
     barrierOp->setAttr("bar_id", builder.getI64IntegerAttr(barId));
-    barrierOp->setAttr("num_threads", builder.getI64IntegerAttr(numThreads));
+    barrierOp->setAttr("num_threads", builder.getI64IntegerAttr(numThreads * wgIds.size()));
   }
 }
 

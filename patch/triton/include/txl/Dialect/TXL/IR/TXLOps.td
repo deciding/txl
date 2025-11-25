@@ -209,7 +209,7 @@ def TXL_MbarExpectOp : TXL_Op<"mbar_expect", [MemoryEffects<[MemWrite<SmemMemory
     mbarrier expectCount
   }];
   let arguments = (ins
-    TT_Tensor:$mbar,
+    TTG_TensorOrMemDesc:$mbar,
     I1:$pred,
     I32Attr:$expectCount
   );
@@ -223,7 +223,7 @@ def TXL_MbarWaitOp : TXL_Op<"mbar_wait", [MemoryEffects<[MemRead<SmemMemory>, Me
     mbarrier wait
   }];
   let arguments = (ins
-    TT_Tensor:$mbar,
+    TTG_TensorOrMemDesc:$mbar,
     I32:$phase
   );
 

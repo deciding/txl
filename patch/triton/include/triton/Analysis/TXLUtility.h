@@ -14,9 +14,17 @@ namespace mlir::triton{
 
 IntegerAttr getParentWithWGIDAttr(Operation *op);
 
+SmallVector<int> findWgidsRecursive(Operation *op);
+
+bool isWarpgroupIf(Operation* op);
+
 void setOpAttrWgId(Operation* op, int32_t wgid);
 
 int getOpAttrWgId(Operation* op);
+
+void setOpAttrWgIds(Operation* op, ArrayRef<int32_t> wgids, bool other=false);
+
+SmallVector<int> getOpAttrWgIds(Operation* op, bool other=false);
 
 void setOpAttrWarpReduce(Operation* op);
 

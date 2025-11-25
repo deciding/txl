@@ -149,15 +149,16 @@ void TargetInfo::barrier(Location loc, RewriterBase &rewriter,
 }
 
 void TargetInfo::barrierWithId(Location loc, RewriterBase &rewriter,
-                         bool isWarpSync, int asyncId, int numThreads) const {
+                         bool isWarpSync, SmallVector<int> wgIds, int numThreads) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
   PTXBuilder ptxBuilder;
   if (isWarpSync) {
     rewriter.create<NVVM::SyncWarpOp>(loc, b.i32_val(0xffffffff));
-  } else if (asyncId != -1) {
+  } else if (wgIds.size()) {
     auto &barSyncOp = *ptxBuilder.create<>("bar.sync");
-    barSyncOp(ptxBuilder.newConstantOperand(asyncId + 1), // TODO: hardcode bar begin = 1
-              ptxBuilder.newConstantOperand(128)); // TODO: hardcode
+    // TODO: may need multiple bar.sync for wgIds.size() > 1?
+    barSyncOp(ptxBuilder.newConstantOperand(wgIds[0] + 1), // TODO: hardcode bar begin = 1
+              ptxBuilder.newConstantOperand(128 * wgIds.size())); // TODO: hardcode
     auto voidTy = void_ty(rewriter.getContext());
     ptxBuilder.launch(rewriter, loc, voidTy);
   } else {

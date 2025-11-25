@@ -105,17 +105,28 @@ struct InitBarrierOpConversion
         rewriter);
 
     // txl
-    int wgId = getOpAttrWgId(op);
-    int executingThreadId = 0;
-    if (wgId != -1) {
+    SmallVector<int> wgIds = getOpAttrWgIds(op);
+    SmallVector<int> executingThreadIds;
+    if (wgIds.size()) {
       auto mod = op->getParentOfType<ModuleOp>();
       int numWarps = triton::gpu::lookupNumWarps(op);
       int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
-      executingThreadId = wgId * numWarps * warpSize;
+      for (auto wgId: wgIds)
+        executingThreadIds.push_back(wgId * numWarps * warpSize);
+    }
+    else {
+        executingThreadIds.push_back(0);
     }
 
     auto id = getThreadId(rewriter, loc);
-    auto pred = b.icmp_eq(id, b.i32_val(executingThreadId)); // txl
+
+    // txl
+    Value pred = b.icmp_eq(id, b.i32_val(executingThreadIds[0]));
+    for (int i = 1; i < executingThreadIds.size(); i++) {
+      Value newPred = b.icmp_eq(id, b.i32_val(executingThreadIds[i]));
+      pred = b.and_(pred, newPred);
+    }
+
     ::mlir::triton::PTXBuilder ptxBuilder;
     const std::string ptx = "@$0 mbarrier.init.shared::cta.b64 [$1], " +
                             std::to_string(op.getCount()) + ";";
@@ -145,16 +156,28 @@ struct InvalBarrierOpConversion
         rewriter);
 
     // txl
-    int wgId = getOpAttrWgId(op);
-    int executingThreadId = 0;
-    if (wgId != -1) {
+    SmallVector<int> wgIds = getOpAttrWgIds(op);
+    SmallVector<int> executingThreadIds;
+    if (wgIds.size()) {
       auto mod = op->getParentOfType<ModuleOp>();
       int numWarps = triton::gpu::lookupNumWarps(op);
       int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
-      executingThreadId = wgId * numWarps * warpSize;
+      for (auto wgId: wgIds)
+        executingThreadIds.push_back(wgId * numWarps * warpSize);
     }
+    else {
+        executingThreadIds.push_back(0);
+    }
+
     auto id = getThreadId(rewriter, loc);
-    Value pred = b.icmp_eq(id, b.i32_val(executingThreadId)); // txl
+
+    // txl
+    Value pred = b.icmp_eq(id, b.i32_val(executingThreadIds[0]));
+    for (int i = 1; i < executingThreadIds.size(); i++) {
+      Value newPred = b.icmp_eq(id, b.i32_val(executingThreadIds[i]));
+      pred = b.and_(pred, newPred);
+    }
+
     ::mlir::triton::PTXBuilder ptxBuilder;
     const std::string ptx = "@$0 mbarrier.inval.shared::cta.b64 [$1];";
     auto &barSyncOp = *ptxBuilder.create<>(ptx);
@@ -183,17 +206,28 @@ struct BarrierExpectConversion
         rewriter);
 
     // txl
-    int wgId = getOpAttrWgId(op);
-    int executingThreadId = 0;
-    if (wgId != -1) {
+    SmallVector<int> wgIds = getOpAttrWgIds(op);
+    SmallVector<int> executingThreadIds;
+    if (wgIds.size()) {
       auto mod = op->getParentOfType<ModuleOp>();
       int numWarps = triton::gpu::lookupNumWarps(op);
       int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
-      executingThreadId = wgId * numWarps * warpSize;
+      for (auto wgId: wgIds)
+        executingThreadIds.push_back(wgId * numWarps * warpSize);
+    }
+    else {
+        executingThreadIds.push_back(0);
     }
 
     auto id = getThreadId(rewriter, loc);
-    Value pred = b.icmp_eq(id, b.i32_val(executingThreadId)); // txl
+
+    // txl
+    Value pred = b.icmp_eq(id, b.i32_val(executingThreadIds[0]));
+    for (int i = 1; i < executingThreadIds.size(); i++) {
+      Value newPred = b.icmp_eq(id, b.i32_val(executingThreadIds[i]));
+      pred = b.and_(pred, newPred);
+    }
+
     pred = b.and_(pred, adaptor.getPred());
     ::mlir::triton::PTXBuilder ptxBuilder;
     const std::string ptx =

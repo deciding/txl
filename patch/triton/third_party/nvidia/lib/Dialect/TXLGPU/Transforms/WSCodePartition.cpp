@@ -1,8 +1,11 @@
+#include <cwctype>
 #include <memory>
 #include <cassert>
 
 #include "mlir/Analysis/SliceAnalysis.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
@@ -28,6 +31,7 @@
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "proton/Dialect/include/Dialect/Proton/IR/Dialect.h"
 #include "proton/Dialect/include/Dialect/ProtonGPU/IR/Dialect.h"
+#include "llvm/ADT/SmallVector.h"
 #include <deque>
 #include <memory>
 
@@ -100,42 +104,6 @@ std::pair<int, bool> scanRegUsage(Block *block, int asyncTaskId,
 
     return {regIncConsumer, true};
   }
-}
-
-bool hasWarpgroupOperand(Value value) {
-  // Base case: this value is defined by a warpgroup op
-  if (auto op = value.getDefiningOp()) {
-    if (isa<tt::IsWarpgroupOp>(op)) {
-      return true;
-    }
-  }
-
-  // For operation results, check all operands of the defining op
-  if (auto op = value.getDefiningOp()) {
-    for (Value operand : op->getOperands()) {
-      if (hasWarpgroupOperand(operand)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-bool isWarpgroupIf(Operation* op) {
-    if (isa<scf::IfOp>(op)){
-        scf::IfOp ifOp = dyn_cast<scf::IfOp>(op);
-        Value cond = ifOp.getCondition();
-        if (auto defOp = cond.getDefiningOp()) {
-          if (isa<tt::IsWarpgroupOp>(defOp)) {
-            return true;
-          }
-          if (hasWarpgroupOperand(cond))
-              op->emitError("is_warpgroup should always be used directly in if condition!\n");
-          //assert(!hasWarpgroupOperand(cond) && "is_warpgroup should always be used directly in if condition!\n");
-        }
-    }
-    return false;
 }
 
 // Find the outermost if with tt::IsWarpgroupOp condition
@@ -631,6 +599,92 @@ void lowerGetAsyncTaskIdOp(Operation *parentOp, int numConsumerGroups) {
 }
 #endif
 
+/*** New WS API ***/
+void lowerOp(Operation *op,
+                        ArrayRef<int32_t> rootTaskIds);
+void lowerIf(scf::IfOp ifOp, ArrayRef<int32_t> rootTaskIds);
+
+void lowerOp(Operation *op,
+                        ArrayRef<int32_t> rootTaskIds) {
+  if (op->getNumRegions() == 0) {
+    setOpAttrWgIds(op, rootTaskIds);
+  } else {
+    // case 2: ops with blocks
+    if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+      lowerIf(ifOp, rootTaskIds);
+    } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+      for (Operation &op : forOp.getBody()->getOperations()) {
+        lowerOp(&op, rootTaskIds);
+      }
+      setOpAttrWgIds(op, rootTaskIds);
+    } else if (auto reduceOp = dyn_cast<ReduceOp>(op)) {
+      for (Operation &op : reduceOp.getBody()->getOperations()) {
+        lowerOp(&op, rootTaskIds);
+      }
+      setOpAttrWgIds(op, rootTaskIds);
+    } else {
+      llvm_unreachable("Unexpected Op with regions");
+    }
+  }
+}
+
+void lowerIf(scf::IfOp ifOp, ArrayRef<int32_t> rootTaskIds) {
+  MLIRContext *context = ifOp.getContext();
+  OpBuilder builder(ifOp);
+  auto loc = ifOp.getLoc();
+
+  if (isWarpgroupIf(ifOp)) {
+
+    Value curAsyncTaskId = builder.create<ttxg::CanonicalWarpgroupIdOp>(loc, builder.getI32Type());
+    //Value curAsyncTaskId = builder.create<ttng::GetAsyncTaskIdOp>(loc);
+
+    Value cond = ifOp.getCondition();
+    assert(isa<tt::IsWarpgroupOp>(cond.getDefiningOp()) && "not a isWarpgroup If\n");
+
+    auto warpgroupOp = dyn_cast<tt::IsWarpgroupOp>(cond.getDefiningOp());
+    auto ids = warpgroupOp.getIds();
+
+    SmallVector<int32_t> elseIds;
+    subtractArrayRefs(rootTaskIds, ids, elseIds);
+
+    builder.setInsertionPoint(ifOp);
+    int asyncTaskId = ids[0];
+    // Create IfOp for each asyncTaskId.
+    cond = builder.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, curAsyncTaskId,
+        builder.create<arith::ConstantIntOp>(loc, asyncTaskId, 32));
+
+    for (int iid = 1; iid < ids.size(); iid++) { // all asyncTaskId inside
+      Value newCond = builder.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, curAsyncTaskId,
+          builder.create<arith::ConstantIntOp>(loc, ids[iid], 32));
+      cond = builder.create<arith::OrIOp>(loc, cond, newCond);
+    }
+    ifOp->setOperand(0, cond);
+    setOpAttrWgIds(ifOp, ids);
+    setOpAttrWgIds(ifOp, elseIds, true);
+
+
+    for (Operation &op : ifOp.thenBlock()->getOperations()) {
+      lowerOp(&op, ids);
+    }
+    if (ifOp.elseBlock()) {
+      for (Operation &op : ifOp.elseBlock()->getOperations()) {
+        lowerOp(&op, elseIds);
+      }
+    }
+  } else {
+    setOpAttrWgIds(ifOp, rootTaskIds);
+    for (Operation &op : ifOp.thenBlock()->getOperations()) {
+      lowerOp(&op, rootTaskIds);
+    }
+    for (Operation &op : ifOp.elseBlock()->getOperations()) {
+      lowerOp(&op, rootTaskIds);
+    }
+  }
+
+}
+
 class TXLGPUWSCodePartitionPass
     : public impl::TXLGPUWSCodePartitionBase<
           TXLGPUWSCodePartitionPass> {
@@ -657,8 +711,12 @@ public:
               outerIf->dump();
             });
         }
+        SmallVector<int32_t> rootTaskIds;
+        for (int32_t i=0; i < numWarpgroups; i++)
+            rootTaskIds.push_back(i);
         for (scf::IfOp outerIf : wgOps) {
-          SpecializeOuterWarpgroupIf(outerIf, numWarpgroups, hasTma); // hasTma is used for heuristic reg alloc
+          //SpecializeOuterWarpgroupIf(outerIf, numWarpgroups, hasTma); // hasTma is used for heuristic reg alloc
+          lowerIf(outerIf, rootTaskIds); // hasTma is used for heuristic reg alloc
         }
 
         // add init context
@@ -670,7 +728,28 @@ public:
     });
 
     m->walk([&](tt::IsWarpgroupOp isWarpgroupOp) {
-        assert(isWarpgroupOp->use_empty() && "is_warpgroup not lowered!\n");
+        OpBuilder builder(isWarpgroupOp);
+        auto loc = isWarpgroupOp->getLoc();
+        Value curAsyncTaskId = builder.create<ttxg::CanonicalWarpgroupIdOp>(loc, builder.getI32Type());
+        //Value curAsyncTaskId = builder.create<ttng::GetAsyncTaskIdOp>(loc);
+
+        auto ids = isWarpgroupOp.getIds();
+
+        int asyncTaskId = ids[0];
+        // Create IfOp for each asyncTaskId.
+        Value cond = builder.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::eq, curAsyncTaskId,
+            builder.create<arith::ConstantIntOp>(loc, asyncTaskId, 32));
+
+        for (int iid = 1; iid < ids.size(); iid++) { // all asyncTaskId inside
+          Value newCond = builder.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::eq, curAsyncTaskId,
+              builder.create<arith::ConstantIntOp>(loc, ids[iid], 32));
+          cond = builder.create<arith::OrIOp>(loc, cond, newCond);
+        }
+
+        //assert(isWarpgroupOp->use_empty() && "is_warpgroup not lowered!\n");
+        isWarpgroupOp.getResult().replaceAllUsesWith(cond);
         isWarpgroupOp->erase();
     });
     OpBuilder builder(m);

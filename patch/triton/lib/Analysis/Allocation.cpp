@@ -316,12 +316,13 @@ private:
         // NOTE: txl
         // bufferRange.insert(
         //     {buffer, Interval(operationId.at(op), operationId.at(op) + 1)});
-        int wgId = getOpAttrWgId(op);
-        if (wgId == -1) {
+        SmallVector<int> wgIds = getOpAttrWgIds(op);
+        if (wgIds.empty()) {
           bufferRange.insert(
               {buffer, Interval(operationId.at(op), operationId.at(op) + 1)});
         } else {
-          buffer->regionIds.insert(wgId);
+          for (auto wgId : wgIds)
+            buffer->regionIds.insert(wgId);
           // For warp-specialized code, we can assume each region has its own
           // copy of a scratch buffer, i.e each region is for a single taskId.
           // In that case, we don't need to extend the liveness of scratch
@@ -370,8 +371,7 @@ private:
       // NOTE: txl
       std::for_each(liveOperations.begin(), liveOperations.end(),
                     [&](Operation *liveOp) {
-                      int wgId = getOpAttrWgId(liveOp);
-                      if (wgId != -1)
+                      for (auto wgId : getOpAttrWgIds(liveOp))
                         buffer->regionIds.insert(wgId);
                     });
 

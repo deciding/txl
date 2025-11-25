@@ -20,6 +20,7 @@
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 
 #include "nvidia/include/TXLGPUToLLVM/TXLGPUToLLVMPass.h"
+#include "triton/Analysis/TXLUtility.h"
 
 #include "Allocation.h"
 #include "PatternTritonGPUOpToLLVM.h"

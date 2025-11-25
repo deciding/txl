@@ -113,7 +113,7 @@ struct ConvertLayoutOpConversion
   SmallVector<Value> transferWithinBlockSwizzlingImpl(
       Location loc, ConversionPatternRewriter &rewriter,
       const LinearLayout &srcLayout, const LinearLayout &dstLayout,
-      ArrayRef<Value> inVals, Type llvmElemTy, Value smemBase, int asyncId) const {
+      ArrayRef<Value> inVals, Type llvmElemTy, Value smemBase, SmallVector<int> wgIds) const {
     auto *ctx = rewriter.getContext();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
     // We handle transformations recursively as they all need a preprocessing
@@ -127,7 +127,7 @@ struct ConvertLayoutOpConversion
       }));
       auto outVals =
           transferWithinBlockSwizzlingImpl(loc, rewriter, srcLayout, dstLayout,
-                                           newInVals, llvmElemTyPtr, smemBase, asyncId);
+                                           newInVals, llvmElemTyPtr, smemBase, wgIds);
       for (auto &v : outVals) {
         v = b.inttoptr(llvmElemTy, v);
       }
@@ -141,7 +141,7 @@ struct ConvertLayoutOpConversion
       auto newInVals = llvm::to_vector(llvm::map_range(
           inVals, [&](Value v) { return b.zext(i8ElemTy, v).getResult(); }));
       auto outVals = transferWithinBlockSwizzlingImpl(
-          loc, rewriter, srcLayout, dstLayout, newInVals, i8ElemTy, smemBase, asyncId);
+          loc, rewriter, srcLayout, dstLayout, newInVals, i8ElemTy, smemBase, wgIds);
       for (auto &v : outVals) {
         v = b.trunc(llvmElemTy, v);
       }
@@ -154,7 +154,7 @@ struct ConvertLayoutOpConversion
       auto prmtSrc = removeBroadcastSrc.apply(srcLayout);
       auto newInVals = removeBroadcastSrc.apply(inVals);
       return transferWithinBlockSwizzlingImpl(loc, rewriter, prmtSrc, dstLayout,
-                                              newInVals, llvmElemTy, smemBase, asyncId);
+                                              newInVals, llvmElemTy, smemBase, wgIds);
     }
 
     // Remove broadcasting in dst
@@ -162,7 +162,7 @@ struct ConvertLayoutOpConversion
     if (!removeBroadcastDst.isIdentity()) {
       auto prmtDst = removeBroadcastDst.apply(dstLayout);
       auto outVals = transferWithinBlockSwizzlingImpl(
-          loc, rewriter, srcLayout, prmtDst, inVals, llvmElemTy, smemBase, asyncId);
+          loc, rewriter, srcLayout, prmtDst, inVals, llvmElemTy, smemBase, wgIds);
       return broadcastAs(outVals, dstLayout);
     }
 
@@ -250,17 +250,14 @@ struct ConvertLayoutOpConversion
                                     to_vector(dstLayout.getOutDimNames()));
 
     // txl wgid
-    int asyncId = -1;
-    auto wgIdAttr = getParentWithWGIDAttr(op);
-    if (wgIdAttr)
-        asyncId = wgIdAttr.getInt();
+    auto wgIds = findWgidsRecursive(op);
 
     auto llvmElemTy = getTypeConverter()->convertType(srcTy.getElementType());
     auto smemBase =
         LLVM::getSharedMemoryBase(loc, rewriter, targetInfo, op.getOperation());
     auto inVals = unpackLLElements(loc, src, rewriter);
     auto outVals = transferWithinBlockSwizzlingImpl(
-        loc, rewriter, srcLayout, dstLayout, inVals, llvmElemTy, smemBase, asyncId);
+        loc, rewriter, srcLayout, dstLayout, inVals, llvmElemTy, smemBase, wgIds);
 
     Value result =
         packLLElements(loc, getTypeConverter(), outVals, rewriter, dstTy);

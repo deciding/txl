@@ -17,6 +17,7 @@ cp ${FROM_DIR}/include/triton/Conversion/TritonToTritonGPU/Passes.td ${TO_DIR}/i
 
 #include/txl
 
+cp ${FROM_DIR}/lib/Analysis/Alias.cpp ${TO_DIR}/lib/Analysis/
 cp ${FROM_DIR}/lib/Analysis/Allocation.cpp ${TO_DIR}/lib/Analysis/
 cp ${FROM_DIR}/lib/Analysis/AxisInfo.cpp ${TO_DIR}/lib/Analysis/
 cp ${FROM_DIR}/lib/Analysis/CMakeLists.txt ${TO_DIR}/lib/Analysis/

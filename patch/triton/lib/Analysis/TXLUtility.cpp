@@ -1,6 +1,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -9,6 +10,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cstdint>
@@ -16,6 +18,7 @@
 #include "triton/Analysis/TXLUtility.h"
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/TritonGPUInterfaces.h"
 
 namespace ttg = mlir::triton::gpu;
@@ -33,6 +36,97 @@ auto getParentWithWGIDAttr(Operation *op) -> IntegerAttr {
   return nullptr; // Return nullptr if no parent has the attribute
 }
 
+SmallVector<int> findWgidsRecursive(Operation *op) {
+    if (!op)
+        return {};
+    // Case 0: op itself ---------------------------------
+    auto ownWgids = op->getAttrOfType<DenseI32ArrayAttr>("ttxg.wgids");
+    if (ownWgids)
+        return llvm::to_vector(ownWgids.asArrayRef());
+
+    Operation *parent = op->getParentOp();
+    if (!parent)
+        return {};  // reached root
+
+    // Case 1: parent is an IfOp ---------------------------------------
+    if (auto ifOp = dyn_cast<scf::IfOp>(parent)) {
+        Region &thenR = ifOp.getThenRegion();
+        Region &elseR = ifOp.getElseRegion();
+
+        bool inThen = (op->getParentRegion() == &thenR);
+        bool inElse = (!elseR.empty() &&
+                       op->getParentRegion() == &elseR);
+
+        auto thenAttr = ifOp->getAttrOfType<DenseI32ArrayAttr>("ttxg.wgids");
+        auto elseAttr = ifOp->getAttrOfType<DenseI32ArrayAttr>("ttxg.other.wgids");
+
+        // In THEN region → prefer ttxg.wgids
+        if (inThen) {
+            if (thenAttr)
+                return llvm::to_vector(thenAttr.asArrayRef());
+            // no attribute → keep recursing upward
+            return findWgidsRecursive(parent);
+        }
+
+        // In ELSE region → prefer ttxg.other.wgids, fallback to ttxg.wgids
+        if (inElse) {
+            if (elseAttr)
+                return llvm::to_vector(elseAttr.asArrayRef());
+            // below only happens when if is not wargroup id if, and it has ttxg.wgids
+            if (thenAttr)
+                return llvm::to_vector(thenAttr.asArrayRef());
+            return findWgidsRecursive(parent);
+        }
+
+        // Should not happen, but recurse safely
+        llvm_unreachable("Either statement in then or else");
+        //return findWgidsRecursive(parent);
+    }
+
+    // Case 2: parent is any normal op ---------------------------------
+    auto direct = parent->getAttrOfType<DenseI32ArrayAttr>("ttxg.wgids");
+    if (direct)
+        return llvm::to_vector(direct.asArrayRef());
+
+    // keep going upward
+    return findWgidsRecursive(parent);
+}
+
+bool hasWarpgroupOperand(Value value) {
+  // Base case: this value is defined by a warpgroup op
+  if (auto op = value.getDefiningOp()) {
+    if (isa<triton::IsWarpgroupOp>(op)) {
+      return true;
+    }
+  }
+
+  // For operation results, check all operands of the defining op
+  if (auto op = value.getDefiningOp()) {
+    for (Value operand : op->getOperands()) {
+      if (hasWarpgroupOperand(operand)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+bool isWarpgroupIf(Operation* op) {
+    if (isa<scf::IfOp>(op)){
+        scf::IfOp ifOp = dyn_cast<scf::IfOp>(op);
+        Value cond = ifOp.getCondition();
+        if (auto defOp = cond.getDefiningOp()) {
+          if (isa<triton::IsWarpgroupOp>(defOp)) {
+            return true;
+          }
+          if (hasWarpgroupOperand(cond))
+              op->emitError("is_warpgroup should always be used directly in if condition!\n");
+          //assert(!hasWarpgroupOperand(cond) && "is_warpgroup should always be used directly in if condition!\n");
+        }
+    }
+    return false;
+}
 
 void changeForOpArgType(scf::ForOp forOp, unsigned int opNum, Type newType){
     auto initArgs = forOp.getInitArgs();
@@ -52,17 +146,39 @@ void changeForOpArgType(scf::ForOp forOp, unsigned int opNum, Type newType){
 }
 
 void setOpAttrWgId(Operation* op, int32_t wgid){
+    std::string key = "ttxg.wgid";
     auto attrTy = IntegerType::get(op->getContext(), 32);
-    op->setAttr("ttxg.wgid", IntegerAttr::get(attrTy, wgid));
+    op->setAttr(key, IntegerAttr::get(attrTy, wgid));
 }
 
 int getOpAttrWgId(Operation* op){
-    auto attr = op->getAttrOfType<IntegerAttr>("ttxg.wgid");
+    std::string key = "ttxg.wgid";
+    auto attr = op->getAttrOfType<IntegerAttr>(key);
     if (attr) {
         assert(attr.getType().isInteger(32) && "ttxg.wgid must be 32 bit int\n");
         return  attr.getInt();
     }
     return -1;
+}
+
+void setOpAttrWgIds(Operation* op, ArrayRef<int32_t> wgids, bool other){
+    std::string key = "ttxg.wgids";
+    if (other)
+        key = "ttxg.other.wgids";
+    Builder builder(op);
+    op->setAttr(key, builder.getDenseI32ArrayAttr(wgids));
+}
+
+SmallVector<int> getOpAttrWgIds(Operation* op, bool other){
+    std::string key = "ttxg.wgids";
+    if (other)
+        key = "ttxg.other.wgids";
+    auto attr = op->getAttrOfType<DenseI32ArrayAttr>(key);
+    if (attr) {
+        SmallVector<int32_t> vec(attr.asArrayRef().begin(), attr.asArrayRef().end());
+        return  vec;
+    }
+    return SmallVector<int>();
 }
 
 void setOpAttrWarpReduce(Operation* op){

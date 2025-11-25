@@ -14,6 +14,7 @@
 #include "mlir/Transforms/Passes.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "triton/Analysis/TXLUtility.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
 #include <algorithm>
@@ -168,13 +169,16 @@ LogicalResult replaceProtonCtxOp(OpBuilder &builder, FuncOp func,
     auto loc = restoreCtxOp.getLoc();
     builder.setInsertionPoint(restoreCtxOp);
 
-    int asyncTaskId = getAsyncTaskId(restoreCtxOp);
-    assert((asyncTaskId > 0) && "RestoreCtxOp must have asyncTaskId");
+    //int asyncTaskId = getAsyncTaskId(restoreCtxOp);
+    //assert((asyncTaskId > 0) && "RestoreCtxOp must have asyncTaskId");
+    auto wgIds = getOpAttrWgIds(restoreCtxOp);
+    assert((wgIds.size()) && "RestoreCtxOp must have asyncTaskId");
 
     // Create a new segment for the worker warp.
     Value newSegment = builder.create<gpu::SegmentAllocOp>(
         loc, segment.getType(), buffer);
-    asyncTaskIdToSegment[asyncTaskId] = newSegment;
+    for (auto asyncTaskId : wgIds)
+        asyncTaskIdToSegment[asyncTaskId] = newSegment;
 
     // Restore warp-level context before profiling.
     builder.create<gpu::RestoreCtxOp>(loc, newSegment, profileMem);
@@ -185,18 +189,23 @@ LogicalResult replaceProtonCtxOp(OpBuilder &builder, FuncOp func,
       auto loc = record.getLoc();
       builder.setInsertionPoint(record);
 
-      auto asyncTaskId = getAsyncTaskId(record);
-      if (asyncTaskId <= 0)
+      //auto asyncTaskId = getAsyncTaskId(record);
+      //if (asyncTaskId <= 0)
+      //  return WalkResult::advance(); // will be handled by other func
+      auto wgIds = getOpAttrWgIds(record);
+      if (wgIds.empty())
         return WalkResult::advance(); // will be handled by other func
 
-      assert(asyncTaskIdToSegment.count(asyncTaskId) && "RecordOp has unseen asyncTaskId");
-      auto newSegment = asyncTaskIdToSegment[asyncTaskId];
+      for (int asyncTaskId : wgIds) {
+        assert(asyncTaskIdToSegment.count(asyncTaskId) && "RecordOp has unseen asyncTaskId");
+        auto newSegment = asyncTaskIdToSegment[asyncTaskId];
 
-      Value counter =
-          builder.create<gpu::ReadCounterOp>(loc, clkType, metricType);
-      int scopeId = scopeInfo.getOpScopeId(record);
-      builder.create<gpu::CircularStoreOp>(loc, newSegment, counter,
-                                           record.getIsStart(), scopeId);
+        Value counter =
+            builder.create<gpu::ReadCounterOp>(loc, clkType, metricType);
+        int scopeId = scopeInfo.getOpScopeId(record);
+        builder.create<gpu::CircularStoreOp>(loc, newSegment, counter,
+                                             record.getIsStart(), scopeId);
+      }
       record.erase();
       return WalkResult::advance();
   });
@@ -205,13 +214,18 @@ LogicalResult replaceProtonCtxOp(OpBuilder &builder, FuncOp func,
       auto loc = saveCtxOp.getLoc();
       builder.setInsertionPoint(saveCtxOp);
 
-      int asyncTaskId = getAsyncTaskId(saveCtxOp);
-      assert((asyncTaskId > 0) && "SaveCtxOp must have asyncTaskId");
+      //int asyncTaskId = getAsyncTaskId(saveCtxOp);
+      //assert((asyncTaskId > 0) && "SaveCtxOp must have asyncTaskId");
+      auto wgIds = getOpAttrWgIds(saveCtxOp);
+      assert((wgIds.size()) && "SaveCtxOp must have asyncTaskId");
 
-      assert(asyncTaskIdToSegment.count(asyncTaskId) && "SaveCtxOp has unseen asyncTaskId");
-      auto newSegment = asyncTaskIdToSegment[asyncTaskId];
+      for (auto asyncTaskId : wgIds) {
+        assert(asyncTaskIdToSegment.count(asyncTaskId) && "SaveCtxOp has unseen asyncTaskId");
+        auto newSegment = asyncTaskIdToSegment[asyncTaskId];
 
-      builder.create<gpu::SaveCtxOp>(loc, newSegment, profileMem);
+        builder.create<gpu::SaveCtxOp>(loc, newSegment, profileMem);
+      }
+
       saveCtxOp.erase();
   });
 

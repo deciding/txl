@@ -3,6 +3,7 @@
 #include <fstream>
 
 #include "mlir/Analysis/SliceAnalysis.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
@@ -1600,6 +1601,11 @@ bool comesFromLoadOrBlockArg(Value v) {
     // NOTE: txl
     if (auto getBufferOp = v.getDefiningOp<GetBufferOp>()) {
       v = getBufferOp.getSrc();
+      continue;
+    }
+    // TODO: not done for IfOp, because don't know the yield op idx
+    if (auto selectOp = v.getDefiningOp<arith::SelectOp>()) {
+      v = selectOp.getTrueValue(); // TODO: assume true and false are from same mem space
       continue;
     }
     if (auto transOp = dyn_cast<tt::TransOp>(def)) {

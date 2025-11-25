@@ -19,6 +19,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
+#include <future>
 
 #define DEBUG_TYPE "txlgpu-wgmma-pipeline"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -176,8 +177,8 @@ static void lowerDotWaitInner(SmallVector<Operation*> &queue, SmallVector<std::p
             SmallVector<Value> waitDotResults; // originally all will be thread through
 
             auto tmpWaitEnd = waitEnd;
-            if (waitStart == waitEnd)
-                tmpWaitEnd ++; // TODO: tmp logic, dot_wat must have operands?
+            //if (waitStart == waitEnd)
+            //    tmpWaitEnd ++; // TODO: tmp logic, dot_wat must have operands?
 
             for (auto it = waitStart; it != tmpWaitEnd; ++it){
                 auto [val, opNum] = *it;
@@ -233,7 +234,7 @@ static SmallVector<std::pair<Value, int>> lowerDotWait(scf::ForOp forOp) {
   for (auto op : pendingAccumDotBuffer){
       for (auto& use : op->getUses()){
           auto user = use.getOwner();
-          if (isa<scf::YieldOp>(user)){
+          if (isa<scf::YieldOp>(user) && user->getParentOfType<scf::ForOp>() == forOp){
               auto yieldOp = dyn_cast<scf::YieldOp>(user);
               int opNum = use.getOperandNumber();
               Value iterArg = forOp.getRegionIterArg(opNum);

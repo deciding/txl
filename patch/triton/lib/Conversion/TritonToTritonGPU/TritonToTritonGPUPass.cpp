@@ -1,6 +1,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "triton/Conversion/TritonToTritonGPU/Passes.h"
@@ -45,6 +46,129 @@ template <class Op> struct GenericOpPattern : public OpConversionPattern<Op> {
     return success();
   }
 };
+
+struct GetBufferOpPattern : public OpConversionPattern<GetBufferOp> {
+  using OpConversionPattern<GetBufferOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(
+      GetBufferOp op, GetBufferOp::Adaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+
+    // 1. Convert the existing result type.
+    SmallVector<Type> convertedTypes;
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
+                                                      convertedTypes)))
+      return failure();
+
+    if (convertedTypes.size() != 1)
+      return op.emitError("expected single result");
+
+    auto oldType = cast<RankedTensorType>(convertedTypes[0]);
+    if (!oldType)
+      return op.emitError("expected RankedTensorType");
+
+    // 2. Prepend op.getNumStages() to the shape.
+    ArrayRef<int64_t> oldShape = oldType.getShape();
+
+    SmallVector<int64_t> newShape;
+    newShape.reserve(oldShape.size() - 1);
+    newShape.append(oldShape.begin()+1, oldShape.end());
+
+    // 3. Build the new memref type.
+    RankedTensorType newType =
+        RankedTensorType::get(newShape, oldType.getElementType(),
+                        oldType.getEncoding());
+
+    // 4. Replace the op with a new GetBufferOp.
+    auto newOp = rewriter.replaceOpWithNewOp<GetBufferOp>(
+        op, newType, adaptor.getOperands(), op->getAttrs());
+
+    return success();
+  }
+};
+struct MbarAllocOpPattern : public OpConversionPattern<MbarAllocOp> {
+  using OpConversionPattern<MbarAllocOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(
+      MbarAllocOp op, MbarAllocOp::Adaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+
+    // 1. Convert the existing result type.
+    SmallVector<Type> convertedTypes;
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
+                                                      convertedTypes)))
+      return failure();
+
+    if (convertedTypes.size() != 1)
+      return op.emitError("expected single result");
+
+    auto oldType = cast<RankedTensorType>(convertedTypes[0]);
+    if (!oldType)
+      return op.emitError("expected RankedTensorType");
+
+    // 2. Prepend op.getNumStages() to the shape.
+    int64_t stages = op.getNumStages();
+    ArrayRef<int64_t> oldShape = oldType.getShape();
+
+    SmallVector<int64_t> newShape;
+    newShape.reserve(oldShape.size() + 1);
+    newShape.push_back(stages);
+    newShape.append(oldShape.begin(), oldShape.end());
+
+    // 3. Build the new memref type.
+    RankedTensorType newType =
+        RankedTensorType::get(newShape, oldType.getElementType(),
+                        oldType.getEncoding());
+
+    // 4. Replace the op with a new MbarAllocOp.
+    auto newOp = rewriter.replaceOpWithNewOp<MbarAllocOp>(
+        op, newType, adaptor.getOperands(), op->getAttrs());
+
+    return success();
+  }
+};
+struct SmemAllocOpPattern : public OpConversionPattern<SmemAllocOp> {
+  using OpConversionPattern<SmemAllocOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(
+      SmemAllocOp op, SmemAllocOp::Adaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+
+    // 1. Convert the existing result type.
+    SmallVector<Type> convertedTypes;
+    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
+                                                      convertedTypes)))
+      return failure();
+
+    if (convertedTypes.size() != 1)
+      return op.emitError("expected single result");
+
+    auto oldType = cast<RankedTensorType>(convertedTypes[0]);
+    if (!oldType)
+      return op.emitError("expected RankedTensorType");
+
+    // 2. Prepend op.getNumStages() to the shape.
+    int64_t stages = op.getNumStages();
+    ArrayRef<int64_t> oldShape = oldType.getShape();
+
+    SmallVector<int64_t> newShape;
+    newShape.reserve(oldShape.size() + 1);
+    newShape.push_back(stages);
+    newShape.append(oldShape.begin(), oldShape.end());
+
+    // 3. Build the new memref type.
+    RankedTensorType newType =
+        RankedTensorType::get(newShape, oldType.getElementType(),
+                        oldType.getEncoding());
+
+    // 4. Replace the op with a new SmemAllocOp.
+    auto newOp = rewriter.replaceOpWithNewOp<SmemAllocOp>(
+        op, newType, adaptor.getOperands(), op->getAttrs());
+
+    return success();
+  }
+};
+
 
 class ArithConstantPattern : public OpConversionPattern<arith::ConstantOp> {
 public:
@@ -593,7 +717,18 @@ void populateTritonPatterns(TritonGPUTypeConverter &typeConverter,
       GenericOpPattern<triton::SmemSubsliceOp>,
       GenericOpPattern<triton::SmemTransOp>,
       GenericOpPattern<triton::SmemReshapeOp>,
+      GenericOpPattern<triton::TmaLoadOp>,
       GenericOpPattern<triton::TmaStoreOp>,
+      GenericOpPattern<triton::MbarWaitOp>,
+      GenericOpPattern<triton::MbarArriveOp>,
+      GenericOpPattern<triton::MbarExpectOp>,
+      //SmemAllocOpPattern,
+      //MbarAllocOpPattern,
+      //GetBufferOpPattern,
+      GenericOpPattern<triton::GetBufferOp>,
+      GenericOpPattern<triton::SmemAllocOp>,
+      GenericOpPattern<triton::MbarAllocOp>,
+
 
       GenericOpPattern<triton::StoreOp>,
       GenericOpPattern<triton::HistogramOp>,

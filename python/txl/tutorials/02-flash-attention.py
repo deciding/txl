@@ -2053,17 +2053,35 @@ def _attn_fwd_ws_tma_txl_tawa(sm_scale, M,  #
         qk_scale = sm_scale
         qk_scale *= 1.44269504  # 1/log(2)
 
-        bQ0i = txl.get_buffer(bQ0, 0)
-        pMbar_bQ0i = txl.get_buffer(pMbar_bQ0, 0)
-        bQ1i = txl.get_buffer(bQ1, 0)
-        pMbar_bQ1i = txl.get_buffer(pMbar_bQ1, 0)
-
         # wait Q
         if txl.is_warpgroup([1]):
-            txl.mbar_wait(pMbar_bQ0i, 0)
-        if txl.is_warpgroup([2]):
-            txl.mbar_wait(pMbar_bQ1i, 0)
-        #txl.mbar_wait(pMbar_bQi, 0)
+            #txl.mbar_wait(pMbar_bQ0i, 0)
+            pMbar_bQx = pMbar_bQ0
+            bQx = bQ0
+        else:
+            #txl.mbar_wait(pMbar_bQ1i, 0)
+            pMbar_bQx = pMbar_bQ1
+            bQx = bQ1
+        bQi = txl.get_buffer(bQx, 0)
+        pMbar_bQi = txl.get_buffer(pMbar_bQx, 0)
+
+        # TODO: not working?
+        #bQ0i = txl.get_buffer(bQ0, 0)
+        #pMbar_bQ0i = txl.get_buffer(pMbar_bQ0, 0)
+        #bQ1i = txl.get_buffer(bQ1, 0)
+        #pMbar_bQ1i = txl.get_buffer(pMbar_bQ1, 0)
+
+        ## wait Q
+        #if txl.is_warpgroup([1]):
+        #    #txl.mbar_wait(pMbar_bQ0i, 0)
+        #    pMbar_bQi = pMbar_bQ0i
+        #    bQi = bQ0i
+        #else:
+        #    #txl.mbar_wait(pMbar_bQ1i, 0)
+        #    pMbar_bQi = pMbar_bQ1i
+        #    bQi = bQ1i
+
+        txl.mbar_wait(pMbar_bQi, 0)
 
         # -- prologue --
 
@@ -2076,10 +2094,11 @@ def _attn_fwd_ws_tma_txl_tawa(sm_scale, M,  #
 
         cur_mbar_QK = txl.get_buffer(cMbar_QK, 0)
 
-        if txl.is_warpgroup([1]):
-            qk = tl.dot(bQ0i, cur_bK.T)
-        else: # [2]
-            qk = tl.dot(bQ1i, cur_bK.T)
+        #if txl.is_warpgroup([1]):
+        #    qk = tl.dot(bQ0i, cur_bK.T)
+        #else: # [2]
+        #    qk = tl.dot(bQ1i, cur_bK.T)
+        qk = tl.dot(bQi, cur_bK.T)
         txl.dot_wait(0)
         # load new K
         txl.mbar_arrive(cur_mbar_QK)
@@ -2109,6 +2128,7 @@ def _attn_fwd_ws_tma_txl_tawa(sm_scale, M,  #
 
         # loop over k, v and update accumulator
         for start_n in range(lo+BLOCK_N, hi, BLOCK_N):
+            acc = acc * alpha[:, None]
             start_n = tl.multiple_of(start_n, BLOCK_N)
 
             # tawa: update acc
@@ -2123,10 +2143,11 @@ def _attn_fwd_ws_tma_txl_tawa(sm_scale, M,  #
 
             cur_mbar_QK = txl.get_buffer(cMbar_QK, bufIdxRK) # wait for the same buffer
 
-            if txl.is_warpgroup([1]):
-                qk = tl.dot(bQ0i, cur_bK.T)
-            else: # [2]
-                qk = tl.dot(bQ1i, cur_bK.T)
+            #if txl.is_warpgroup([1]):
+            #    qk = tl.dot(bQ0i, cur_bK.T)
+            #else: # [2]
+            #    qk = tl.dot(bQ1i, cur_bK.T)
+            qk = tl.dot(bQi, cur_bK.T)
             txl.dot_wait(0)
 
             # -- compute pv i ----
@@ -2164,7 +2185,7 @@ def _attn_fwd_ws_tma_txl_tawa(sm_scale, M,  #
             # -- update output accumulator --
 
             # TXL: reordered
-            acc = acc * alpha[:, None]
+            #acc = acc * alpha[:, None]
 
             # finish PV
             #txl.dot_wait(0)
@@ -2185,7 +2206,7 @@ def _attn_fwd_ws_tma_txl_tawa(sm_scale, M,  #
         # tawa: update acc
         #p = p.to(dtype)
         # tawa: rescale acc
-        #acc = acc * alpha[:, None]
+        acc = acc * alpha[:, None]
 
         # load v
         cur_mbar_bV = txl.get_buffer(pMbar_bV, bufIdxRV)
@@ -2736,8 +2757,93 @@ class _attention(torch.autograd.Function):
 
         return dq, dk, dv, None, None, None, None
 
+def test_attention(q, k, v, causal, sm_scale, algo=0, no_tune=False, profiling=False):
+    # shape constraints
+    HEAD_DIM_Q, HEAD_DIM_K = q.shape[-1], k.shape[-1]
+    # when v is in float8_e5m2 it is transposed.
+    HEAD_DIM_V = v.shape[-1]
+    assert HEAD_DIM_Q == HEAD_DIM_K and HEAD_DIM_K == HEAD_DIM_V
+    assert HEAD_DIM_K in {16, 32, 64, 128, 256}
+    o = torch.empty_like(q)
+    stage = 3 if causal else 1
+    extra_kern_args = {}
+    # Tuning for AMD target
+    if is_hip():
+        waves_per_eu = 3 if HEAD_DIM_K <= 64 else 2
+        extra_kern_args = {"waves_per_eu": waves_per_eu, "allow_flush_denorm": True}
 
-attention = _attention.apply
+
+    M = torch.empty((q.shape[0], q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+    if supports_host_descriptor():
+        # Note that on Hopper we cannot perform a FP8 dot with a non-transposed second tensor
+        y_dim = q.shape[0] * q.shape[1] * q.shape[2]
+
+        dummy_block = [1, 1]
+        desc_q = TensorDescriptor(q, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
+        desc_v = TensorDescriptor(v, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
+        desc_k = TensorDescriptor(k, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
+        desc_o = TensorDescriptor(o, shape=[y_dim, HEAD_DIM_K], strides=[HEAD_DIM_K, 1], block_shape=dummy_block)
+    else:
+        desc_q = q
+        desc_v = v
+        desc_k = k
+        desc_o = o
+
+    #def alloc_fn(size: int, align: int, _):
+    #    return torch.empty(size, dtype=torch.int8, device="cuda")
+
+    #triton.set_allocator(alloc_fn)
+
+    def grid(META):
+        return (triton.cdiv(q.shape[2], META["BLOCK_M"]), q.shape[0] * q.shape[1], 1)
+        #return (triton.cdiv(q.shape[2], META["BLOCK_M"]), q.shape[1], q.shape[0])
+
+    #ctx.grid = grid
+    #if no_tune:
+    #    if algo == 0:
+    #        extra_kern_args.update(tma_nows_best_config)
+    #    else:
+    #        extra_kern_args.update(tma_ws_best_config)
+    algo_map = {
+        0: _attn_fwd_tma_txl,
+        1: _attn_fwd_ws_tma_txl1,
+        2: _attn_fwd_ws_tma_txl2,
+        3: _attn_fwd_ws_tma_txl3,
+        4: _attn_fwd_ws_tma_txl4,
+        5: _attn_fwd_ws_tma_txl_tawa,
+        6: _attn_fwd_ws_tma_txl_tawa2,
+        7: _attn_fwd_ws_tma_txl_test,
+    }
+
+    if profiling:
+        proton.start("fa3", backend="instrumentation", mode='default:sampling_strategy=selective:sampling_options=0,4,8', data="trace")
+    algo_map[algo][grid](
+        sm_scale, M,  #
+        q.shape[0], q.shape[1],  #
+        desc_q, desc_k, desc_v, desc_o,  #
+        N_CTX=q.shape[2],  #
+        HEAD_DIM=HEAD_DIM_K,  #
+        FP8_OUTPUT=q.dtype == torch.float8_e5m2,  #
+        STAGE=stage,  #
+
+        #o_ptr=o,
+        #stride_om=o.stride(-2),
+        #stride_on=o.stride(-1),
+
+        warp_specialize=False,  #
+        **extra_kern_args)
+
+    if profiling:
+        proton.finalize()
+
+    #ctx.save_for_backward(q, k, v, o, M)
+    #ctx.sm_scale = sm_scale
+    #ctx.HEAD_DIM = HEAD_DIM_K
+    #ctx.causal = causal
+    return o
+
+#attention = _attention.apply
+attention = test_attention
 
 
 ###################################################
@@ -2746,8 +2852,9 @@ attention = _attention.apply
 
 # Validate results
 import sys
-#sys.path.insert(0, './tools')  # Insert at beginning
 from txl.tests.test_util import attention_ref
+#sys.path.insert(0, '/ssd2/zhangzn/txl/docker/tawa')  # Insert at beginning
+#from fmha_common import bench_flash_attention_with_configs
 import math
 
 try:
@@ -2805,7 +2912,12 @@ def test_op(Z, H, N_CTX, HEAD_DIM, causal, dtype=torch.float16, algo=0, no_tune=
         flash_out = flash_out.permute(0,2,1,3).contiguous()
         test_outs.append(flash_out)
     elif Has_TXL:
-        txl_out = attention(q, k, v, causal, 1/math.sqrt(HEAD_DIM), algo, no_tune, profiling).half()
+        #sm_scale = 1.44269504
+        sm_scale = 1/math.sqrt(HEAD_DIM)
+        #sm_scale = 1.3
+        #print(sm_scale)
+        txl_out = attention(q, k, v, causal, sm_scale, algo, no_tune, profiling).half()
+        #txl_out = attention(q, k, v, causal, 1.3, algo, no_tune, profiling).half()
         test_outs.append(txl_out)
 
     if profiling:
@@ -2881,13 +2993,22 @@ for mode in ["fwd"]:
 
 @triton.testing.perf_report(configs)
 def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, device=DEVICE, algo=0, no_tune=False):
+    #def bench_fn(q, k, v, causal, sm_scale):
+    #    return attention(q, k, v, causal, sm_scale, algo, no_tune)
+
+    #return bench_flash_attention_with_configs(
+    #    bench_fn, BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, device
+    #)
+
     # follow fa3 paper
     BATCH = int(16384 / N_CTX)
+    #BATCH=16
     assert mode in ["fwd", "bwd"]
     dtype = torch.float16
-    q = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
-    k = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
-    v = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device)
+    q = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device, requires_grad=False)
+    print(q.shape)
+    k = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device, requires_grad=False)
+    v = torch.randn((BATCH, H, N_CTX, HEAD_DIM), dtype=dtype, device=device, requires_grad=False)
     if "triton" in provider:
         if mode == "fwd" and "fp8" in provider:
             q = q.to(torch.float8_e5m2)
@@ -2896,12 +3017,15 @@ def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, dev
             v = v.permute(0, 1, 3, 2)
             v = v.to(torch.float8_e5m2)
         sm_scale = 1/math.sqrt(HEAD_DIM)
+        #print(sm_scale)
+        #sm_scale = 0.088388
+        #sm_scale = 0.1
+        sm_scale = 1.3
         fn = lambda: attention(q, k, v, causal, sm_scale, algo, no_tune)
         if mode == "bwd":
             o = fn()
             do = torch.randn_like(o)
             fn = lambda: o.backward(do, retain_graph=True)
-        ms = triton.testing.do_bench(fn, warmup=1000, rep=1000)
 
     if provider == "flash":
         # qkv = torch.randn((BATCH, N_CTX, 3, H, HEAD_DIM), dtype=dtype, device=device, requires_grad=True)
@@ -2914,7 +3038,7 @@ def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, dev
             o = fn()
             do = torch.randn_like(o)
             fn = lambda: o.backward(do, retain_graph=True)
-        ms = triton.testing.do_bench(fn, warmup=1000, rep=1000)
+    ms = triton.testing.do_bench(fn, warmup=25, rep=1000)
 
     flops_per_matmul = 2.0 * BATCH * H * N_CTX * N_CTX * HEAD_DIM
     total_flops = 2 * flops_per_matmul
@@ -2922,15 +3046,21 @@ def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, dev
         total_flops *= 0.5
     if mode == "bwd":
         total_flops *= 2.5  # 2.0(bwd) + 0.5(recompute)
-    return total_flops * 1e-12 / (ms * 1e-3)
+    #return total_flops * 1e-12 / (ms * 1e-3)
+    print(flops_per_matmul)
+    return total_flops / ms * 1e-9
 
 
 def run_test(algo=0, dump_dir=None):
+    import os
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
+    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-wgmma-pipeline"
+
     from triton import knobs
 
     knobs.autotuning.print=True
     knobs.compilation.always_compile=True
-    
+
     if dump_dir:
         knobs.compilation.dump_ir=True
         knobs.cache.dump_dir=dump_dir
@@ -2955,5 +3085,5 @@ def run_test(algo=0, dump_dir=None):
 
 if __name__ == "__main__":
     #run_test(6, dump_dir='dump/fa1113')
-    #run_test(5, dump_dir='dump/fa1117')
-    run_test(5)
+    #run_test(5, dump_dir='dump/1124fa')
+    run_test(3, dump_dir='dump/11251dot3')

@@ -195,12 +195,17 @@ bool hasAsyncLoadUsers(Operation* op){
     return false;
 }
 
-bool asAsyncLoadSrc(Operation* op){
+bool asAsyncLoadDst(Operation* op){
     for (Value result: op->getResults()){
         for (OpOperand &use: result.getUses()){
             Operation *userOp = use.getOwner();
             if (auto asyncLoad = dyn_cast<AsyncLoadOp>(userOp)){
                 if (use.getOperandNumber() == 0)
+                    return true;
+            }
+            // actually is dst of async copy
+            else if (auto asyncLoad = dyn_cast<ttg::AsyncCopyGlobalToLocalOp>(userOp)){
+                if (use.getOperandNumber() == 1)
                     return true;
             }
         }
@@ -400,7 +405,7 @@ void replaceSmemBufferUses(
       for (Operation *user : oldViewOp->getUsers()) {
         if (auto convertLayoutOp = dyn_cast<ttg::ConvertLayoutOp>(user)) {
           //if (hasAsyncLoadUsers(convertLayoutOp)) {
-          if (asAsyncLoadSrc(convertLayoutOp)) { // only affect src cvt, not mask cvt
+          if (asAsyncLoadDst(convertLayoutOp)) { // only affect src cvt, not mask cvt
             // replace all uses of userAlloc to newView
             tt::replaceUsesAndPropagateType(builder, convertLayoutOp, newView);
             opsToErase.push_back(convertLayoutOp);
@@ -795,6 +800,15 @@ void replaceMemDescUses(
         tt::replaceUsesAndPropagateType(builder, userAllocOp, newView);
         //userAllocOp->getResult(0).replaceAllUsesWith(newView);
         allocsToErase.push_back(userAllocOp);
+      }
+      // This can happend for AsyncLoadOp, since the encoding is changed by ptr
+      else if (auto convertLayoutOp = dyn_cast<ttg::ConvertLayoutOp>(user)) {
+        //if (hasAsyncLoadUsers(convertLayoutOp)) {
+        if (asAsyncLoadDst(convertLayoutOp)) { // only affect src cvt, not mask cvt
+          // replace all uses of userAlloc to newView
+          tt::replaceUsesAndPropagateType(builder, convertLayoutOp, newView);
+          //allocsToErase.push_back(convertLayoutOp);
+        }
       }
     }
     for (auto allocOp : allocsToErase) {

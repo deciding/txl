@@ -369,7 +369,7 @@ private:
 
       // NOTE: txl
       std::for_each(liveOperations.begin(), liveOperations.end(),
-                    [&](Operation *liveOp) {
+                       [&](Operation *liveOp) {
                       int wgId = getOpAttrWgId(liveOp);
                       if (wgId != -1)
                         buffer->regionIds.insert(wgId);

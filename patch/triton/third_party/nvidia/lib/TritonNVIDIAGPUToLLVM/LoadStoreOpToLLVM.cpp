@@ -904,7 +904,7 @@ public:
         Value atom = rewriter
                          .create<LLVM::AtomicRMWOp>(
                              loc, *llvmAtomicBinOp, rmwPtr, valElements[i],
-                             *llvmAtomicMemOrdering, StringRef("agent"))
+                             *llvmAtomicMemOrdering, StringRef("device"))
                          .getResult();
         // Handle the 2 bf16 case
         if (packed == 2 && valueElemNBits == 16) {
@@ -912,7 +912,7 @@ public:
                             .create<LLVM::AtomicRMWOp>(
                                 loc, *llvmAtomicBinOp, ptrElements[i + 1],
                                 valElements[i + 1], *llvmAtomicMemOrdering,
-                                StringRef("agent"))
+                                StringRef("device"))
                             .getResult();
           auto vecTy = vec_ty(valueElemTy, vec);
           auto tmp =
@@ -1310,7 +1310,6 @@ getMsgToUnpackedOffsetLayout(const LinearLayout &packedLayout,
   return unpackLayout * packedLayout;
 }
 
-
 // txl
 int getWarpOffset(Operation *op) {
   int wgId = getOpAttrWgId(op);
@@ -1361,14 +1360,15 @@ struct AsyncTMACopyGlobalToLocalOpConversion
 
     auto loc = op.getLoc();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
-    Type llvmElemTy =
-        typeConverter->convertType(op.getResult().getType().getElementType());
+    ttg::MemDescType dstTy = op.getResult().getType();
+    Type llvmElemTy = typeConverter->convertType(dstTy.getElementType());
     auto barrierMemObj = LLVM::getSharedMemoryObjectFromStruct(
         loc, adaptor.getBarrier(),
         typeConverter->convertType(op.getBarrier().getType().getElementType()),
         rewriter);
     auto dstMemObj = LLVM::getSharedMemoryObjectFromStruct(
         loc, adaptor.getResult(), llvmElemTy, rewriter);
+    Value dstBase = dstMemObj.getShmemAffineBase(loc, rewriter, dstTy);
     auto voidTy = void_ty(op->getContext());
     // NOTE: txl, we don't need warpID-warpOffset, because assuming tmaLoad always at wg0
     auto id = getWGThreadId(rewriter, loc, op);
@@ -1422,8 +1422,7 @@ struct AsyncTMACopyGlobalToLocalOpConversion
           applyLinearLayout(loc, rewriter, msgToShared,
                             {{kMsg, copyIdxVal}, {kBlock, zero}})[0]
               .second;
-      Value shMemPtr =
-          b.gep(elemPtrTy, llvmElemTy, dstMemObj.getBase(), shMemOffset);
+      Value shMemPtr = b.gep(elemPtrTy, llvmElemTy, dstBase, shMemOffset);
       SmallVector<PTXBuilder::Operand *> operands = {
           ptxBuilderTMA.newOperand(boxPred, "b"),
           ptxBuilderTMA.newOperand(shMemPtr, "r"),
@@ -1468,6 +1467,7 @@ LogicalResult convertTMAStoreLikeOp(Operation *op,
   Type llvmElemTy = typeConverter->convertType(srcTy.getElementType());
   auto dstMemObj =
       LLVM::getSharedMemoryObjectFromStruct(loc, src, llvmElemTy, rewriter);
+  Value dstBase = dstMemObj.getShmemAffineBase(loc, rewriter, srcTy);
   auto voidTy = void_ty(op->getContext());
   auto id = getWGThreadId(rewriter, loc, op); // NOTE: txl
   // Select just one thread for the TMA copy. This also helps the compiler to
@@ -1518,14 +1518,8 @@ LogicalResult convertTMAStoreLikeOp(Operation *op,
         applyLinearLayout(loc, rewriter, msgToShared,
                           {{kMsg, copyIdxVal}, {kBlock, zero}})[0]
             .second;
-
-    //txl: bug of triton, should consider memdesc subslice offsets
-    auto affineOffset = dstMemObj.getShmemOffset(loc, rewriter, srcTy);
-    Value shMemPtr =
-        b.gep(elemPtrTy, llvmElemTy, dstMemObj.getBase(), affineOffset);
-
-    shMemPtr =
-        b.gep(elemPtrTy, llvmElemTy, shMemPtr, shMemOffset);
+    // TODO: txl let's see if this fix the bug
+    Value shMemPtr = b.gep(elemPtrTy, llvmElemTy, dstBase, shMemOffset);
     SmallVector<PTXBuilder::Operand *> operands = {
         ptxBuilderTMA.newOperand(boxPred, "b"),
         ptxBuilderTMA.newOperand(tmaPtr, "l")};
@@ -1667,6 +1661,7 @@ static LogicalResult iterateGatherScatterIndices(
   Type elemPtrTy = ptr_ty(ctx, /*addrspace=*/3);
   auto smemObj = LLVM::getSharedMemoryObjectFromStruct(loc, smemObjValue,
                                                        llvmElemTy, rewriter);
+  Value smemBase = smemObj.getShmemAffineBase(loc, rewriter, smemType);
 
   unsigned threadsPerWarp = xCoordsLayout.getInDimSize(kLane);
   unsigned numWarps = xCoordsLayout.getInDimSize(kWarp);
@@ -1734,8 +1729,7 @@ static LogicalResult iterateGatherScatterIndices(
       Value shMemOffset = result.front().second;
       // Because we checked that the memdesc's allocshape and shape match, we
       // can ignore the strides and directly index into the shmem object.
-      Value shMemPtr =
-          b.gep(elemPtrTy, llvmElemTy, smemObj.getBase(), shMemOffset);
+      Value shMemPtr = b.gep(elemPtrTy, llvmElemTy, smemBase, shMemOffset);
       Value yOffset = b.add(yOffsetValue, b.i32_val(msgId * msgSize));
 
       callback(pred, shMemPtr, yOffset, ArrayRef(xOffsets).slice(regId, 4));

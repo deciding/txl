@@ -43,13 +43,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from python.build_helpers import (
-    get_base_dir,
-    get_cmake_dir,
-    get_build_lib,
-    get_build_temp,
-    get_bdist_dir,
-)
+from python.build_helpers import get_base_dir, get_cmake_dir
 
 
 def is_git_repo():
@@ -381,10 +375,6 @@ class CMakeClean(clean):
 
 class CMakeBuildPy(build_py):
 
-    def initialize_options(self):
-        super().initialize_options()
-        self.build_lib = get_build_lib().as_posix()
-
     def run(self) -> None:
         self.run_command('build_ext')
         return super().run()
@@ -406,8 +396,6 @@ class CMakeBuild(build_ext):
     def initialize_options(self):
         build_ext.initialize_options(self)
         self.base_dir = get_base_dir()
-        self.build_lib = get_build_lib()
-        self.build_temp = get_build_temp()
 
     def finalize_options(self):
         build_ext.finalize_options(self)
@@ -708,10 +696,6 @@ def add_links(external_only):
 
 class plugin_bdist_wheel(bdist_wheel):
 
-    def initialize_options(self):
-        super().initialize_options()
-        self.bdist_dir = get_bdist_dir()
-
     def run(self):
         add_links(external_only=True)
         super().run()
@@ -792,10 +776,10 @@ def get_git_version_suffix():
 
 
 # keep it separate for easy substitution
-TRITON_VERSION = "3.4.0" + get_git_version_suffix() + os.environ.get("TRITON_WHEEL_VERSION_SUFFIX", "")
+TRITON_VERSION = "3.5.1" + get_git_version_suffix() + os.environ.get("TRITON_WHEEL_VERSION_SUFFIX", "")
 
 # Dynamically define supported Python versions and classifiers
-MIN_PYTHON = (3, 9)
+MIN_PYTHON = (3, 10)
 MAX_PYTHON = (3, 14)
 
 PYTHON_REQUIRES = f">={MIN_PYTHON[0]}.{MIN_PYTHON[1]},<{MAX_PYTHON[0]}.{MAX_PYTHON[1] + 1}"
@@ -818,7 +802,6 @@ setup(
     description="A language and compiler for custom Deep Learning operations",
     long_description="",
     install_requires=[
-        "setuptools>=40.8.0",
         "importlib-metadata; python_version < '3.10'",
     ],
     packages=list(get_packages()),

@@ -38,12 +38,11 @@
 #include "triton/Dialect/TritonInstrument/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.h"
 
+// txl
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "third_party/amd/include/Dialect/TritonAMDGPU/IR/Dialect.h"
 #include "triton/Tools/LayoutUtils.h"
 #include "triton/Tools/LinearLayout.h"
-
-// txl
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "nvidia/include/Dialect/TXLGPU/IR/Dialect.h" // in third_party/nvidia/include
 #include "nvidia/include/Dialect/NVGPU/IR/Dialect.h"
@@ -51,6 +50,20 @@
 #include "triton/Tools/Sys/GetEnv.hpp"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/SourceMgr.h"
+
+#include "llvm/ADT/SmallVector.h"
+
+void setAsyncTaskIds(mlir::Operation *op,
+                     llvm::ArrayRef<AsyncTaskId> asyncTaskIds) {
+  llvm::SmallVector<AsyncTaskId> sortedAsyncTaskIds(asyncTaskIds.begin(),
+                                                    asyncTaskIds.end());
+  sort(sortedAsyncTaskIds);
+  auto i32Ty = IntegerType::get(op->getContext(), 32);
+  auto size = static_cast<int64_t>(sortedAsyncTaskIds.size());
+  auto vecTy = VectorType::get(size, i32Ty);
+  op->setAttr("async_task_id",
+              DenseI32ArrayAttr::get(op->getContext(), sortedAsyncTaskIds));
+}
 
 namespace {
 
@@ -75,6 +88,23 @@ llvm::raw_ostream &mlir_dumps_or_dbgs() {
   } else {
     return llvm::dbgs();
   }
+}
+
+// Function to parse a comma-separated string into a vector of C-style strings
+llvm::SmallVector<const char *, 3>
+parseCommaSeparatedValues(const std::string &input,
+                          llvm::SmallVector<std::string, 3> &storage) {
+  llvm::SmallVector<StringRef, 3> split;
+  llvm::SmallVector<const char *, 3> result;
+  StringRef(input.c_str()).split(split, ',');
+  llvm::transform(split, std::back_inserter(result), [&storage](StringRef str) {
+    // StringRefs are not always null-terminated.
+    // The purpose for this storage pattern is to
+    // produce a collection of C-strings that are.
+    storage.push_back(str.str());
+    return storage.back().c_str();
+  });
+  return result;
 }
 
 // Run the pass manager under a source manager diagnostic handler, which
@@ -113,29 +143,49 @@ struct TritonSourceMgrDiagnosticHandler : public SourceMgrDiagnosticHandler {
   llvm::SourceMgr sourceMgr;
 };
 
+TritonSourceMgrDiagnosticHandler
+setupTritonDiagnosticHandler(MLIRContext *context) {
+  bool showOperations = false, showStacktraces = false, showRemarks = false,
+       showWarnings = false;
+
+  if (auto enableDiagnostics =
+          triton::tools::getStrEnv("MLIR_ENABLE_DIAGNOSTICS");
+      !enableDiagnostics.empty()) {
+    llvm::SmallVector<std::string, 3> storage;
+    parseCommaSeparatedValues(enableDiagnostics, storage);
+    for (auto &str : storage) {
+      if (str == "warnings") {
+        showWarnings = true;
+      } else if (str == "remarks") {
+        showRemarks = true;
+      } else if (str == "stacktraces") {
+        showStacktraces = true;
+      } else if (str == "operations") {
+        showOperations = true;
+      }
+      // we show errors by default, so no need to set it
+    }
+  }
+
+  DiagnosticSeverity minSeverity =
+      showWarnings ? DiagnosticSeverity::Warning : DiagnosticSeverity::Error;
+  minSeverity = showRemarks ? DiagnosticSeverity::Remark : minSeverity;
+
+  context->printOpOnDiagnostic(showOperations);
+  context->printStackTraceOnDiagnostic(showStacktraces);
+  if (showStacktraces) {
+    context->disableMultithreading();
+  }
+
+  return TritonSourceMgrDiagnosticHandler(context, minSeverity);
+}
+
 std::string locationToString(Location loc) {
   std::string str;
   llvm::raw_string_ostream os(str);
   loc.print(os);
   os.flush(); // Make sure all the content is dumped into the 'str' string
   return str;
-}
-
-// Function to parse a comma-separated string into a vector of C-style strings
-llvm::SmallVector<const char *, 3>
-parseCommaSeparatedValues(const std::string &input,
-                          llvm::SmallVector<std::string, 3> &storage) {
-  llvm::SmallVector<StringRef, 3> split;
-  llvm::SmallVector<const char *, 3> result;
-  StringRef(input.c_str()).split(split, ',');
-  llvm::transform(split, std::back_inserter(result), [&storage](StringRef str) {
-    // StringRefs are not always null-terminated.
-    // The purpose for this storage pattern is to
-    // produce a collection of C-strings that are.
-    storage.push_back(str.str());
-    return storage.back().c_str();
-  });
-  return result;
 }
 
 void outputWarning(Location loc, const std::string &msg) {
@@ -702,7 +752,12 @@ void init_triton_ir(py::module &&m) {
       .def("walk",
            [](ModuleOp &self, const std::function<void(Operation *)> &fn) {
              self.walk(fn);
-           });
+           })
+      .def("verify_with_diagnostics", [](ModuleOp &self) {
+        TritonSourceMgrDiagnosticHandler handler =
+            setupTritonDiagnosticHandler(self.getContext());
+        return succeeded(verify(self.getOperation()));
+      });
 
   m.def("make_attr", [](const std::vector<int> &values, MLIRContext &context) {
     return mlir::cast<Attribute>(DenseIntElementsAttr::get(
@@ -796,6 +851,12 @@ void init_triton_ir(py::module &&m) {
            [](TritonOpBuilder &self, OpBuilder::InsertPoint pt) {
              self.restoreInsertionPoint(pt);
            })
+      .def("set_async_task_ids",
+           [](TritonOpBuilder &self, std::vector<int> v) {
+             self.setAsyncTaskIds(v);
+           })
+      .def("unset_async_task_ids",
+           [](TritonOpBuilder &self) { self.unsetAsyncTaskIds(); })
       // Attr
       .def(
           "get_unit_attr",
@@ -829,53 +890,53 @@ void init_triton_ir(py::module &&m) {
       .def("get_int1",
            [](TritonOpBuilder &self, bool v) -> Value {
              return Value(self.create<arith::ConstantIntOp>(
-                 v, self.getBuilder().getI1Type()));
+                 self.getBuilder().getI1Type(), v));
            })
       .def("get_int8",
            [](TritonOpBuilder &self, int64_t v) -> Value {
              return Value(self.create<arith::ConstantIntOp>(
-                 v, self.getBuilder().getI8Type()));
+                 self.getBuilder().getI8Type(), v));
            })
       .def("get_int16",
            [](TritonOpBuilder &self, int64_t v) -> Value {
              return Value(self.create<arith::ConstantIntOp>(
-                 v, self.getBuilder().getI16Type()));
+                 self.getBuilder().getI16Type(), v));
            })
       .def("get_int32",
            [](TritonOpBuilder &self, int64_t v) -> Value {
              return Value(self.create<arith::ConstantIntOp>(
-                 v, self.getBuilder().getI32Type()));
+                 self.getBuilder().getI32Type(), v));
            })
       .def("get_int64",
            [](TritonOpBuilder &self, int64_t v) -> Value {
              return Value(self.create<arith::ConstantIntOp>(
-                 v, self.getBuilder().getI64Type()));
+                 self.getBuilder().getI64Type(), v));
            })
       .def("get_uint8",
            [](TritonOpBuilder &self, uint64_t v) -> Value {
              return Value(self.create<arith::ConstantIntOp>(
-                 v, self.getBuilder().getI8Type()));
+                 self.getBuilder().getI8Type(), v));
            })
       .def("get_uint16",
            [](TritonOpBuilder &self, uint64_t v) -> Value {
              return Value(self.create<arith::ConstantIntOp>(
-                 v, self.getBuilder().getI16Type()));
+                 self.getBuilder().getI16Type(), v));
            })
       .def("get_uint32",
            [](TritonOpBuilder &self, uint64_t v) -> Value {
              return Value(self.create<arith::ConstantIntOp>(
-                 v, self.getBuilder().getI32Type()));
+                 self.getBuilder().getI32Type(), v));
            })
       .def("get_uint64",
            [](TritonOpBuilder &self, uint64_t v) -> Value {
              return Value(self.create<arith::ConstantIntOp>(
-                 v, self.getBuilder().getI64Type()));
+                 self.getBuilder().getI64Type(), v));
            })
       .def("get_bf16",
            [](TritonOpBuilder &self, float v) -> Value {
              auto type = self.getBuilder().getBF16Type();
              return self.create<arith::ConstantFloatOp>(
-                 APFloat(type.getFloatSemantics(), std::to_string(v)), type);
+                 type, APFloat(type.getFloatSemantics(), std::to_string(v)));
            })
       .def("get_fp16",
            [](TritonOpBuilder &self, float v) -> Value {
@@ -896,9 +957,9 @@ void init_triton_ir(py::module &&m) {
            [](TritonOpBuilder &self, Type type) -> Value {
              if (auto floatTy = dyn_cast<FloatType>(type))
                return self.create<arith::ConstantFloatOp>(
-                   APFloat(floatTy.getFloatSemantics(), 0), floatTy);
+                   floatTy, APFloat(floatTy.getFloatSemantics(), 0));
              else if (auto intTy = dyn_cast<IntegerType>(type))
-               return self.create<arith::ConstantIntOp>(0, intTy);
+               return self.create<arith::ConstantIntOp>(intTy, 0);
              else
                throw std::runtime_error("Not implemented");
            })
@@ -906,7 +967,7 @@ void init_triton_ir(py::module &&m) {
            [](TritonOpBuilder &self, Type type) -> Value {
              uint64_t val = 0xFFFFFFFFFFFFFFFF;
              if (auto intTy = dyn_cast<IntegerType>(type))
-               return self.create<arith::ConstantIntOp>(val, intTy);
+               return self.create<arith::ConstantIntOp>(intTy, val);
              else
                throw std::runtime_error("Not implemented");
            })
@@ -1808,9 +1869,10 @@ void init_triton_ir(py::module &&m) {
       .def("create_make_tensor_descriptor",
            [](TritonOpBuilder &self, Value &base, std::vector<Value> &shape,
               std::vector<Value> &strides, std::vector<int32_t> &tensorShape,
-              bool isSignedInteger) -> Value {
+              bool isSignedInteger, PaddingOption paddingOption) -> Value {
              return self.create<MakeTensorDescOp>(base, shape, strides,
-                                                  tensorShape, isSignedInteger);
+                                                  tensorShape, isSignedInteger,
+                                                  paddingOption);
            })
       .def("get_dialects",
            [](TritonOpBuilder& self) -> std::vector<std::string>  {
@@ -2392,42 +2454,8 @@ void init_triton_ir(py::module &&m) {
               self.enableTiming();
             }
 
-            // setting up diagnostics
-            bool showOperations = false, showStacktraces = false,
-                 showRemarks = false, showWarnings = false;
-
-            if (auto enableDiagnostics =
-                    triton::tools::getStrEnv("MLIR_ENABLE_DIAGNOSTICS");
-                !enableDiagnostics.empty()) {
-              llvm::SmallVector<std::string, 3> storage;
-              parseCommaSeparatedValues(enableDiagnostics, storage);
-              for (auto &str : storage) {
-                if (str == "warnings") {
-                  showWarnings = true;
-                } else if (str == "remarks") {
-                  showRemarks = true;
-                } else if (str == "stacktraces") {
-                  showStacktraces = true;
-                } else if (str == "operations") {
-                  showOperations = true;
-                }
-                // we show errors by default, so no need to set it
-              }
-            }
-
-            DiagnosticSeverity minSeverity = showWarnings
-                                                 ? DiagnosticSeverity::Warning
-                                                 : DiagnosticSeverity::Error;
-            minSeverity =
-                showRemarks ? DiagnosticSeverity::Remark : minSeverity;
-
-            TritonSourceMgrDiagnosticHandler diagHandler(context, minSeverity);
-
-            context->printOpOnDiagnostic(showOperations);
-            context->printStackTraceOnDiagnostic(showStacktraces);
-            if (showStacktraces) {
-              context->disableMultithreading();
-            }
+            TritonSourceMgrDiagnosticHandler diagHandler =
+                setupTritonDiagnosticHandler(context);
             if (failed(self.run(mod.getOperation())))
               throw std::runtime_error("PassManager::run failed");
           },

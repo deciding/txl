@@ -187,6 +187,7 @@ tmp/
 *.mlir
 triton3.3.x
 triton3.4.x
+triton3.4.x-proton
 *.ncu-rep
 *.chrome_trace
 *.json

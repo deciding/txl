@@ -31,7 +31,6 @@ def enable_semantic(semantic_name: str):
 def enable_semantic_obj(semantic):
     _SEMANTICS.add(semantic)
 
-
 def disable_semantic(semantic_name: str):
     _SEMANTICS.remove(_ALL_SEMANTICS[semantic_name])
 

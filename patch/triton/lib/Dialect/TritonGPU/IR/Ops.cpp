@@ -4,6 +4,7 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
+#include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/LinearLayoutConversions.h"
@@ -72,6 +73,31 @@ bool isConvertTrivial(ConvertLayoutOp op) {
 //===----------------------------------------------------------------------===//
 // Canonicalizer
 //===----------------------------------------------------------------------===//
+
+// tmem_store(cvt) -> tmem_store
+struct CanonicalizeConvertFromTMEMStore
+    : public mlir::OpRewritePattern<nvidia_gpu::TMEMStoreOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(nvidia_gpu::TMEMStoreOp op,
+                  PatternRewriter &rewriter) const override {
+    auto convert = op.getSrc().getDefiningOp<ConvertLayoutOp>();
+    if (!convert)
+      return failure();
+
+    // bail for incompatible layouts
+    auto cvtSrcType = convert.getSrc().getType();
+    if (!nvidia_gpu::isDistributedLayoutTMemCompatible(
+            op.getOperation(), cvtSrcType, op.getDst().getType())) {
+      return failure();
+    }
+
+    rewriter.modifyOpInPlace(
+        op, [&]() { op.getSrcMutable().assign(convert.getSrc()); });
+    return mlir::success();
+  }
+};
 
 // reshape(cvt) -> reshape
 struct CanonicalizeConvertFromReshape
@@ -389,6 +415,7 @@ void ConvertLayoutOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
   patterns.add<CanonicalizeConvertFromAlloc>(context);
   patterns.add<CanonicalizeConvertFromLocalStore>(context);
   patterns.add<CanonicalizeConvertFromSplit>(context);
+  patterns.add<CanonicalizeConvertFromTMEMStore>(context);
 }
 
 LogicalResult Fp4ToFpOp::verify() {
@@ -922,6 +949,12 @@ LogicalResult WarpSpecializeOp::verify() {
   if ((*this)->getParentOfType<WarpSpecializeOp>()) {
     return emitOpError(
         "cannot be nested inside another `ttg.warp_specialize` op");
+  }
+
+  std::optional<int> numWarps = maybeLookupNumWarps(*this);
+  if (numWarps && *numWarps % 4 != 0) {
+    return mlir::emitError(getLoc()) << "warp-specialized kernels requires "
+                                        "num_warps to be a multiple of 4";
   }
 
   return success();

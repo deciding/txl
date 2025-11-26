@@ -7,7 +7,7 @@ from ..backends.compiler import Language
 from ..backends.compiler import BaseBackend, GPUTarget
 from .. import __version__, knobs
 from ..runtime.autotuner import OutOfResources
-from ..runtime.cache import get_cache_manager, get_dump_manager, get_override_manager, get_cache_key, triton_key
+from ..runtime.cache import get_cache_manager, get_dump_manager, get_override_manager, get_cache_key
 from ..runtime.driver import driver
 from ..tools.disasm import get_sass
 from pathlib import Path
@@ -15,6 +15,7 @@ import re
 import functools
 import os
 import time
+import copy
 
 # - ^\s*tt\.func\s+ : match the start of the string, any leading whitespace, the keyword func,
 #    and any following whitespace
@@ -404,12 +405,10 @@ class AsmDict(dict):
 
 
 def _raise_error(err, *args, **kwargs):
-    raise err
+    raise copy.deepcopy(err)
 
 
 class CompiledKernel:
-    launch_enter_hook = knobs.runtime.launch_enter_hook
-    launch_exit_hook = knobs.runtime.launch_exit_hook
 
     def __init__(self, src, metadata_group, hash):
         from collections import namedtuple
@@ -447,7 +446,13 @@ class CompiledKernel:
             return
 
         def raise_(err):
-            self._run = functools.partial(_raise_error, err)
+            # clone the exception object so that the one saved in the closure
+            # of the partial function below doesn't get assigned a stack trace
+            # after the subsequent raise. otherwise, the CompiledKernel instance
+            # saved in the (global) kernel cache will keep references to all the
+            # locals in the traceback via the exception instance in the closure.
+            cloned_err = copy.deepcopy(err)
+            self._run = functools.partial(_raise_error, cloned_err)
             raise err
 
         device = driver.active.get_current_device()

@@ -114,27 +114,10 @@ void MembarOrFenceAnalysis::resolve(FunctionOpInterface funcOp,
     SmallVector<VirtualBlock> successors;
     Block::iterator startIt =
         block.second.isValid() ? std::next(block.second) : block.first->begin();
-    //llvm::outs() << "\n NEW BLOCK\n";
-    //inputBlockInfo.dump();
-    //llvm::outs() << "\n";
     for (Operation &op : llvm::make_range(startIt, block.first->end())) {
-      //op.dump();
-      //llvm::outs() << "\n";
       if (op.hasTrait<OpTrait::IsTerminator>() ||
           isa<RegionBranchOpInterface>(op)) {
-        //llvm::outs() << "\n IsTerminator\n";
-        //op.dump();
-        //llvm::outs() << "\n successor.size(): ";
-        //llvm::outs() << successors.size();
-        //llvm::outs() << "\n blockList.size(): ";
-        //llvm::outs() << blockList.size();
-        //llvm::outs() << "\n";
         visitTerminator(&op, successors);
-        //llvm::outs() << "\n successor.size(): ";
-        //llvm::outs() << successors.size();
-        //llvm::outs() << "\n blockList.size(): ";
-        //llvm::outs() << blockList.size();
-        //llvm::outs() << "\n";
         break;
       }
       update(&op, &inputBlockInfo, funcBlockInfoMap, builder);
@@ -294,18 +277,12 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
           }
         }
       }
+
       }
     }
     // If this op is may be signalling other threads asynchronously, make sure
     // all shared memory transactions are complete beforehand.
     //if (isa<triton::nvidia_gpu::ArriveBarrierOp>(op)) {
-    //  Interval<size_t> allIntervals(0, std::numeric_limits<size_t>::max());
-    //  curBlockInfo.syncWriteIntervals[allIntervals].insert(op);
-    //  curBlockInfo.syncReadIntervals[allIntervals].insert(op);
-    //}
-    // NOTE: txl this is before lowering to LLVM
-    // THIS additional bar.sync make things slower
-    //if (isa<triton::MbarArriveOp>(op)) {
     //  Interval<size_t> allIntervals(0, std::numeric_limits<size_t>::max());
     //  curBlockInfo.syncWriteIntervals[allIntervals].insert(op);
     //  curBlockInfo.syncReadIntervals[allIntervals].insert(op);
@@ -341,11 +318,6 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
     curBlockInfo.syncWriteIntervals[interval].insert(op);
     auto insertCTABarrier = blockInfo->isIntersected(curBlockInfo, filter);
     if (insertCTABarrier && !isTritonWrongSync(op)) {
-      //llvm::outs() << "\n BlockInfo scratch\n";
-      //blockInfo->dump();
-      //llvm::outs() << "\n";
-      //curBlockInfo.dump();
-      //llvm::outs() << "\n";
       builder->setInsertionPoint(op);
       insertBarrier(op, builder);
     }
@@ -355,11 +327,6 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
       blockInfo->sync();
     curBlockInfo.syncReadIntervals[interval].insert(op);
   } else if (blockInfo->isIntersected(curBlockInfo, filter) && !isTritonWrongSync(op)) {
-      //llvm::outs() << "\n BlockInfo\n";
-      //blockInfo->dump();
-      //llvm::outs() << "\n";
-      //curBlockInfo.dump();
-      //llvm::outs() << "\n";
     builder->setInsertionPoint(op);
     insertBarrier(op, builder);
     blockInfo->sync();
@@ -367,8 +334,5 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
   // Update the region info, even if barrier is inserted, we have to maintain
   // the current op's read/write buffers.
   blockInfo->join(curBlockInfo);
-  //llvm::outs() << "\n New Blockinfo\n";
-  //blockInfo->dump();
-  //llvm::outs() << "\n";
 }
 } // namespace mlir

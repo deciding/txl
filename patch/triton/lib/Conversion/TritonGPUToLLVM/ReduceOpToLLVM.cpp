@@ -28,7 +28,7 @@ public:
   matchAndRewrite(triton::ReduceOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     ReduceOpHelper helper(op);
-    //txl
+    //txl will reduce across CTAs
     //assert(helper.isReduceWithinCTA() &&
     //       "Unexpected srcLayout in ReduceOpConversion");
     Location loc = op->getLoc();

@@ -207,9 +207,8 @@ struct ConvertLayoutOpConversion
 
     bool isWarpSync = mlir::isCvtWarpSync(srcLayout, dstLayout);
     for (int i = 0; i < nReps; ++i) {
-      if (i > 0) {
+      if (i > 0)
         targetInfo.barrier(loc, rewriter, isWarpSync);
-      }
 
       auto tileInVals =
           ArrayRef<Value>(permutedInVals).slice(i * tileSize, tileSize);
@@ -342,18 +341,28 @@ struct ConvertLayoutOpConversion
     if (elemsPerVec > 1) {
       SmallVector<Value> packedVals;
       packedVals.reserve(regDim / elemsPerVec);
-      if (bitwidth < bitsPerVecElem) {
-        llvm::for_each(inVals, [&](Value &v) {
-          if (elemTy != int_ty(bitwidth))
-            v = b.bitcast(v, int_ty(bitwidth));
-          v = b.zext(int_ty(bitsPerVecElem), v);
-        });
-      }
-      for (int i = 0; i < regDim; i += elemsPerVec) {
-        auto slice = ArrayRef<Value>(inVals).slice(i, elemsPerVec);
-        Value v = packLLVector(loc, slice, rewriter);
-        v = b.bitcast(v, i32_ty);
-        packedVals.emplace_back(v);
+      if (bitwidth == 8 && bitsPerVecElem == 16) {
+        // TODO: Can remove `if` part of `if-else` once ptxas bugfix lands.
+        for (int i = 0; i < regDim; i += elemsPerVec) {
+          Value x0 = b.zext(i32_ty, b.bitcast(inVals[i], int_ty(bitwidth)));
+          Value x1 = b.zext(i32_ty, b.bitcast(inVals[i + 1], int_ty(bitwidth)));
+          x1 = b.shl(x1, b.i32_val(16));
+          packedVals.emplace_back(b.or_(x0, x1));
+        }
+      } else {
+        if (bitwidth < bitsPerVecElem) {
+          for (Value &v : inVals) {
+            if (elemTy != int_ty(bitwidth))
+              v = b.bitcast(v, int_ty(bitwidth));
+            v = b.zext(int_ty(bitsPerVecElem), v);
+          }
+        }
+        for (int i = 0; i < regDim; i += elemsPerVec) {
+          auto slice = ArrayRef<Value>(inVals).slice(i, elemsPerVec);
+          Value v = packLLVector(loc, slice, rewriter);
+          v = b.bitcast(v, i32_ty);
+          packedVals.emplace_back(v);
+        }
       }
       inVals = std::move(packedVals);
     }
@@ -393,11 +402,11 @@ struct ConvertLayoutOpConversion
         unpackedVals.append(unpacked.begin(), unpacked.end());
       }
       if (bitwidth < bitsPerVecElem) {
-        llvm::for_each(unpackedVals, [&](Value &v) {
+        for (Value &v : unpackedVals) {
           v = b.trunc(int_ty(bitwidth), v);
           if (elemTy != int_ty(bitwidth))
             v = b.bitcast(v, elemTy);
-        });
+        }
       }
       outVals = std::move(unpackedVals);
     }

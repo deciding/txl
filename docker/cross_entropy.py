@@ -3,7 +3,7 @@ import pathlib
 local_dir = pathlib.Path(__file__).parent
 root_dir = local_dir.parent
 requirements_file = root_dir / "requirements.txt"
-txl_wheel_file = local_dir / "txl-3.4.0-cp312-cp312-linux_x86_64.whl"
+txl_wheel_file = local_dir / "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
 
 test_file = root_dir / "python" / "txl" / "tutorials" / "04-softmax.py"
 
@@ -18,7 +18,7 @@ txl_image = (
     .pip_install_from_requirements(requirements_file) # local file not remote file
     .pip_install("quack-kernels==0.1.11")
     .run_commands(
-        "pip install /workspace/txl-3.4.0-cp312-cp312-linux_x86_64.whl",
+        "pip install /workspace/txl-3.5.1-cp312-cp312-linux_x86_64.whl",
     )
     .add_local_file(test_file, remote_path="/workspace/test_txl.py", copy=False) # copy after image build, no need rebuild
 )

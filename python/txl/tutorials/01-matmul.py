@@ -32,7 +32,48 @@ from triton.tools.tensor_descriptor import TensorDescriptor
 from contextlib import contextmanager
 
 from typing import Optional
-import txl
+try:
+    import txl
+    Has_TXL = True
+    from triton.tools.tensor_descriptor import TensorDescriptor
+    DEVICE = triton.runtime.driver.active.get_active_torch_device()
+
+    # profile
+    import triton.profiler.language as pl
+    import triton.profiler as proton
+    from txl.language.semantic import TXLSemantic
+
+    pl.enable_semantic("triton")
+    pl.enable_semantic_obj(TXLSemantic)
+
+
+    print("TXL")
+except:
+    class txl:
+        class Config:
+            def __init__ (
+                self,
+                config,
+                num_stages=1,
+                num_warps=1,
+                num_warpgroups=1,
+                pre_hook=None,
+                ):
+                pass
+
+        @staticmethod
+        def jit(use_txl=False, diff_mode='ttir', diff_select=-1, log_dir='', src_file='', launch_metadata=None):
+            def decorator(func):
+                return func
+            return decorator
+        @staticmethod
+        def autotune(configs=[], key='', use_cuda_graph=False):
+            def decorator(func):
+                return func
+            return decorator
+    Has_TXL = False
+    DEVICE = torch.device('cuda:0')
+    print("No txl")
 
 if torch.cuda.is_available():
     from triton._C.libtriton import nvidia
@@ -117,8 +158,8 @@ def matmul_get_naive_configs(pre_hook=None):
     configs=matmul_get_naive_configs(pre_hook=matmul_tma_set_block_size_hook),
     key=["M", "N", "K", "WARP_SPECIALIZE"],
 )
-#@triton.jit(launch_metadata=_matmul_launch_metadata)
-@txl.jit(launch_metadata=_matmul_launch_metadata)
+@triton.jit(launch_metadata=_matmul_launch_metadata)
+#@txl.jit(launch_metadata=_matmul_launch_metadata)
 #@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
 def matmul_kernel_tma(a_desc, b_desc, c_desc,  #
                       M, N, K,  #
@@ -633,7 +674,7 @@ def matmul(a, b):
     )
     return c
 
-@triton.autotune(
+@txl.autotune(
     configs=[
         triton.Config({
             'BLOCK_SIZE_M': 128,
@@ -2036,6 +2077,252 @@ def matmul_tma_ws_persistent_txl_newws(a, b):
 # END OF TXL
 ##########################################
 
+def matmul_tma_persistent_get_configs(pre_hook=None):
+    return [
+        triton.Config(
+            {
+                'BLOCK_SIZE_M': BM, 'BLOCK_SIZE_N': BN, "BLOCK_SIZE_K": BK, "GROUP_SIZE_M": 8, "EPILOGUE_SUBTILE":
+                SUBTILE
+            }, num_stages=s, num_warps=w, pre_hook=pre_hook)  #
+        for BM in [128]  #
+        #for BN in [128, 256]  #
+        for BN in [256]  #
+        #for BK in [64, 128]  #
+        for BK in [64]  #
+        #for s in ([2, 3, 4])  #
+        for s in ([3])  #
+        #for w in [4, 8]  #
+        for w in [8]  #
+        #for SUBTILE in [True, False]  #
+        for SUBTILE in [False]  #
+    ]
+
+
+@triton.autotune(
+    configs=matmul_tma_persistent_get_configs(pre_hook=matmul_tma_set_block_size_hook),
+    key=["M", "N", "K", "WARP_SPECIALIZE"],
+)
+@triton.jit(launch_metadata=_matmul_launch_metadata)
+def matmul_kernel_tma_persistent(a_desc, b_desc, c_desc,  #
+                                 M, N, K,  #
+                                 BLOCK_SIZE_M: tl.constexpr,  #
+                                 BLOCK_SIZE_N: tl.constexpr,  #
+                                 BLOCK_SIZE_K: tl.constexpr,  #
+                                 GROUP_SIZE_M: tl.constexpr,  #
+                                 FP8_OUTPUT: tl.constexpr,  #
+                                 EPILOGUE_SUBTILE: tl.constexpr,  #
+                                 NUM_SMS: tl.constexpr,  #
+                                 WARP_SPECIALIZE: tl.constexpr,  #
+                                 ):
+    dtype = tl.float8e4nv if FP8_OUTPUT else tl.float16
+    start_pid = tl.program_id(axis=0)
+    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
+    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
+    k_tiles = tl.cdiv(K, BLOCK_SIZE_K)
+    num_tiles = num_pid_m * num_pid_n
+
+    tile_id_c = start_pid - NUM_SMS
+    num_pid_in_group = GROUP_SIZE_M * num_pid_n
+
+    # Enable warp specialization to leverage async warp scheduling in the GPU.
+    # FIXME: This only works on Blackwell right now. On older GPUs, this will
+    # use software pipelining.
+    for tile_id in tl.range(start_pid, num_tiles, NUM_SMS, flatten=True, warp_specialize=WARP_SPECIALIZE):
+        pid_m, pid_n = _compute_pid(tile_id, num_pid_in_group, num_pid_m, GROUP_SIZE_M, NUM_SMS)
+        offs_am = pid_m * BLOCK_SIZE_M
+        offs_bn = pid_n * BLOCK_SIZE_N
+
+        accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+        for ki in range(k_tiles):
+            offs_k = ki * BLOCK_SIZE_K
+            a = a_desc.load([offs_am, offs_k])
+            b = b_desc.load([offs_bn, offs_k])
+            accumulator = tl.dot(a, b.T, accumulator)
+
+        tile_id_c += NUM_SMS
+        pid_m, pid_n = _compute_pid(tile_id_c, num_pid_in_group, num_pid_m, GROUP_SIZE_M, NUM_SMS)
+        offs_am_c = pid_m * BLOCK_SIZE_M
+        offs_bn_c = pid_n * BLOCK_SIZE_N
+
+        # Epilogue subtiling is a technique to break our computation and stores into multiple pieces
+        # By subtiling we can reduce shared memory consumption by the epilogue and instead use that
+        # memory to increase our stage count.
+        # In this case we partition the accumulator into 2 BLOCK_SIZE_M x BLOCK_SIZE_N // 2 tensors
+        if EPILOGUE_SUBTILE:
+            acc = tl.reshape(accumulator, (BLOCK_SIZE_M, 2, BLOCK_SIZE_N // 2))
+            acc = tl.permute(acc, (0, 2, 1))
+            acc0, acc1 = tl.split(acc)
+            c0 = acc0.to(dtype)
+            c_desc.store([offs_am_c, offs_bn_c], c0)
+            c1 = acc1.to(dtype)
+            c_desc.store([offs_am_c, offs_bn_c + BLOCK_SIZE_N // 2], c1)
+        else:
+            accumulator = accumulator.to(dtype)
+            c_desc.store([offs_am_c, offs_bn_c], accumulator)
+
+def matmul_tma_persistent(a, b, warp_specialize: bool=True):
+    # Check constraints.
+    assert a.shape[1] == b.shape[1], "Incompatible dimensions"  # b is transposed
+    assert a.dtype == b.dtype, "Incompatible dtypes"
+
+    M, K = a.shape
+    N, K = b.shape
+    dtype = a.dtype
+
+    c = torch.empty((M, N), device=a.device, dtype=dtype)
+
+    NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
+
+    # A dummy block value that will be overwritten when we have the real block size
+    dummy_block = [1, 1]
+    a_desc = TensorDescriptor(a, a.shape, a.stride(), dummy_block)
+    b_desc = TensorDescriptor(b, b.shape, b.stride(), dummy_block)
+    c_desc = TensorDescriptor(c, c.shape, c.stride(), dummy_block)
+
+    def grid(META):
+        nonlocal a_desc, b_desc, c_desc
+        BLOCK_M = META["BLOCK_SIZE_M"]
+        BLOCK_N = META["BLOCK_SIZE_N"]
+        return (min(
+            NUM_SMS,
+            triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N),
+        ), )
+
+    matmul_kernel_tma_persistent[grid](
+        a_desc, b_desc, c_desc,  #
+        M, N, K,  #
+        FP8_OUTPUT=dtype == torch.float8_e4m3fn,  #
+        NUM_SMS=NUM_SMS,  #
+        WARP_SPECIALIZE=warp_specialize,  #
+    )
+    return c
+
+def get_cuda_autotune_config():
+    return [
+        triton.Config({'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 256, 'BLOCK_SIZE_K': 64, 'GROUP_SIZE_M': 8}, num_stages=1,
+                      num_warps=8),
+        ]
+@triton.autotune(
+    configs=get_cuda_autotune_config(),
+    key=['M', 'N', 'K'],
+)
+@triton.jit
+def matmul_kernel1(
+        # Pointers to matrices
+        a_ptr, b_ptr, c_ptr,
+        # Matrix dimensions
+        M, N, K,
+        # The stride variables represent how much to increase the ptr by when moving by 1
+        # element in a particular dimension. E.g. `stride_am` is how much to increase `a_ptr`
+        # by to get the element one row down (A has M rows).
+        stride_am, stride_ak,  #
+        stride_bk, stride_bn,  #
+        stride_cm, stride_cn,
+        # Meta-parameters
+        BLOCK_SIZE_M: tl.constexpr, BLOCK_SIZE_N: tl.constexpr, BLOCK_SIZE_K: tl.constexpr,  #
+        GROUP_SIZE_M: tl.constexpr,  #
+        ACTIVATION: tl.constexpr  #
+):
+    """Kernel for computing the matmul C = A x B.
+    A has shape (M, K), B has shape (K, N) and C has shape (M, N)
+    """
+    # -----------------------------------------------------------
+    # Map program ids `pid` to the block of C it should compute.
+    # This is done in a grouped ordering to promote L2 data reuse.
+    # See above `L2 Cache Optimizations` section for details.
+    pid = tl.program_id(axis=0)
+
+    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
+    #num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
+    #num_pid_in_group = GROUP_SIZE_M * num_pid_n
+    #group_id = pid // num_pid_in_group
+    #first_pid_m = group_id * GROUP_SIZE_M
+    #group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+    #pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+    #pid_n = (pid % num_pid_in_group) // group_size_m
+
+    pid_m = pid % num_pid_m
+    pid_n = pid // num_pid_m
+
+    # -----------------------------------------------------------
+    # Add some integer bound assumptions.
+    # This helps to guide integer analysis in the backend to optimize
+    # load/store offset address calculation
+    #tl.assume(pid_m >= 0)
+    #tl.assume(pid_n >= 0)
+    #tl.assume(stride_am > 0)
+    #tl.assume(stride_ak > 0)
+    #tl.assume(stride_bn > 0)
+    #tl.assume(stride_bk > 0)
+    #tl.assume(stride_cm > 0)
+    #tl.assume(stride_cn > 0)
+
+    # ----------------------------------------------------------
+    # Create pointers for the first blocks of A and B.
+    # We will advance this pointer as we move in the K direction
+    # and accumulate
+    # `a_ptrs` is a block of [BLOCK_SIZE_M, BLOCK_SIZE_K] pointers
+    # `b_ptrs` is a block of [BLOCK_SIZE_K, BLOCK_SIZE_N] pointers
+    # See above `Pointer Arithmetic` section for details
+    offs_am = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M
+    offs_bn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
+    offs_k = tl.arange(0, BLOCK_SIZE_K)
+    a_ptrs = a_ptr + (offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak)
+    b_ptrs = b_ptr + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
+
+    # -----------------------------------------------------------
+    # Iterate to compute a block of the C matrix.
+    # We accumulate into a `[BLOCK_SIZE_M, BLOCK_SIZE_N]` block
+    # of fp32 values for higher accuracy.
+    # `accumulator` will be converted back to fp16 after the loop.
+    accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+    for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
+        # Load the next block of A and B, generate a mask by checking the K dimension.
+        # If it is out of bounds, set it to 0.
+        #a = tl.load(a_ptrs, mask=offs_k[None, :] < K - k * BLOCK_SIZE_K, other=0.0)
+        #b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_SIZE_K, other=0.0)
+        a = tl.load(a_ptrs)
+        b = tl.load(b_ptrs)
+        # We accumulate along the K dimension.
+        accumulator = tl.dot(a, b, accumulator)
+        # Advance the ptrs to the next K block.
+        a_ptrs += BLOCK_SIZE_K * stride_ak
+        b_ptrs += BLOCK_SIZE_K * stride_bk
+    # You can fuse arbitrary activation functions here
+    # while the accumulator is still in FP32!
+    #if ACTIVATION == "leaky_relu":
+    #    accumulator = leaky_relu(accumulator)
+    c = accumulator.to(tl.float16)
+
+    # -----------------------------------------------------------
+    # Write back the block of the output matrix C with masks.
+    offs_cm = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+    offs_cn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
+    c_ptrs = c_ptr + stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
+    #c_mask = (offs_cm[:, None] < M) & (offs_cn[None, :] < N)
+    #tl.store(c_ptrs, c, mask=c_mask)
+    tl.store(c_ptrs, c)
+
+def matmul1(a, b, activation=""):
+    # Check constraints.
+    assert a.shape[1] == b.shape[0], "Incompatible dimensions"
+    assert a.is_contiguous(), "Matrix A must be contiguous"
+    M, K = a.shape
+    K, N = b.shape
+    # Allocates output.
+    c = torch.empty((M, N), device=a.device, dtype=torch.float16)
+    # 1D launch kernel where each block gets its own program.
+    grid = lambda META: (triton.cdiv(M, META['BLOCK_SIZE_M']) * triton.cdiv(N, META['BLOCK_SIZE_N']), )
+    matmul_kernel1[grid](
+        a, b, c,  #
+        M, N, K,  #
+        a.stride(0), a.stride(1),  #
+        b.stride(0), b.stride(1),  #
+        c.stride(0), c.stride(1),  #
+        ACTIVATION=activation  #
+    )
+    return c
+
 def cublas_matmul(a, b):
     # Check constraints.
     assert a.shape[1] == b.shape[1], "Incompatible dimensions"  # b is transposed
@@ -2101,9 +2388,11 @@ def bench(K, dtype, reps=100, warmup_reps=25):
     #bench_fn("async_load_txl", reps, warmup_reps, matmul_async_load_txl, a, bn)
     #bench_fn("naive_tma_txl", reps, warmup_reps, matmul_naive_tma_txl, a, b) #0
     #bench_fn("tma_persistent_txl", reps, warmup_reps, matmul_tma_persistent_txl, a, b) #1
-    bench_fn("tma_ws_persistent_txl", reps, warmup_reps, matmul_tma_ws_persistent_txl, a, b) #2
+    #bench_fn("tma_ws_persistent_txl", reps, warmup_reps, matmul_tma_ws_persistent_txl, a, b) #2
     #bench_fn("tma_ws_persistent_txl_newws", reps, warmup_reps, matmul_tma_ws_persistent_txl_newws, a, b) #2
     #bench_fn("tma_ws_nn_persistent_txl", reps, warmup_reps, matmul_tma_ws_nn_persistent_txl, a, bn)
+
+    bench_fn("tma_persistent", reps, warmup_reps, matmul_tma_persistent, a, b) #2
     return
     warp_specialize = [False, True] if HAS_WARP_SPECIALIZE else [False]
     for ws in warp_specialize:
@@ -2153,10 +2442,13 @@ def validate(M, N, K, dtype, log=False):
 
     #run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
     #run_test(naive_result, lambda a, b: matmul_tma_persistent_txl(a, b), a, b, "TXL TMA Persistent", log=log)
-    run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
+    #run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
     #run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl_newws(a, b), a, b, "TXL TMA WS Persistent", log=True)
     #run_test(naive_result, lambda a, b: matmul_tma_ws_nn_persistent_txl(a, bn), a, bn, "TXL TMA WS NN Persistent", log=log)
     #run_test(naive_result, lambda a, b: matmul_separate_tma_txl(a, b), a, b, "TXL TMA split k", log=log)
+
+    #run_test(naive_result, lambda a, b: matmul_tma_persistent(a, b), a, b, "TMA Original Persistent", log=True)
+    run_test(naive_result, lambda a, b: matmul1(a, bn), a, bn, "Blackwell simple matmul", log=True)
 
     return
 
@@ -2197,7 +2489,7 @@ def profile(M, N, K, dtype, log=False):
     print(matmul_tma_ws_persistent_txl(a, b))
 
 
-if __name__ == "__main__":
+def test_matmul(dump_dir=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("-K", type=int, required=False, default=512)
     parser.add_argument("--K_range", type=int, nargs=2)
@@ -2206,7 +2498,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     import os;print(os.getpid())
 
-    dump_dir='dump/1122newws/'
+    #dump_dir='dump/1122newws/'
     #dump_dir = None
 
     from triton import knobs
@@ -2236,7 +2528,7 @@ if __name__ == "__main__":
         validate(8192, 8192, args.K_range[0], dtype, log=True)
 
         #profile(8192, 8192, args.K_range[0], dtype)
-        #exit()
+        exit()
 
         proton.start("matmul", hook="triton")
         #proton.deactivate()
@@ -2244,3 +2536,6 @@ if __name__ == "__main__":
             bench(K, dtype)
         proton.finalize()
         show_profile(args.prec, "matmul")
+
+if __name__ == "__main__":
+    test_matmul()

@@ -138,6 +138,24 @@ def smem_store(smem, value, cta_id=-1, _semantic=None) -> None:
     return _semantic.smem_store(smem, value, cta_id)
 
 @builtin
+def tmem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, shared_enc=None, _semantic=None) -> tl.tensor:
+    #shape = _shape_check_impl(shape)
+    dtype = _unwrap_if_constexpr(dtype)
+    num_stages = _unwrap_if_constexpr(num_stages)
+    mutable = _unwrap_if_constexpr(mutable)
+    return _semantic.tmem_alloc(shape, dtype, num_stages, mutable, shared_enc)
+
+@builtin
+def tmem_load(smem, cta_id=-1, _semantic=None) -> tl.tensor:
+    cta_id = _unwrap_if_constexpr(cta_id)
+    return _semantic.tmem_load(smem, cta_id)
+
+@builtin
+def tmem_store(smem, value, cta_id=-1, _semantic=None) -> None:
+    cta_id = _unwrap_if_constexpr(cta_id)
+    return _semantic.tmem_store(smem, value, cta_id)
+
+@builtin
 def frag_smem_load(smem, shape, layout, other=None, pred=None, is_broadcast=False, cta_id=-1, _semantic=None) -> tl.tensor:
     """
     load a fragment of the whole smem. can fill the others for full layout of distributed tensor.

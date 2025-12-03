@@ -15,6 +15,7 @@
 //#include "triton/Dialect/Triton/IR/Dialect.h.inc"
 #include "triton/Dialect/Triton/IR/OpInterfaces.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "txl/Dialect/TXL/IR/OpsEnums.h.inc"
 #include "triton/Dialect/Triton/IR/Traits.h"
 #include "triton/Dialect/Triton/IR/Types.h"

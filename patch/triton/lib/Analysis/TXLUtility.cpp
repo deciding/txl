@@ -4,6 +4,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -15,10 +16,13 @@
 
 #include "triton/Analysis/TXLUtility.h"
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
+#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
+#include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/TritonGPUInterfaces.h"
 
 namespace ttg = mlir::triton::gpu;
+namespace ttng = mlir::triton::nvidia_gpu;
 
 namespace mlir::triton{
 
@@ -323,5 +327,92 @@ std::string printModuleOp(ModuleOp &mod) {
  return str;
 }
 
+Operation* isFromTmemAlloc(Value v) {
+  // Follow the chain backward until we reach a non-bypassable source.
+  while (true) {
+    // Block argument → cannot come from TmemAllocOp.
+    if (isa<BlockArgument>(v)) {
+      auto blockArg = dyn_cast<BlockArgument>(v);
+      auto *parentBlock = blockArg.getOwner();
+      auto parentOp = parentBlock->getParentOp();
+
+      if (auto forOp = dyn_cast<scf::ForOp>(parentOp)) {
+          unsigned idx = blockArg.getArgNumber();
+          // Only iter_args produce block args (skip induction var at position 0)
+          if (idx > 0) {
+              v = forOp.getInitArgs()[idx - 1];
+          }
+      }
+    }
+
+    Operation *op = v.getDefiningOp();
+    if (!op)
+      return nullptr;
+
+    // Direct allocation source.
+    if (isa<TmemAllocOp>(op) || isa<ttng::TMEMAllocOp>(op)) {
+      return op;
+    }
+
+    // Bypassable ops: follow their source operand.
+    if (auto getBuf = dyn_cast<GetBufferOp>(op)) {
+      v = getBuf.getSrc();
+      continue;
+    }
+
+    if (auto idx = dyn_cast<SmemIndexOp>(op)) {
+      v = idx.getSrc();
+      continue;
+    }
+
+    if (auto subslice = dyn_cast<SmemSubsliceOp>(op)) {
+      v = subslice.getSrc();
+      continue;
+    }
+
+    if (auto trans = dyn_cast<SmemTransOp>(op)) {
+      v = trans.getSrc();
+      continue;
+    }
+
+    if (auto reshape = dyn_cast<SmemReshapeOp>(op)) {
+      v = reshape.getSrc();
+      continue;
+    }
+
+    if (auto idx = dyn_cast<ttg::MemDescIndexOp>(op)) {
+      v = idx.getSrc();
+      continue;
+    }
+
+    if (auto subslice = dyn_cast<ttg::MemDescSubsliceOp>(op)) {
+      v = subslice.getSrc();
+      continue;
+    }
+
+    if (auto trans = dyn_cast<ttg::MemDescTransOp>(op)) {
+      v = trans.getSrc();
+      continue;
+    }
+
+    if (auto reshape = dyn_cast<ttg::MemDescReshapeOp>(op)) {
+      v = reshape.getSrc();
+      continue;
+    }
+
+    if (auto convert = dyn_cast<ttg::ConvertLayoutOp>(op)) {
+      v = convert.getSrc();
+      continue;
+    }
+
+    if (auto localLoad = dyn_cast<ttg::LocalLoadOp>(op)) {
+      v = localLoad.getSrc();
+      continue;
+    }
+
+    // Any other op: chain breaks.
+    return nullptr;
+  }
+}
 
 }

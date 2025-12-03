@@ -145,6 +145,24 @@ class TXLSemantic(TritonSemantic):
         assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
         self.builder.create_smem_store(mem_desc.handle, value.handle, cta_id)
 
+    def tmem_alloc(self, shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, shared_enc=None) -> TensorTy:
+        block_type = tl.block_type(dtype, shape)
+        dtype = dtype.to_ir(self.builder)
+        return self.tensor(
+            self.builder.create_tmem_alloc(shape, dtype, num_stages, mutable), block_type)
+
+    def tmem_load(self, mem_desc, cta_id:int=-1):
+        # TODO: check cta_id in boundary
+        ret_ty = tl.block_type(mem_desc.dtype, mem_desc.shape)
+        handle = self.builder.create_tmem_load(ret_ty.to_ir(self.builder), mem_desc.handle, cta_id)
+        return self.tensor(handle, ret_ty)
+
+    def tmem_store(self, mem_desc, value, cta_id:int=-1):
+        # TODO: check cta_id in boundary
+        assert value.shape == mem_desc.shape, f"source shape {value.shape} and destination shape {mem_desc.shape} must match"
+        assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
+        self.builder.create_tmem_store(mem_desc.handle, value.handle, cta_id)
+
     def frag_smem_load(self, mem_desc, shape, layout, other, pred, is_broadcast=False, cta_id:int=-1):
         partial_load = False
         for i, (s1, s2) in enumerate(zip(mem_desc.shape, shape)):

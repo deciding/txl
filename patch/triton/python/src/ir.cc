@@ -2053,6 +2053,25 @@ void init_triton_ir(py::module &&m) {
            [](TritonOpBuilder &self, Value smem, Value value, int ctaId) {
              self.create<tt::SmemStoreOp>(value, smem, ctaId);
            })
+      .def("create_tmem_alloc",
+           [](TritonOpBuilder &self,
+               std::vector<int64_t> &shape, Type &elementType, int32_t numStages, bool isMutable) -> Value {
+               auto tensorType = RankedTensorType::get(shape, elementType);
+               auto numStagesAttr = self.getBuilder().getI32IntegerAttr(numStages);
+               auto isMutableAttr = mlir::BoolAttr::get(self.getContext(), isMutable);
+               return self.create<mlir::triton::TmemAllocOp>(tensorType, numStagesAttr, isMutableAttr, nullptr, nullptr);
+           })
+      .def("create_tmem_load",
+           [](TritonOpBuilder &self, Type resultTy, Value smem, int ctaId) -> Value {
+             // TODO: no need specific regType actually, do the same for other SmemLoadOp
+             auto dummyType = RankedTensorType::get(
+               {1, 1}, self.getBuilder().getI32Type());
+             return self.create<tt::TmemLoadOp>(resultTy, smem, dummyType, ctaId);
+           })
+      .def("create_tmem_store",
+           [](TritonOpBuilder &self, Value smem, Value value, int ctaId) {
+             self.create<tt::TmemStoreOp>(value, smem, ctaId);
+           })
       .def("create_frag_smem_load",
            [](TritonOpBuilder &self, Type resultTy, Value smem,
                std::optional<Value>& other, std::optional<Value>& pred, Type regType, bool fullLayout,

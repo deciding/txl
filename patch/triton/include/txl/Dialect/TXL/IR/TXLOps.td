@@ -8,7 +8,8 @@ include "triton/Dialect/TritonGPU/IR/TritonGPUTypeInterfaces.td"
 include "txl/Dialect/TXL/IR/TXLAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
-include "/triton/Dialect/TritonGPU/IR/TritonGPUAttrDefs.td"
+include "triton/Dialect/TritonGPU/IR/TritonGPUAttrDefs.td"
+include "triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUAttrDefs.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td" // SymbolUserOpInterface
 include "mlir/IR/OpAsmInterface.td" // OpAsmOpInterface
@@ -153,6 +154,78 @@ def TXL_FragSmemStoreOp : TXL_Op<"frag_smem_store", [AttrSizedOperandSegments]> 
   let assemblyFormat = [{
     $src `,` $dst (`mbar` $mbar^)? (`pred` $pred^)? attr-dict `:`
     type($src) `(` $regType `)` `,` type($dst) (`,` type($mbar)^)? (`,` type($pred)^)?
+  }];
+}
+
+def TXL_TmemAllocOp : TXL_Op<"tmem_allocx", [
+                            DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+                            ]> {
+  let summary = "allocate tensor memory";
+  let description = [{
+    This operation allocates buffer in tensor memory and return a descriptor
+    containing the address and a view of the buffer.
+    This is similar to ttg.local_alloc except the buffer is allocated in tensor memory.
+
+    Explicitly deallocating a buffer is optional; see local_dealloc.
+  }];
+
+  let arguments = (ins
+    I32Attr:$numStages,
+    BoolAttr:$isMutable,
+    OptionalAttr<TTG_TensorMemoryEncodingAttr>:$sharedEnc,
+    OptionalAttr<DistributedEncodingTrait>:$distributedEnc
+  );
+
+  let results = (outs
+    TTG_TensorOrMemDesc:$result
+  );
+
+  let assemblyFormat = [{
+    attr-dict `:` functional-type(operands, results)
+  }];
+
+}
+
+def TXL_TmemLoadOp : TXL_Op<"tmem_loadx"> {
+  let summary = "Load a buffer from tensor memory into a distributed tensor";
+
+  let description = [{
+    This is similar to ttg.local_load except the result layout is restricted to only few possibility.
+    Therefore we cannot combine this op with any convert layout like local_load.
+
+    This operation takes and produces an optional token to indicate TMEM read
+    on its source operand. When the tokens are present, they can
+    be used to check aliasing and modref on the TMEM buffer.
+  }];
+  let arguments = (ins
+    Arg<TTG_TensorOrMemDesc, "", [MemRead]>:$src,
+    TypeAttr: $regType,
+    DefaultValuedAttr<I32Attr, "-1">: $ctaId
+  );
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = [{$src attr-dict `:` type($src) `->` type($result) `(` $regType `)` }];
+
+}
+
+def TXL_TmemStoreOp : TXL_Op<"tmem_storex"> {
+  let summary = "Store a distributed tensor into a buffer in tensor memory";
+
+  let description = [{
+    This is similar to ttg.local_store except the source layout is restricted to only few possibility.
+
+    This operation takes and produces an optional token to indicate TMEM write
+    on its source operand. When the tokens are present, they can
+    be used to check aliasing and modref on the TMEM buffer.
+  }];
+  let arguments = (ins
+    TT_Tensor:$src,
+    Arg<TTG_TensorOrMemDesc, "", [MemWrite]>:$dst,
+    DefaultValuedAttr<I32Attr, "-1">: $ctaId
+  );
+
+  let assemblyFormat = [{
+    $src `,` $dst attr-dict `:` type($src) `,` type($dst)
   }];
 }
 

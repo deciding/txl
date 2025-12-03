@@ -6,8 +6,10 @@
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "triton/Analysis/Utility.h"
+#include "triton/Analysis/TXLUtility.h"
 #include "triton/Conversion/MLIRTypes.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
@@ -536,7 +538,7 @@ public:
     auto instrShape = mmaVersionToInstrShape(
         versionMajor, retShapePerCTA, oldAType.getElementType(), numWarps);
     ArrayRef<unsigned> CTASplitNum = CTALayout.getCTASplitNum();
-    Attribute accEncoding = triton::nvidia_gpu::TensorMemoryEncodingAttr::get(
+    auto accEncoding = triton::nvidia_gpu::TensorMemoryEncodingAttr::get(
         context, instrShape[0], instrShape[1], /*unpacked=*/true,
         CTASplitNum[0], CTASplitNum[1]);
     Attribute tensorMemorySpace =
@@ -545,23 +547,35 @@ public:
         oldRetType.getShape(), oldRetType.getElementType(), accEncoding,
         tensorMemorySpace,
         /*mutableMemory=*/true);
-    Attribute newDistributedEncoding = nvidia_gpu::getTmemCompatibleLayout(
+    auto newDistributedEncoding = nvidia_gpu::getTmemCompatibleLayout(
         instrShape[0], instrShape[1], oldRetType, numWarps);
     auto newAccType = oldRetType.cloneWithEncoding(newDistributedEncoding);
-    Value cvtAcc =
-        rewriter.create<ConvertLayoutOp>(loc, newAccType, dotOp.getOperand(2));
+    auto acc = dotOp.getOperand(2);
+    Operation * tmemAllocOp = isFromTmemAlloc(acc);
+    assert(tmemAllocOp && "tcgen05 c must from tmem");
+    TmemAllocOp tmemAlloc = dyn_cast<TmemAllocOp>(tmemAllocOp);
+    tmemAlloc.setSharedEncAttr(accEncoding);
+    tmemAlloc.setDistributedEncAttr(newDistributedEncoding);
+    //Value cvtAcc =
+    //    rewriter.create<ConvertLayoutOp>(loc, newAccType, dotOp.getOperand(2));
     auto tokType = rewriter.getType<AsyncTokenType>();
-    auto acc = rewriter.create<triton::nvidia_gpu::TMEMAllocOp>(
-        loc, accMemDescType, tokType, cvtAcc);
+    //auto acc = rewriter.create<triton::nvidia_gpu::TMEMAllocOp>(
+    //    loc, accMemDescType, tokType, cvtAcc);
     auto vTrue = rewriter.create<arith::ConstantIntOp>(dotOp.getLoc(), 1, 1);
+
+    Value cvtAcc =
+        rewriter.create<ConvertLayoutOp>(loc, newAccType, acc);
+    auto accAlloc = rewriter.create<triton::nvidia_gpu::TMEMAllocOp>(loc, accMemDescType, tokType, cvtAcc);
+
     auto mma = rewriter.create<triton::nvidia_gpu::TCGen5MMAOp>(
-        loc, tokType, a, b, acc, acc.getToken(), /*useD=*/vTrue,
+        loc, tokType, a, b, accAlloc, Value(), /*useD=*/vTrue,
         /*pred=*/vTrue);
     mma.setTwoCtas(useTwoCTAs);
 
-    auto ld = rewriter.create<triton::nvidia_gpu::TMEMLoadOp>(
-        loc, newAccType, tokType, acc, /*dep=*/mma.getToken());
-    rewriter.replaceOpWithNewOp<ConvertLayoutOp>(dotOp, oldRetType, ld);
+    //auto ld = rewriter.create<triton::nvidia_gpu::TMEMLoadOp>(
+    //    loc, newAccType, tokType, acc, /*dep=*/mma.getToken());
+    //rewriter.replaceOpWithNewOp<ConvertLayoutOp>(dotOp, oldRetType, ld);
+    dotOp.replaceAllUsesWith(acc);
     return success();
   }
 };
@@ -783,12 +797,14 @@ static bool mmav2SupportsFp8Operands(int computeCapability) {
 // supported.
 static void decomposeMixedModeDotOp(ModuleOp mod, int computeCapability) {
   mod.walk([=](DotOp dotOp) -> void {
+    llvm::outs() << "\n1\n";
     auto D = dotOp.getD();
     OpBuilder builder(dotOp);
     Type AElType = dotOp.getA().getType().getElementType();
     Type promoteType;
     NvidiaMmaEncodingAttr mmaLayout =
         dyn_cast<NvidiaMmaEncodingAttr>(D.getType().getEncoding());
+    llvm::outs() << "\n2\n";
     if (mmaLayout) {
       bool isNativeFP8 = llvm::isa<Float8E5M2Type, Float8E4M3FNType>(AElType);
       // promote to f16 unless there's hardware support for fp8 operands
@@ -805,11 +821,13 @@ static void decomposeMixedModeDotOp(ModuleOp mod, int computeCapability) {
         return;
       promoteType = DElType;
     }
+    llvm::outs() << "\n3\n";
     Location loc = dotOp.getLoc();
     Value promotedA = promoteOperand(builder, loc, dotOp.getA(), promoteType);
     Value promotedB = promoteOperand(builder, loc, dotOp.getB(), promoteType);
     dotOp.setOperand(0, promotedA);
     dotOp.setOperand(1, promotedB);
+    llvm::outs() << "\n4\n";
   });
 }
 

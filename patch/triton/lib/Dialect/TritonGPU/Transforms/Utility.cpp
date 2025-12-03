@@ -1614,7 +1614,7 @@ bool comesFromLoadOrBlockArg(Value v) {
   // If this is problematic we can totally drop them
   //return isa<BlockArgument>(v) ||
   return       (v.getDefiningOp() &&
-          isa<SmemAllocOp, LoadOp, DescriptorLoadOp, DescriptorGatherOp>(v.getDefiningOp())); // txl
+          isa<SmemAllocOp, TmemAllocOp, LoadOp, DescriptorLoadOp, DescriptorGatherOp>(v.getDefiningOp())); // txl
 }
 
 SmallVector<Value> getTiedArgs(Operation *op, int resultIdx) {

@@ -34,4 +34,6 @@ std::string printModuleOp(ModuleOp &mod);
 
 void changeForOpArgType(scf::ForOp forOp, unsigned int opNum, Type newType);
 
+Operation* isFromTmemAlloc(Value v);
+
 }

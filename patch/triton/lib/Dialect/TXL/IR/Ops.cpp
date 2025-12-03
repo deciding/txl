@@ -26,6 +26,13 @@ void MbarAllocOp::getEffects(
                          SideEffects::DefaultResource::get());
 }
 
+void TmemAllocOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+    effects.emplace_back(MemoryEffects::Write::get(),
+                         SideEffects::DefaultResource::get());
+}
+
 LogicalResult
 TmaGatherOp::verifyResultType(Operation *op,
                                                  mlir::ShapedType type) {

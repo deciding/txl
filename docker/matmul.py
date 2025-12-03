@@ -3,23 +3,32 @@ import pathlib
 local_dir = pathlib.Path(__file__).parent
 root_dir = local_dir.parent
 requirements_file = root_dir / "requirements.txt"
+
+#txl
 #txl_wheel_file = local_dir / "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
 
 test_file = root_dir / "python" / "txl" / "tutorials" / "01-matmul.py"
 
-app = App(name="txl-matmul")  # Note: this is optional since Modal 0.57
-volume = Volume.from_name("txl-matmul-dump", create_if_missing=True) # create a cloud volume to store compiled dump files
+# txl
+#app = App(name="txl-matmul")  # Note: this is optional since Modal 0.57
+#volume = Volume.from_name("txl-matmul-dump", create_if_missing=True) # create a cloud volume to store compiled dump files
+# triton
+app = App(name="triton-matmul")  # Note: this is optional since Modal 0.57
+volume = Volume.from_name("triton-matmul-dump", create_if_missing=True) # create a cloud volume to store compiled dump files
 
 txl_image = (
     Image.debian_slim(python_version="3.12")
     #Image.from_dockerfile(path="./Dockerfile")
     .workdir("/workspace")
+    # txl
     #.add_local_file(txl_wheel_file, remote_path="/workspace/", copy=True) # copy the local code to the image
     .run_commands( "ls .")
     .pip_install_from_requirements(requirements_file) # local file not remote file
+    # txl
     #.run_commands(
     #    "pip install /workspace/txl-3.5.1-cp312-cp312-linux_x86_64.whl",
     #)
+    # triton
     .pip_install("triton==3.5.1")
     .env({
         "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib"

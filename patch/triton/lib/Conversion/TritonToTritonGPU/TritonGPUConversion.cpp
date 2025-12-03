@@ -140,6 +140,18 @@ TritonGPUConversionTarget::TritonGPUConversionTarget(
         }
         return false;
   });
+  addDynamicallyLegalOp<triton::TmemLoadOp>([&](triton::TmemLoadOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
+  addDynamicallyLegalOp<triton::TmemStoreOp>([&](triton::TmemStoreOp op) -> bool {
+        if (typeConverter.isLegal(op)) {
+          return true;
+        }
+        return false;
+  });
   addDynamicallyLegalOp<triton::RelayoutOp>([&](triton::RelayoutOp op) -> bool {
         if (typeConverter.isLegal(op)) {
           return true;

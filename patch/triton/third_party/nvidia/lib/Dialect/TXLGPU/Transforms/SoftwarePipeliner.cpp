@@ -3,6 +3,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -350,6 +351,28 @@ static Value createAlloc(Operation* loadOp, int numStages,
   return alloc;
 }
 
+Value createTMemAllocTXL(tt::TmemAllocOp tmemAllocOp) {
+  OpBuilder builder(tmemAllocOp);
+  Location loc = tmemAllocOp.getLoc();
+  auto context = builder.getContext();
+  auto oldRetType = tmemAllocOp.getType();
+  SmallVector<int64_t> shape = {oldRetType.getShape().begin(),
+                                oldRetType.getShape().end()};
+  shape.insert(shape.begin(), tmemAllocOp.getNumStages());
+  Attribute tensorMemorySpace =
+      triton::nvidia_gpu::TensorMemorySpaceAttr::get(context);
+  auto sharedEnc = tmemAllocOp.getSharedEncAttr();
+  auto distributedEnc = tmemAllocOp.getDistributedEncAttr();
+  Type accMemDescType = triton::gpu::MemDescType::get(
+      shape, oldRetType.getElementType(), sharedEnc,
+      tensorMemorySpace, /*mutableMemory=*/true);
+  auto allocOp = builder.create<ttng::TMEMAllocOp>(
+      tmemAllocOp.getLoc(), accMemDescType,
+      builder.getType<gpu::AsyncTokenType>(), /*src=*/Value());
+  allocOp->setAttr("distributed_encoding", distributedEnc);
+  return allocOp.getResult();
+}
+
 // Create an allocation and init the mbarriers.
 Value createBarrierAlloc(tt::MbarAllocOp& mbarAllocOp) {
   ImplicitLocOpBuilder rewriter(mbarAllocOp->getLoc(), mbarAllocOp);
@@ -455,6 +478,12 @@ void replaceSmemBufferUses(
         }
         else if (auto smemStoreOp = dyn_cast<tt::SmemStoreOp>(user)) {
             smemStoreOp->setOperand(1, newView);
+        }
+        else if (auto tmemLoadOp = dyn_cast<tt::TmemLoadOp>(user)) {
+            tmemLoadOp->setOperand(0, newView);
+        }
+        else if (auto tmemStoreOp = dyn_cast<tt::TmemStoreOp>(user)) {
+            tmemStoreOp->setOperand(1, newView);
         }
         else if (auto fragSmemLoadOp = dyn_cast<tt::FragSmemLoadOp>(user)) {
             fragSmemLoadOp->setOperand(0, newView);
@@ -601,6 +630,33 @@ void lowerMbar(tt::MbarAllocOp& op) {
     //builder.create<ttg::LocalDeallocOp>(loc, barrierAlloc);
 }
 
+void lowerTmemAlloc(tt::TmemAllocOp op){
+    //auto sharedEnc = getSharedEncodingTXL(op);
+    // this local_alloc is bind with this smem_alloc
+    auto alloc = createTMemAllocTXL(op);
+    // these loads/tma_loads binds with local_alloc
+    // TODO: add loads
+    auto getBufferOps = getSmemAllocUsers<tt::GetBufferOp>(op);
+    assert(isa<triton::gpu::MemDescType>(alloc.getType()) &&
+           "Expected MemDescType");
+    auto allocDescType = cast<triton::gpu::MemDescType>(alloc.getType());
+
+    Value buffer;
+    for (auto getBufferOp : getBufferOps){
+        buffer = lowerGetBufferOp(getBufferOp, alloc);
+        replaceSmemBufferUses(getBufferOp, buffer, allocDescType);
+        getBufferOp->erase();
+    }
+    replaceSmemBufferUses(op, alloc, allocDescType);
+    op->erase();
+
+    // for remaining MbarAllocOp
+    // create new barriers
+    // lower all barrier usages
+    // remove all tt barrier ops
+        
+}
+
 void lowerSmemLoad(tt::SmemLoadOp& op) {
     OpBuilder builder(op);
     Value localLoad = builder.create<ttg::LocalLoadOp>(
@@ -690,6 +746,70 @@ void lowerFragSmemStore(tt::FragSmemStoreOp& op) {
     op->erase();
 }
 
+void lowerTmemLoad(tt::TmemLoadOp& op) {
+    llvm::outs() << "\n TmemLoadOp\n";
+    OpBuilder builder(op);
+    Operation* tmemAllocOp = isFromTmemAlloc(op->getOperand(0));
+    llvm::outs() << "\n TmemLoadOp1\n";
+    assert(tmemAllocOp && "tmem_load must be from tmem_alloc");
+    auto tmemAlloc = dyn_cast<ttng::TMEMAllocOp>(tmemAllocOp);
+    assert(tmemAlloc && "tmem_alloc lowering assumed to be finished");
+    llvm::outs() << "\n TmemLoadOp11\n";
+    llvm::outs() << tmemAlloc;
+    RankedTensorType oldRetType = op.getType();
+    llvm::outs() << "\n TmemLoadOp12\n";
+    auto encoding = tmemAlloc->getAttr("distributed_encoding");
+    llvm::outs() << "\n TmemLoadOp13\n";
+    llvm::outs() << encoding;
+    assert(encoding && "tmem_alloc must have encoding inferred from dot");
+    auto newAccType = oldRetType.cloneWithEncoding(encoding);
+    llvm::outs() << "\n TmemLoadOp2\n";
+    auto tokType = builder.getType<AsyncTokenType>();
+    auto ld = builder.create<ttng::TMEMLoadOp>(
+        op->getLoc(), newAccType, tokType, op->getOperand(0), Value());
+    llvm::outs() << "\n TmemLoadOp3\n";
+    int ctaIdAttr = op.getCtaId();
+    if (ctaIdAttr != -1)
+        ld->setAttr("ttxg.ctaid",
+                       mlir::IntegerAttr::get(builder.getI32Type(), ctaIdAttr));
+    //tt::replaceUsesAndPropagateType(builder, op, localLoad);
+    replaceAndPropagate(op, ld);
+    llvm::outs() << "\n TmemLoadOp4\n";
+    op->erase();
+    llvm::outs() << "\n TmemLoadOp Done\n";
+}
+
+void lowerTmemStore(tt::TmemStoreOp& op) {
+    llvm::outs() << "\n TmemStoreOp\n";
+    OpBuilder builder(op);
+    auto tokType = builder.getType<AsyncTokenType>();
+    Value vTrue = builder.create<arith::ConstantIntOp>(op->getLoc(), 1, 1);
+
+    Operation* tmemAllocOp = isFromTmemAlloc(op->getOperand(1));
+    assert(tmemAllocOp && "tmem_load must be from tmem_alloc");
+    auto tmemAlloc = dyn_cast<ttng::TMEMAllocOp>(tmemAllocOp);
+    assert(tmemAlloc && "tmem_alloc lowering assumed to be finished");
+
+    auto oldRetTypeTy = op.getOperand(0).getType();
+    RankedTensorType oldRetType = dyn_cast<RankedTensorType>(oldRetTypeTy);
+    assert(oldRetType && "tmem_store src must be ranked tensor");
+
+    auto encoding = tmemAlloc->getAttr("distributed_encoding");
+    assert(encoding && "tmem_alloc must have encoding inferred from dot");
+    auto newAccType = oldRetType.cloneWithEncoding(encoding);
+
+    Value src =
+        builder.create<ConvertLayoutOp>(op->getLoc(), newAccType, op.getOperand(0));
+    auto tmemStore = builder.create<ttng::TMEMStoreOp>(
+        op.getLoc(), tokType, op->getOperand(1), Value(), src, vTrue);
+    int ctaIdAttr = op.getCtaId();
+    if (ctaIdAttr != -1)
+        tmemStore->setAttr("ttxg.ctaid",
+                       mlir::IntegerAttr::get(builder.getI32Type(), ctaIdAttr));
+    op->erase();
+    llvm::outs() << "\n TmemStoreOp Done\n";
+}
+
 void lowerSmemLoadStores(ModuleOp moduleOp) {
   moduleOp->walk([&](tt::SmemLoadOp op) {
       lowerSmemLoad(op);
@@ -702,6 +822,12 @@ void lowerSmemLoadStores(ModuleOp moduleOp) {
   });
   moduleOp->walk([&](tt::FragSmemStoreOp op) {
       lowerFragSmemStore(op);
+  });
+  moduleOp->walk([&](tt::TmemLoadOp op) {
+      lowerTmemLoad(op);
+  });
+  moduleOp->walk([&](tt::TmemStoreOp op) {
+      lowerTmemStore(op);
   });
 }
 
@@ -1154,6 +1280,59 @@ void lowerMbars(ModuleOp moduleOp) {
   }
 }
 
+void lowerTmemAllocs(ModuleOp moduleOp) {
+  SmallVector<tt::TmemAllocOp> tmemAllocs;
+
+  moduleOp->walk([&](tt::TmemAllocOp tmemAllocOp) { tmemAllocs.push_back(tmemAllocOp); });
+  if (tmemAllocs.empty())
+    return;
+  for (auto tmemAllocOp : tmemAllocs) {
+    lowerTmemAlloc(tmemAllocOp);
+  }
+}
+
+void removeRedundantTMEMAllocs(ModuleOp moduleOp) {
+  SmallVector<ttng::TMEMAllocOp> tmemAllocs;
+
+  moduleOp->walk([&](ttng::TMEMAllocOp tmemAllocOp) { tmemAllocs.push_back(tmemAllocOp); });
+  if (tmemAllocs.empty())
+    return;
+  for (auto tmemAllocOp : tmemAllocs) {
+      Value src = tmemAllocOp.getSrc();
+      if (src) {
+        auto srcTMEMAllocOp = isFromTmemAlloc(src);
+        if (srcTMEMAllocOp) {
+            Operation* curOp = srcTMEMAllocOp;
+            while (true) {
+                curOp = src.getDefiningOp();
+                if (!curOp)
+                    break;
+                if (auto convert = dyn_cast<ttg::ConvertLayoutOp>(curOp)) {
+                  src = convert.getSrc();
+                  continue;
+                }
+
+                if (auto localLoad = dyn_cast<ttg::LocalLoadOp>(curOp)) {
+                  src = localLoad.getSrc();
+                  continue;
+                }
+                break;
+            }
+            assert((curOp->hasTrait<OpTrait::MemDescViewTrait>() || isa<ttng::TMEMAllocOp>(curOp)) && "redundant tmem_alloc must be from another tmem_alloc directly or its MemDescView ops");
+            auto srcTMEMAlloc = dyn_cast<ttng::TMEMAllocOp>(srcTMEMAllocOp);
+            assert(srcTMEMAlloc && "assume here TmemAllocOp lowering is done");
+            auto oldTy = srcTMEMAlloc.getType();
+            auto newTy = tmemAllocOp.getType();
+            assert(oldTy.getEncoding() == newTy.getEncoding() && "assume default and user set same tmem alloc enc");
+            tmemAllocOp->getResult(0).replaceAllUsesWith(curOp->getResult(0));
+            if (tmemAllocOp->getNumResults() > 1 && srcTMEMAlloc->getNumResults() > 1) {
+              tmemAllocOp->getResult(1).replaceAllUsesWith(srcTMEMAlloc->getResult(1));
+            }
+        }
+      }
+  }
+}
+
 void lowerLoads(ModuleOp moduleOp) {
 
   moduleOp->walk([&](tt::AsyncLoadOp asyncLoadOp) {
@@ -1218,6 +1397,14 @@ public:
     lowerSmemAllocs(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After SmemAllocs\n");
+      //m.dump();
+      LDBG(printModuleOp(m));
+      LDBG("DONE\n\n\n");
+    });
+    lowerTmemAllocs(m);
+    removeRedundantTMEMAllocs(m);
+    LLVM_DEBUG({
+      LDBG("SoftwarePipeliner After TmemAllocs\n");
       //m.dump();
       LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");

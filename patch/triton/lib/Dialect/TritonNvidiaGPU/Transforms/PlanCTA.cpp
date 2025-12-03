@@ -399,7 +399,7 @@ void CTAPlanner::processStoreLikeOps(triton::FuncOp &funcOp) {
   funcOp.walk([&](Operation *op) {
     if (llvm::isa<triton::StoreOp, triton::AtomicRMWOp, triton::AtomicCASOp,
                   triton::DescriptorStoreLikeOpInterface,
-                  triton::SmemStoreOp, triton::RemoteSmemStoreOp, triton::FragSmemStoreOp, triton::TmaStoreOp>(op))
+                  triton::SmemStoreOp, triton::TmemStoreOp, triton::RemoteSmemStoreOp, triton::FragSmemStoreOp, triton::TmaStoreOp>(op))
       stores.push_back(op);
   });
   assert(stores.size() > 0 && "Cannot find store-like ops");

@@ -354,6 +354,12 @@ Operation* isFromTmemAlloc(Value v) {
       return op;
     }
 
+    // DotOp haven't been converted to TCGen05, thus acc not have passed through
+    if (isa<DotOp>(op)) {
+      v = op->getOperand(2);
+      continue;
+    }
+
     // Bypassable ops: follow their source operand.
     if (auto getBuf = dyn_cast<GetBufferOp>(op)) {
       v = getBuf.getSrc();

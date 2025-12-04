@@ -173,6 +173,35 @@ SmallVector<OpTy> getSmemAllocUsers(Operation *op) {
 }
 
 template<typename OpTy>
+SmallVector<OpTy> getTmemLoadUsers(Operation *op) {
+  SmallVector<OpTy> ops;
+  SmallVector<Operation*> queue;
+  for (auto user : op->getUsers()) {
+      queue.push_back(user);
+  }
+
+  while (!queue.empty()) {
+    Operation * curOp = queue.back();
+    queue.pop_back();
+    if (isa<OpTy>(curOp)) {
+      ops.push_back(dyn_cast<OpTy>(curOp));
+    }
+
+    if (isa<ConvertLayoutOp>(curOp)) {
+      for (auto user : curOp->getUsers()) {
+          queue.push_back(user);
+      }
+    }
+    if (curOp->hasTrait<mlir::OpTrait::Elementwise>()){
+      for (auto user : curOp->getUsers()) {
+          queue.push_back(user);
+      }
+    }
+  }
+  return ops;
+}
+
+template<typename OpTy>
 OpTy getSmemAllocRoot(Value &smem){
     auto op = smem.getDefiningOp<OpTy>();
     if (op)
@@ -747,40 +776,44 @@ void lowerFragSmemStore(tt::FragSmemStoreOp& op) {
 }
 
 void lowerTmemLoad(tt::TmemLoadOp& op) {
-    llvm::outs() << "\n TmemLoadOp\n";
     OpBuilder builder(op);
     Operation* tmemAllocOp = isFromTmemAlloc(op->getOperand(0));
-    llvm::outs() << "\n TmemLoadOp1\n";
     assert(tmemAllocOp && "tmem_load must be from tmem_alloc");
     auto tmemAlloc = dyn_cast<ttng::TMEMAllocOp>(tmemAllocOp);
     assert(tmemAlloc && "tmem_alloc lowering assumed to be finished");
-    llvm::outs() << "\n TmemLoadOp11\n";
-    llvm::outs() << tmemAlloc;
+
     RankedTensorType oldRetType = op.getType();
-    llvm::outs() << "\n TmemLoadOp12\n";
+
+    SmallVector<tt::StoreOp> storeOps = getTmemLoadUsers<tt::StoreOp>(op);
+    // tma_load overwrites local_alloc enc
+    if (storeOps.size()) {
+      // For TMA, the encoding compatible with it takes precedence over local
+      // alloc created for the MMA operand.
+      auto ptrTy = storeOps[0].getPtr().getType();
+      auto ptrType = dyn_cast<RankedTensorType>(ptrTy);
+      assert(ptrType && "storeOp must have ranked ptr type");
+      auto ptrEnc = ptrType.getEncoding();
+      assert(ptrEnc && "storeOp must have ptr encoding");
+      oldRetType = oldRetType.cloneWithEncoding(ptrEnc);
+    }
+
     auto encoding = tmemAlloc->getAttr("distributed_encoding");
-    llvm::outs() << "\n TmemLoadOp13\n";
-    llvm::outs() << encoding;
     assert(encoding && "tmem_alloc must have encoding inferred from dot");
     auto newAccType = oldRetType.cloneWithEncoding(encoding);
-    llvm::outs() << "\n TmemLoadOp2\n";
     auto tokType = builder.getType<AsyncTokenType>();
     auto ld = builder.create<ttng::TMEMLoadOp>(
         op->getLoc(), newAccType, tokType, op->getOperand(0), Value());
-    llvm::outs() << "\n TmemLoadOp3\n";
     int ctaIdAttr = op.getCtaId();
     if (ctaIdAttr != -1)
         ld->setAttr("ttxg.ctaid",
                        mlir::IntegerAttr::get(builder.getI32Type(), ctaIdAttr));
+    auto cvt = builder.create<ttg::ConvertLayoutOp>(op->getLoc(), oldRetType, ld);
     //tt::replaceUsesAndPropagateType(builder, op, localLoad);
-    replaceAndPropagate(op, ld);
-    llvm::outs() << "\n TmemLoadOp4\n";
+    replaceAndPropagate(op, cvt);
     op->erase();
-    llvm::outs() << "\n TmemLoadOp Done\n";
 }
 
 void lowerTmemStore(tt::TmemStoreOp& op) {
-    llvm::outs() << "\n TmemStoreOp\n";
     OpBuilder builder(op);
     auto tokType = builder.getType<AsyncTokenType>();
     Value vTrue = builder.create<arith::ConstantIntOp>(op->getLoc(), 1, 1);
@@ -807,7 +840,6 @@ void lowerTmemStore(tt::TmemStoreOp& op) {
         tmemStore->setAttr("ttxg.ctaid",
                        mlir::IntegerAttr::get(builder.getI32Type(), ctaIdAttr));
     op->erase();
-    llvm::outs() << "\n TmemStoreOp Done\n";
 }
 
 void lowerSmemLoadStores(ModuleOp moduleOp) {

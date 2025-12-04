@@ -4,41 +4,78 @@ local_dir = pathlib.Path(__file__).parent
 root_dir = local_dir.parent
 requirements_file = root_dir / "requirements.txt"
 
+Use_TXL = True
+app_name = 'txl' if Use_TXL else 'triton'
+
+
 #txl
-#txl_wheel_file = local_dir / "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
+txl_wheel_file = local_dir / "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
 
 test_file = root_dir / "python" / "txl" / "tutorials" / "01-matmul.py"
+ptx_file_name = "matmul_persistent_nows_tma_txl_bw_kernel"
+ptx_file = local_dir / f"{ptx_file_name}.ptx"
+signature_file = local_dir / f"{ptx_file_name}_signature.json"
+json_file = local_dir / f"{ptx_file_name}.json"
 
 # txl
-#app = App(name="txl-matmul")  # Note: this is optional since Modal 0.57
-#volume = Volume.from_name("txl-matmul-dump", create_if_missing=True) # create a cloud volume to store compiled dump files
-# triton
-app = App(name="triton-matmul")  # Note: this is optional since Modal 0.57
-volume = Volume.from_name("triton-matmul-dump", create_if_missing=True) # create a cloud volume to store compiled dump files
+app = App(name=f"{app_name}-matmul")  # Note: this is optional since Modal 0.57
+volume = Volume.from_name(f"{app_name}-matmul-dump", create_if_missing=True) # create a cloud volume to store compiled dump files
 
-txl_image = (
-    Image.debian_slim(python_version="3.12")
-    #Image.from_dockerfile(path="./Dockerfile")
-    .workdir("/workspace")
-    # txl
-    #.add_local_file(txl_wheel_file, remote_path="/workspace/", copy=True) # copy the local code to the image
-    .run_commands( "ls .")
-    .pip_install_from_requirements(requirements_file) # local file not remote file
-    # txl
-    #.run_commands(
-    #    "pip install /workspace/txl-3.5.1-cp312-cp312-linux_x86_64.whl",
-    #)
-    # triton
-    .pip_install("triton==3.5.1")
-    .env({
-        "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib"
-    })
-    .add_local_file(test_file, remote_path="/workspace/test_txl.py", copy=False) # copy after image build, no need rebuild
-)
+if Use_TXL:
+    txl_image = (
+        Image.debian_slim(python_version="3.12")
+        # 2. Install tools required for CUDA repo
+        .apt_install("wget", "curl", "gnupg")
+
+        # 3. Add NVIDIA CUDA repository for Debian 12 (Bookworm)
+        .run_commands(
+            "wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb",
+            "dpkg -i cuda-keyring_1.1-1_all.deb",
+            "apt-get update"
+        )
+
+        # 4. Install CUDA debugging tools
+        .apt_install(
+            "cuda-toolkit-12-4",   # contains cuda-gdb
+            # OR if you only want debugger:
+            # "cuda-gdb",
+        )
+
+        .workdir("/workspace")
+        # txl
+        .add_local_file(txl_wheel_file, remote_path="/workspace/", copy=True) # copy the local code to the image
+        .run_commands( "ls .")
+        .pip_install_from_requirements(requirements_file) # local file not remote file
+        # txl
+        .run_commands(
+            "pip install /workspace/txl-3.5.1-cp312-cp312-linux_x86_64.whl",
+        )
+        .env({
+            "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib"
+        })
+        .add_local_file(test_file, remote_path="/workspace/test_txl.py", copy=False) # copy after image build, no need rebuild
+        .add_local_file(ptx_file, remote_path=f"/workspace/{ptx_file_name}.ptx", copy=False)
+        .add_local_file(signature_file, remote_path=f"/workspace/{ptx_file_name}_signature.json", copy=False)
+        .add_local_file(json_file, remote_path=f"/workspace/{ptx_file_name}.json", copy=False)
+    )
+else:
+    txl_image = (
+        Image.debian_slim(python_version="3.12")
+        #Image.from_dockerfile(path="./Dockerfile")
+        .workdir("/workspace")
+        .run_commands( "ls .")
+        .pip_install_from_requirements(requirements_file) # local file not remote file
+        # triton
+        .pip_install("triton==3.5.1")
+        .env({
+            "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib"
+        })
+        .add_local_file(test_file, remote_path="/workspace/test_txl.py", copy=False) # copy after image build, no need rebuild
+    )
 
 # Example function that uses the image
 #@app.function(gpu="H100", image=txl_image, timeout=60,
-@app.function(gpu="B200", image=txl_image, timeout=60,
+@app.function(gpu="B200", image=txl_image, timeout=300,
 		volumes={"/workspace/dump": volume})
 def test_flash_attention():
 
@@ -47,6 +84,9 @@ def test_flash_attention():
     
         try:
             result = subprocess.run(['find', '/', '-name', 'libcublas.so*'], capture_output=True, text=True, check=True)
+            output = result.stdout
+            print(output)
+            result = subprocess.run(['find', '/', '-name', 'cuda-gdb'], capture_output=True, text=True, check=True)
             output = result.stdout
             print(output)
             # Execute nvidia-smi command to query GPU details
@@ -94,4 +134,14 @@ def test_flash_attention():
     import_cuBLAS_lib()
 
     from test_txl import test_matmul
-    test_matmul("/workspace/dump")
+    #test_matmul(None, "0")
+    #test_matmul("/workspace/dump", "b3")
+    test_matmul(None, "b3")
+    #import subprocess
+    #p = subprocess.Popen(
+    #        ["/usr/local/cuda-12.4/bin/cuda-gdb", "-ex", "run", "--args", "python", "/workspace/test_txl.py"],
+    #        #stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    #)
+    #p.wait()
+
+

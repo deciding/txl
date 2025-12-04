@@ -464,7 +464,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, diff_select=None, log_dir=
             #passes.common.add_licm, # 3.3.x
             passes.ttir.add_triton_licm, # 3.4.x
             passes.ttgpuir.add_optimize_accumulator_init,
-            add_hoist_tmem_alloc_false, # 3.4.x, 0817
+            #add_hoist_tmem_alloc_false, # 3.4.x, 0817, no txl
             nvidia.passes.ttnvgpuir.add_promote_lhs_to_tmem, # 3.4.x
             add_assign_latencies, # 3.4.x
             passes.ttgpuir.add_schedule_loops, # 3.4.x

@@ -551,6 +551,7 @@ public:
         instrShape[0], instrShape[1], oldRetType, numWarps);
     auto newAccType = oldRetType.cloneWithEncoding(newDistributedEncoding);
     auto acc = dotOp.getOperand(2);
+
     Operation * tmemAllocOp = isFromTmemAlloc(acc);
     assert(tmemAllocOp && "tcgen05 c must from tmem");
     TmemAllocOp tmemAlloc = dyn_cast<TmemAllocOp>(tmemAllocOp);
@@ -797,14 +798,12 @@ static bool mmav2SupportsFp8Operands(int computeCapability) {
 // supported.
 static void decomposeMixedModeDotOp(ModuleOp mod, int computeCapability) {
   mod.walk([=](DotOp dotOp) -> void {
-    llvm::outs() << "\n1\n";
     auto D = dotOp.getD();
     OpBuilder builder(dotOp);
     Type AElType = dotOp.getA().getType().getElementType();
     Type promoteType;
     NvidiaMmaEncodingAttr mmaLayout =
         dyn_cast<NvidiaMmaEncodingAttr>(D.getType().getEncoding());
-    llvm::outs() << "\n2\n";
     if (mmaLayout) {
       bool isNativeFP8 = llvm::isa<Float8E5M2Type, Float8E4M3FNType>(AElType);
       // promote to f16 unless there's hardware support for fp8 operands
@@ -821,13 +820,11 @@ static void decomposeMixedModeDotOp(ModuleOp mod, int computeCapability) {
         return;
       promoteType = DElType;
     }
-    llvm::outs() << "\n3\n";
     Location loc = dotOp.getLoc();
     Value promotedA = promoteOperand(builder, loc, dotOp.getA(), promoteType);
     Value promotedB = promoteOperand(builder, loc, dotOp.getB(), promoteType);
     dotOp.setOperand(0, promotedA);
     dotOp.setOperand(1, promotedB);
-    llvm::outs() << "\n4\n";
   });
 }
 

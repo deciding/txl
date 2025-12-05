@@ -1678,6 +1678,20 @@ void init_triton_ir(py::module &&m) {
              return self.create<DotOp>(c.getType(), a, b, c, inputPrecision,
                                        maxNumImpreciseAcc);
            })
+      .def("create_dotx",
+           [](TritonOpBuilder &self, mlir::Value &a, mlir::Value &b,
+              mlir::Value &c,
+              std::optional<Value>& mbar, std::optional<Value>& useD, std::optional<Value>& pred,
+              InputPrecision inputPrecision,
+              int maxNumImpreciseAcc) -> mlir::Value {
+             Value mbarVal = mbar.value_or(Value());
+             Value useDVal = useD.value_or(Value());
+             Value predVal = pred.value_or(Value());
+             return self.create<DotXOp>(c.getType(), a, b, c,
+                                       mbarVal, useDVal, predVal,
+                                       inputPrecision,
+                                       maxNumImpreciseAcc);
+           })
       .def("create_dot_scaled",
            [](TritonOpBuilder &self, mlir::Value &lhs,
               std::optional<mlir::Value> &lhs_scale,

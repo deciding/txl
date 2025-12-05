@@ -2684,6 +2684,213 @@ def matmul_persistent_nows_tma_txl_bw3(a, b):
     )
     return c
 
+############
+# Blackwell4 + TXL + tma + persistent + dotx useD + dotx mbar
+############
+
+@txl.autotune(
+    configs=[
+        txl.Config(
+            {
+                "BLOCK_SIZE_M": 128,
+                "BLOCK_SIZE_N": 256,
+                "BLOCK_SIZE_K": 64,
+                "GROUP_SIZE_M": 8,
+                "NUM_CONSUMER_GROUPS": 1,
+                "NUM_STAGES": 3,
+            },
+            num_stages=3,
+            #num_warps=4,
+            num_warps=8,
+            num_warpgroups=1,
+            pre_hook=matmul_tma_set_block_size_hook
+        ),
+    ],
+    key=["M", "N", "K"],
+    use_cuda_graph=True,
+)
+#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+@txl.jit(launch_metadata=_matmul_launch_metadata)
+#@txl.jit(launch_metadata=_matmul_launch_metadata, src_file='/workspace/matmul_persistent_nows_tma_txl_bw_kernel.ptx')
+def matmul_persistent_nows_tma_txl_bw_kernel4(
+    a_desc,
+    b_desc,
+    c_desc,
+    M,
+    N,
+    K,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    BLOCK_SIZE_K: tl.constexpr,  #
+    GROUP_SIZE_M: tl.constexpr,  #
+    FP8_OUTPUT: tl.constexpr,  #
+    NUM_CONSUMER_GROUPS: tl.constexpr,
+    NUM_STAGES: tl.constexpr,
+
+    # 3.4.x
+    #EPILOGUE_SUBTILE: tl.constexpr,  #
+    NUM_SMS: tl.constexpr,  #
+    WARP_SPECIALIZE: tl.constexpr,  #
+):
+    dtype = tl.float8e4nv if FP8_OUTPUT else tl.float16
+    start_pid = tl.program_id(axis=0)
+    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
+    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
+    k_tiles = tl.cdiv(K, BLOCK_SIZE_K)
+    num_tiles = num_pid_m * num_pid_n
+
+    tile_id_c = start_pid - NUM_SMS
+    num_pid_in_group = GROUP_SIZE_M * num_pid_n
+
+    a0 = txl.smem_alloc([BLOCK_SIZE_M, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+    b0 = txl.smem_alloc([BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+
+    acc0 = txl.tmem_alloc([BLOCK_SIZE_M, BLOCK_SIZE_N], dtype=tl.float32, num_stages=2)
+    zeros = txl.zeros([BLOCK_SIZE_M, BLOCK_SIZE_N], dtype=tl.float32)
+
+    #curAcc0 = txl.get_buffer(acc0, 0)
+    #txl.tmem_store(curAcc0, zeros)
+    #curAcc1 = txl.get_buffer(acc0, 1)
+    #txl.tmem_store(curAcc1, zeros)
+
+    mbar_producer = txl.mbar_alloc(1, num_stages=NUM_STAGES)
+    bufIdxP = 0
+    bufIdxC = 0
+    phase = 0
+
+    bufIdxAcc = 0
+    bufIdxAccMbar = 0
+    phaseAccMbar = 0
+
+    tid = txl.tid(0)
+
+
+    #for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
+    #for tile_id in tl.range(start_pid, num_tiles, NUM_SMS, flatten=True, warp_specialize=WARP_SPECIALIZE):
+    for tile_id in tl.range(start_pid, num_tiles, NUM_SMS):
+        #group_id = pid // num_pid_in_group
+        #first_pid_m = group_id * GROUP_SIZE_M
+        #group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+        #pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+        #pid_n = (pid % num_pid_in_group) // group_size_m
+        pid_m, pid_n = _compute_pid(tile_id, num_pid_in_group, num_pid_m, GROUP_SIZE_M, NUM_SMS)
+
+        offs_am = pid_m * BLOCK_SIZE_M
+        offs_bn = pid_n * BLOCK_SIZE_N
+        offs_k = 0
+
+        # Prologue
+        for i in tl.static_range(2):
+            cur_mbar = txl.get_buffer(mbar_producer, bufIdxP)
+            a = txl.get_buffer(a0, bufIdxP)
+            b = txl.get_buffer(b0, bufIdxP)
+            txl.mbar_expect(cur_mbar, BLOCK_SIZE_M*BLOCK_SIZE_K*2 + BLOCK_SIZE_N*BLOCK_SIZE_K*2)
+            txl.tma_load(a, a_desc, [offs_am, offs_k], cur_mbar)
+            txl.tma_load(b, b_desc, [offs_bn, offs_k], cur_mbar)
+
+            bufIdxP = (bufIdxP + 1) % NUM_STAGES
+            offs_k += BLOCK_SIZE_K
+
+        cur_mbar = txl.get_buffer(mbar_producer, bufIdxC)
+        a = txl.get_buffer(a0, bufIdxC)
+        b = txl.get_buffer(b0, bufIdxC)
+        txl.mbar_wait(cur_mbar, phase)
+
+        curAcc = txl.get_buffer(acc0, bufIdxAcc)
+        txl.tmem_store(curAcc, zeros)
+        curAcc = tl.dot(a, b.T, curAcc)
+
+        #bufIdxC += 1 # TODO: assume no change of phase
+        bufIdxC = (bufIdxC + 1) % NUM_STAGES
+        if bufIdxC == 0:
+            phase = phase ^ 1
+
+        cur_mbar = txl.get_buffer(mbar_producer, bufIdxP)
+        a = txl.get_buffer(a0, bufIdxP)
+        b = txl.get_buffer(b0, bufIdxP)
+        txl.mbar_expect(cur_mbar, BLOCK_SIZE_M*BLOCK_SIZE_K*2 + BLOCK_SIZE_N*BLOCK_SIZE_K*2)
+        txl.tma_load(a, a_desc, [offs_am, offs_k], cur_mbar)
+        txl.tma_load(b, b_desc, [offs_bn, offs_k], cur_mbar)
+        bufIdxP = (bufIdxP + 1) % NUM_STAGES
+        offs_k += BLOCK_SIZE_K
+
+        #accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+        num_k = tl.cdiv(K, BLOCK_SIZE_K)
+
+
+        for k in range(0, num_k-1):
+            cur_mbar = txl.get_buffer(mbar_producer, bufIdxC)
+            a = txl.get_buffer(a0, bufIdxC)
+            b = txl.get_buffer(b0, bufIdxC)
+
+            txl.mbar_wait(cur_mbar, phase)
+
+            curAcc = tl.dot(a, b.T, curAcc)
+
+            bufIdxC = (bufIdxC + 1) % NUM_STAGES
+            if bufIdxC == 0:
+                phase = phase ^ 1
+            #bufIdxAccMbar = (bufIdxAccMbar + 1) % 2
+            #if bufIdxAccMbar == 0:
+            #    phaseAccMbar = phaseAccMbar ^ 1
+
+
+            if k < num_k - 3: # TODO: pred?
+                cur_mbar = txl.get_buffer(mbar_producer, bufIdxP)
+                a = txl.get_buffer(a0, bufIdxP)
+                b = txl.get_buffer(b0, bufIdxP)
+                txl.mbar_expect(cur_mbar, BLOCK_SIZE_M*BLOCK_SIZE_K*2 + BLOCK_SIZE_N*BLOCK_SIZE_K*2)
+                txl.tma_load(a, a_desc, [offs_am, offs_k], cur_mbar)
+                txl.tma_load(b, b_desc, [offs_bn, offs_k], cur_mbar)
+
+                bufIdxP = (bufIdxP + 1) % NUM_STAGES
+                offs_k += BLOCK_SIZE_K
+
+        # Epilogue
+        c = txl.tmem_load(curAcc)
+        c = c.to(tl.float16)
+
+        c_desc.store([offs_am, offs_bn], c)
+
+        bufIdxAcc = (bufIdxAcc + 1) % 2
+
+def matmul_persistent_nows_tma_txl_bw4(a, b):
+    # Check constraints.
+    assert a.shape[1] == b.shape[1], "Incompatible dimensions"  # b is transposed
+    assert a.dtype == b.dtype, "Incompatible dtypes"
+
+    M, K = a.shape
+    N, K = b.shape
+    dtype = a.dtype
+
+    c = torch.empty((M, N), device=a.device, dtype=dtype)
+
+    NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
+
+    # A dummy block value that will be overwritten when we have the real block size
+    dummy_block = [1, 1]
+    a_desc = TensorDescriptor(a, a.shape, a.stride(), dummy_block)
+    b_desc = TensorDescriptor(b, b.shape, b.stride(), dummy_block)
+    c_desc = TensorDescriptor(c, c.shape, c.stride(), dummy_block)
+
+    def grid(META):
+        nonlocal a_desc, b_desc, c_desc
+        BLOCK_M = META["BLOCK_SIZE_M"]
+        BLOCK_N = META["BLOCK_SIZE_N"]
+        return (min(
+            NUM_SMS,
+            triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N),
+        ), )
+
+    matmul_persistent_nows_tma_txl_bw_kernel4[grid](
+        a_desc, b_desc, c_desc,  #
+        M, N, K,  #
+        FP8_OUTPUT=dtype == torch.float8_e4m3fn,  #
+        NUM_SMS=NUM_SMS,  #
+        WARP_SPECIALIZE=False,  #
+    )
+    return c
+
 ##########################################
 # END Of Blackwell
 ##########################################

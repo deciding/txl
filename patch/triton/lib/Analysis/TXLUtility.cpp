@@ -355,7 +355,7 @@ Operation* isFromTmemAlloc(Value v) {
     }
 
     // DotOp haven't been converted to TCGen05, thus acc not have passed through
-    if (isa<DotOp>(op)) {
+    if (isa<DotOp>(op) || isa<DotXOp>(op)) {
       v = op->getOperand(2);
       continue;
     }

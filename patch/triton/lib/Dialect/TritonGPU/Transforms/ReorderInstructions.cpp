@@ -15,6 +15,7 @@
 #include "mlir/Transforms/Passes.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "triton/Analysis/Utility.h"
+#include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/TritonGPUConversion.h"
@@ -120,11 +121,13 @@ public:
         return;
       if (!op->hasOneUse())
         return;
-      auto dotUser = dyn_cast<triton::DotOp>(*op->user_begin());
-      if (!dotUser)
+
+      Operation* dotUser = *op->user_begin();
+      if (!isa<triton::DotOp>(dotUser) && !isa<triton::DotXOp>(dotUser)) {
         return;
+      }
       auto AOp =
-          dotUser.getOperand(0).getDefiningOp<triton::gpu::LocalLoadOp>();
+          dotUser->getOperand(0).getDefiningOp<triton::gpu::LocalLoadOp>();
       if (!AOp)
         return;
       // Check that the conversion to OpIdx=1 happens before and can be moved

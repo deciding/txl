@@ -649,4 +649,44 @@ def TXL_SmemReshapeOp : TXL_Op<"smem_reshape", [Pure,
   let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
 }
 
+def TXL_DotXOp : TXL_Op<"dotx", [Pure, AttrSizedOperandSegments,
+                             DeclareOpInterfaceMethods<InferTypeOpInterface>,
+                             DeclareOpInterfaceMethods<DotOpInterface>,
+                             TypesMatchWith<"result's type matches accumulator's type",
+                                            "d", "c", "$_self">]> {
+    let summary = "dot";
+
+    let description = [{
+        $d = matrix_multiply($a, $b) + $c. $inputPrecision describes how to exercise the TC
+        when the inputs are f32. It can be one of: tf32, tf32x3, ieee.
+        tf32: use TC with tf32 ops.
+        tf32x3: implement the 3xTF32 trick. For more info see the pass in F32DotTC.cpp
+        ieee: don't use TC, implement dot in software.
+        If the GPU does not have Tensor cores or the inputs are not f32, this flag is ignored.
+    }];
+
+    let arguments = (
+      ins
+      TT_FpIntTensor:$a,
+      TT_FpIntTensor:$b,
+      TT_FpIntTensor:$c,
+      TTG_TensorOrMemDesc:$mbar,
+      Optional<I1>:$useD,
+      Optional<I1>:$pred,
+      DefaultValuedAttr<TT_InputPrecisionAttr, "::mlir::triton::InputPrecision::IEEE">:$inputPrecision,
+      DefaultValuedAttr<I32Attr, "0">:$maxNumImpreciseAcc
+    );
+
+    let results = (outs TT_FpIntTensor:$d);
+
+    // attr-dict prints enums as integers.  To get inputPrecision printed as a
+    // string, we need to specify it explicitly.
+    let assemblyFormat = [{
+      $a`,` $b`,` $c `,` $mbar (`useD` $useD^)? (`pred` $pred^)? (`,` `inputPrecision` `=` $inputPrecision^)? attr-dict `:`
+      type($a) `*` type($b) type($mbar) `->` type($d) (`useD` type($useD)^)? (`pred` type($pred)^)?
+    }];
+
+    let hasVerifier = 1;
+}
+
 #endif // TXL_OPS

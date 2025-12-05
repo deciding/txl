@@ -1,5 +1,5 @@
-#ifndef TRITON_ATTR_DEFS
-#define TRITON_ATTR_DEFS
+#ifndef TXL_ATTR_DEFS
+#define TXL_ATTR_DEFS
 
 include "mlir/IR/EnumAttr.td"
 

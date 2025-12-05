@@ -14,6 +14,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 //#include "triton/Dialect/Triton/IR/Dialect.h.inc"
 #include "triton/Dialect/Triton/IR/OpInterfaces.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 #include "txl/Dialect/TXL/IR/OpsEnums.h.inc"
@@ -21,6 +22,10 @@
 #include "triton/Dialect/Triton/IR/Types.h"
 
 #include "txl/Dialect/TXL/IR/Dialect.h.inc"
+
+
+#define GET_ATTRDEF_CLASSES
+#include "txl/Dialect/TXL/IR/TXLAttrDefs.h.inc"
 
 #define GET_OP_CLASSES
 #include "txl/Dialect/TXL/IR/Ops.h.inc"

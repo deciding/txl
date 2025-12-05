@@ -107,6 +107,63 @@ void AsyncLoadOp::getCanonicalizationPatterns(RewritePatternSet &results,
   results.add<CanonicalizeMaskedAsyncLoadPattern>(context);
 }
 
+//-- DotXOp --
+LogicalResult
+DotXOp::inferReturnTypes(MLIRContext *context, std::optional<Location> location,
+                        ValueRange operands, DictionaryAttr attributes,
+                        OpaqueProperties properties, RegionRange regions,
+                        SmallVectorImpl<Type> &inferredReturnTypes) {
+  // type is the same as the accumulator
+  auto accTy = cast<RankedTensorType>(operands[2].getType());
+  inferredReturnTypes.push_back(accTy);
+
+  // verify encodings
+  auto aEnc = cast<RankedTensorType>(operands[0].getType()).getEncoding();
+  auto bEnc = cast<RankedTensorType>(operands[1].getType()).getEncoding();
+  auto retEnc = accTy.getEncoding();
+  if (aEnc) {
+    assert(bEnc && retEnc);
+    Dialect &dialect = retEnc.getDialect();
+    auto interface = cast<DialectInferLayoutInterface>(&dialect);
+    if (interface->inferDotOpEncoding(aEnc, 0, retEnc, location).failed())
+      return failure();
+    if (interface->inferDotOpEncoding(bEnc, 1, retEnc, location).failed())
+      return failure();
+  }
+  return success();
+}
+
+LogicalResult DotXOp::verify() {
+  auto aTy = getA().getType();
+  auto bTy = getB().getType();
+  if (aTy.getElementType().getIntOrFloatBitWidth() !=
+      bTy.getElementType().getIntOrFloatBitWidth())
+    return emitError(
+        "element types of operands A and B must have same bit width");
+  auto aEncoding = aTy.getEncoding();
+  auto bEncoding = bTy.getEncoding();
+  if (!aEncoding && !bEncoding)
+    return success();
+  // Verify that the encodings are valid.
+  if (!aEncoding || !bEncoding)
+    return emitError("mismatching encoding between A and B operands");
+  auto accTy = getC().getType();
+  auto retEnc = accTy.getEncoding();
+  if (!retEnc)
+    return emitError("miss encoding of C operand");
+  Dialect &dialect = retEnc.getDialect();
+  auto interface = cast<DialectInferLayoutInterface>(&dialect);
+  return interface->verifyDotOpEncodingCompatibility(getOperation(), aEncoding,
+                                                     bEncoding);
+}
+
+bool DotXOp::verifyDims() {
+  auto aShape = this->getA().getType().getShape();
+  auto bShape = this->getB().getType().getShape();
+
+  return aShape[aShape.size() - 1] == bShape[aShape.size() - 2];
+}
+
 } // namespace triton
 } // namespace mlir
 

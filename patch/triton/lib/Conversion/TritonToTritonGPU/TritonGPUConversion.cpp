@@ -189,6 +189,16 @@ TritonGPUConversionTarget::TritonGPUConversionTarget(
         return false;
   });
 
+  addDynamicallyLegalOp<triton::DotXOp>([](triton::DotXOp dotOp) -> bool {
+    Attribute aEncoding =
+        cast<RankedTensorType>(dotOp.getA().getType()).getEncoding();
+    Attribute bEncoding =
+        cast<RankedTensorType>(dotOp.getB().getType()).getEncoding();
+    if (aEncoding && isa<triton::gpu::DotOperandEncodingAttr>(aEncoding) &&
+        bEncoding && isa<triton::gpu::DotOperandEncodingAttr>(bEncoding))
+      return true;
+    return false;
+  });
   // We have requirements for the data layouts
   addDynamicallyLegalOp<triton::DotOp>([](triton::DotOp dotOp) -> bool {
     Attribute aEncoding =

@@ -38,6 +38,7 @@ from .core import (
     tma_gather,
     tma_store,
     tma_store_wait,
+    dotx,
     dot_wait,
     async_load,
     async_load_wait,

@@ -467,3 +467,114 @@ class TXLSemantic(TritonSemantic):
     def smem_reshape(self, input: TensorTy, shape) -> TensorTy:
         ret_type = tl.block_type(input.type.scalar, shape)
         return self.tensor(self.builder.create_smem_reshape(input.handle, shape), ret_type)
+
+    def _str_to_dot_input_precision(self, input_precision):
+        assert input_precision.lower() in self.builder.options.allowed_dot_input_precisions, \
+            f"input_precision must be one of {self.builder.options.allowed_dot_input_precisions}. Got {input_precision}"
+        input_precision = input_precision.upper()
+        if input_precision == "TF32X3":
+            input_precision = "TF32x3"
+        return getattr(ir.INPUT_PRECISION, input_precision)
+
+    def dotx(self, lhs: TensorTy, rhs: TensorTy, acc: TensorTy,
+            mbar: Optional[TensorTy],
+            useD: Optional[TensorTy],
+            pred: Optional[TensorTy],
+            input_precision: Optional[str],
+            max_num_imprecise_acc: int, out_dtype: tl.dtype) -> TensorTy:
+        assert lhs.type.is_block() and rhs.type.is_block()
+
+        if lhs.dtype.is_fp8() and rhs.dtype.is_fp8():
+            # All combinations of supported fp8 x fp8 are permitted
+            pass
+        else:
+            assert lhs.dtype in (tl.int8, tl.uint8, tl.float16, tl.bfloat16, tl.float32,
+                                 tl.float64), f"Unsupported lhs dtype {lhs.dtype}"
+            assert rhs.dtype in (tl.int8, tl.uint8, tl.float16, tl.bfloat16, tl.float32,
+                                 tl.float64), f"Unsupported rhs dtype {rhs.dtype}"
+            assert lhs.dtype == rhs.dtype, f"Both operands must be same dtype. Got {lhs.dtype} and {rhs.dtype}"
+
+        if lhs.dtype.is_fp8e4b15() or rhs.dtype.is_fp8e4b15():
+            if "fp8e4b15" in self.builder.options.deprecated_fp8_dot_operand_dtypes:
+                warnings.warn(
+                    "the use of fp8e4b15 is deprecated on Hopper and later architectures and can cause significant slow down. It will be removed in a future triton release"
+                )
+            # We upcast because there's no fp8e4b15 type in MLIR
+            lhs = self.cast(lhs, tl.float16)
+            rhs = self.cast(rhs, tl.float16)
+
+        uses_fp8e4b8 = lhs.dtype.is_fp8e4b8() or rhs.dtype.is_fp8e4b8()
+        uses_fp8e5b16 = lhs.dtype.is_fp8e5b16() or rhs.dtype.is_fp8e5b16()
+        if uses_fp8e4b8 or uses_fp8e5b16:
+            type_name = "fp8e4b8" if uses_fp8e4b8 else "fp8e5b16"
+            if type_name in self.builder.options.deprecated_fp8_dot_operand_dtypes:
+                arch = self.builder.options.arch
+                warnings.warn(
+                    f"{type_name} is AMD gfx942 specific and not supported on {arch} so it's upcasted to fp16 and can cause significant slow down. "
+                    f"Please use OCP fp8 variants on {arch} for performance")
+                lhs = self.cast(lhs, tl.float16)
+                rhs = self.cast(rhs, tl.float16)
+
+        if input_precision is None:
+            input_precision = self.builder.options.default_dot_input_precision
+
+        input_precision = self._str_to_dot_input_precision(input_precision)
+
+        lhs_rank = len(lhs.shape)
+        rhs_rank = len(rhs.shape)
+        assert lhs_rank == rhs_rank == 2 or lhs_rank == rhs_rank == 3, f"Both inputs must be either 2D or 3D; (lhs: {lhs.shape} vs rhs: {rhs.shape})"
+        assert lhs.shape[-1].value == rhs.shape[
+            -2].value, f"First input shape ({lhs.shape}) and second input shape {rhs.shape} are not compatible for matmul (second index of first shape ({lhs.shape[-1].value}) must be equal to first index of second shape ({rhs.shape[-2].value})"
+        assert self.builder.codegen_fns.get(
+            "min_dot_size") is not None, "target doesn't provide lower shape bounds for dot."
+        min_dot_size = self.builder.codegen_fns["min_dot_size"](lhs.type, rhs.type)
+        assert lhs.shape[-2].value >= min_dot_size[0] and lhs.shape[-1].value >= min_dot_size[2] \
+            and rhs.shape[-1].value >= min_dot_size[1], \
+                f"Input shapes should have M >= {min_dot_size[0]}, N >= {min_dot_size[1]} and K >= {min_dot_size[2]}"
+        if lhs.type.scalar.is_int():
+            assert lhs.type.scalar == tl.int8, "only int8 supported!"
+            _0 = self.builder.get_int32(0)
+            ret_scalar_ty = tl.int32
+        elif out_dtype.is_bf16():
+            raise ValueError(
+                "out_dtype=bfloat16 is unsupported. Please use out_dtype=float32/float16 and cast with `.to(tl.bfloat16)`"
+            )
+        elif lhs.type.scalar.is_fp32() or lhs.type.scalar.is_bf16():
+            _0 = self.builder.get_fp32(0)
+            ret_scalar_ty = tl.float32
+        elif lhs.type.scalar.is_fp64():
+            _0 = self.builder.get_fp64(0)
+            ret_scalar_ty = tl.float64
+        else:
+            _0 = self.builder.get_fp16(0) if out_dtype.is_fp16() else self.builder.get_fp32(0)
+            ret_scalar_ty = out_dtype
+
+        M = lhs.type.shape[-2]
+        N = rhs.type.shape[-1]
+        K = lhs.type.shape[-1]
+        B = lhs.type.shape[0] if lhs_rank == 3 else None
+        ret_ty = tl.block_type(ret_scalar_ty, [B, M, N] if B else [M, N])
+        if acc is None:
+            acc_handle = self.builder.create_splat(ret_ty.to_ir(self.builder), _0)
+        else:
+            acc_handle = acc.handle
+            assert acc.type.shape == ret_ty.shape and acc.type.element_ty == out_dtype
+
+        # max_num_imprecise_acc only applies to fp8 -> fp32 dot on sm_90
+        if max_num_imprecise_acc is None:
+            if lhs.dtype.is_fp8() and rhs.dtype.is_fp8():
+                max_num_imprecise_acc = self.builder.options.max_num_imprecise_acc_default
+            else:
+                max_num_imprecise_acc = 0
+        else:
+            if lhs.dtype.is_fp8() and rhs.dtype.is_fp8() and max_num_imprecise_acc > K:
+                raise ValueError(f"max_num_imprecise_acc ({max_num_imprecise_acc}) must be <= K ({K})")
+
+        mbar_handle = mbar.handle if mbar else None
+        useD_handle = useD.handle if useD else None
+        pred_handle = pred.handle if pred else None
+
+        return self.tensor(
+            self.builder.create_dotx(lhs.handle, rhs.handle, acc_handle,
+                                     mbar_handle, useD_handle, pred_handle,
+                                     input_precision, max_num_imprecise_acc), ret_ty)

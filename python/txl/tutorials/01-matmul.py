@@ -2758,21 +2758,17 @@ def matmul_persistent_nows_tma_txl_bw_kernel4(
     bufIdxC = 0
     phase = 0
 
+    mbar_tmem = txl.mbar_alloc(1, num_stages=2)
     bufIdxAcc = 0
     bufIdxAccMbar = 0
     phaseAccMbar = 0
+    newBufIdxAccMbar = 1
 
     tid = txl.tid(0)
-
 
     #for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
     #for tile_id in tl.range(start_pid, num_tiles, NUM_SMS, flatten=True, warp_specialize=WARP_SPECIALIZE):
     for tile_id in tl.range(start_pid, num_tiles, NUM_SMS):
-        #group_id = pid // num_pid_in_group
-        #first_pid_m = group_id * GROUP_SIZE_M
-        #group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-        #pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
-        #pid_n = (pid % num_pid_in_group) // group_size_m
         pid_m, pid_n = _compute_pid(tile_id, num_pid_in_group, num_pid_m, GROUP_SIZE_M, NUM_SMS)
 
         offs_am = pid_m * BLOCK_SIZE_M
@@ -2798,12 +2794,17 @@ def matmul_persistent_nows_tma_txl_bw_kernel4(
 
         curAcc = txl.get_buffer(acc0, bufIdxAcc)
         txl.tmem_store(curAcc, zeros)
-        curAcc = tl.dot(a, b.T, curAcc)
+
+        curAccMbar = txl.get_buffer(mbar_tmem, bufIdxAccMbar)
+        curAcc = txl.dotx(a, b.T, curAcc, curAccMbar)
 
         #bufIdxC += 1 # TODO: assume no change of phase
         bufIdxC = (bufIdxC + 1) % NUM_STAGES
         if bufIdxC == 0:
             phase = phase ^ 1
+        #bufIdxAccMbar = (bufIdxAccMbar + 1) % 2
+        #if bufIdxAccMbar == 0:
+        #    phaseAccMbar = phaseAccMbar ^ 1
 
         cur_mbar = txl.get_buffer(mbar_producer, bufIdxP)
         a = txl.get_buffer(a0, bufIdxP)
@@ -2820,22 +2821,27 @@ def matmul_persistent_nows_tma_txl_bw_kernel4(
 
         for k in range(0, num_k-1):
             cur_mbar = txl.get_buffer(mbar_producer, bufIdxC)
+            newAccMbar = txl.get_buffer(mbar_tmem, newBufIdxAccMbar)
+            curAccMbar = txl.get_buffer(mbar_tmem, bufIdxAccMbar)
             a = txl.get_buffer(a0, bufIdxC)
             b = txl.get_buffer(b0, bufIdxC)
 
             txl.mbar_wait(cur_mbar, phase)
 
-            curAcc = tl.dot(a, b.T, curAcc)
+            curAcc = txl.dotx(a, b.T, curAcc, newAccMbar)
+            txl.mbar_wait(curAccMbar, phaseAccMbar)
 
             bufIdxC = (bufIdxC + 1) % NUM_STAGES
             if bufIdxC == 0:
                 phase = phase ^ 1
-            #bufIdxAccMbar = (bufIdxAccMbar + 1) % 2
-            #if bufIdxAccMbar == 0:
-            #    phaseAccMbar = phaseAccMbar ^ 1
+            bufIdxAccMbar = (bufIdxAccMbar + 1) % 2
+            if bufIdxAccMbar == 0:
+                phaseAccMbar = phaseAccMbar ^ 1
+            newBufIdxAccMbar = (newBufIdxAccMbar + 1) % 2
 
 
-            if k < num_k - 3: # TODO: pred?
+            # TODO: overlap the tma load with next wave, by flatten the two loops
+            if k < num_k - 3:
                 cur_mbar = txl.get_buffer(mbar_producer, bufIdxP)
                 a = txl.get_buffer(a0, bufIdxP)
                 b = txl.get_buffer(b0, bufIdxP)
@@ -2847,8 +2853,14 @@ def matmul_persistent_nows_tma_txl_bw_kernel4(
                 offs_k += BLOCK_SIZE_K
 
         # Epilogue
+        curAccMbar = txl.get_buffer(mbar_tmem, bufIdxAccMbar)
+        txl.mbar_wait(curAccMbar, phaseAccMbar)
         c = txl.tmem_load(curAcc)
         c = c.to(tl.float16)
+        bufIdxAccMbar = (bufIdxAccMbar + 1) % 2
+        if bufIdxAccMbar == 0:
+            phaseAccMbar = phaseAccMbar ^ 1
+        newBufIdxAccMbar = (newBufIdxAccMbar + 1) % 2
 
         c_desc.store([offs_am, offs_bn], c)
 
@@ -2972,6 +2984,8 @@ def bench(K, dtype, reps=100, warmup_reps=25, algo='0'):
         bench_fn("blackwell2", reps, warmup_reps, matmul_bw2, a, bn)
     elif algo == 'b3':
         bench_fn("blackwell_nows_tma_persistent", reps, warmup_reps, matmul_persistent_nows_tma_txl_bw3, a, b)
+    elif algo == 'b4':
+        bench_fn("blackwell_nows_tma_persistent_dotx", reps, warmup_reps, matmul_persistent_nows_tma_txl_bw4, a, b)
     return
     warp_specialize = [False, True] if HAS_WARP_SPECIALIZE else [False]
     for ws in warp_specialize:
@@ -3034,6 +3048,8 @@ def validate(M, N, K, dtype, log=False, algo='0'):
         run_test(naive_result, lambda a, b: matmul_bw2(a, bn), a, bn, "Blackwell txl simple matmul", log=True)
     elif algo == 'b3':
         run_test(naive_result, lambda a, b: matmul_persistent_nows_tma_txl_bw3(a, b), a, b, "Blackwell txl nows tma persistent matmul", log=True)
+    elif algo == 'b4':
+        run_test(naive_result, lambda a, b: matmul_persistent_nows_tma_txl_bw4(a, b), a, b, "Blackwell dotx nows tma persistent matmul", log=True)
 
     return
 
@@ -3112,7 +3128,7 @@ def test_matmul(dump_dir=None, algo='0'):
         #validate(32, 32, 32, dtype)
         #validate(128, 128, 512, dtype, log=True)
         #validate(8192, 8192, args.K_range[0], dtype, log=True, algo=algo)
-        validate(128*32, 256*16, args.K_range[0], dtype, log=True, algo=algo)
+        validate(128*16, 256*16, args.K_range[0], dtype, log=True, algo=algo)
 
         #profile(8192, 8192, args.K_range[0], dtype)
         #exit()
@@ -3125,5 +3141,5 @@ def test_matmul(dump_dir=None, algo='0'):
         show_profile(args.prec, "matmul")
 
 if __name__ == "__main__":
-    #test_matmul('dump/1204mm', 'b3')
-    test_matmul(None, 'b3')
+    test_matmul('dump/1206mm', 'b4')
+    #test_matmul(None, 'b4')

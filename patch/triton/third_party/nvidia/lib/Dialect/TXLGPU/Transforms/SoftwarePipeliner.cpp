@@ -536,10 +536,41 @@ void replaceSmemBufferUses(
 }
 
 // replace oldViewOp uses with newView
-void replaceMbarBufferUses(Operation* oldViewOp, Value newView) {
+void replaceMbarBufferUses(Operation* oldViewOp, Value newView, ttg::MemDescType allocTy) {
 
       OpBuilder builder(oldViewOp);
       Location loc = oldViewOp->getLoc();
+
+      // remove redundant local_alloc
+      SmallVector<ttg::LocalAllocOp> allocsToErase;
+      for (Operation *user : oldViewOp->getUsers()) {
+        if (auto userAllocOp = dyn_cast<ttg::LocalAllocOp>(user)) {
+          if (allocTy.getEncoding() == userAllocOp.getType().getEncoding()) {
+            // replace all uses of userAlloc to newView
+            tt::replaceUsesAndPropagateType(builder, userAllocOp, newView);
+            allocsToErase.push_back(userAllocOp);
+          }
+        }
+      }
+      for (auto allocOp : allocsToErase) {
+        allocOp.erase();
+      }
+      // remove redundant convert_layout
+      // This can happend for AsyncLoadOp, since the encoding is changed by ptr
+      SmallVector<ttg::ConvertLayoutOp> opsToErase;
+      for (Operation *user : oldViewOp->getUsers()) {
+        if (auto convertLayoutOp = dyn_cast<ttg::ConvertLayoutOp>(user)) {
+          //if (hasAsyncLoadUsers(convertLayoutOp)) {
+          if (asAsyncLoadDst(convertLayoutOp)) { // only affect src cvt, not mask cvt
+            // replace all uses of userAlloc to newView
+            tt::replaceUsesAndPropagateType(builder, convertLayoutOp, newView);
+            opsToErase.push_back(convertLayoutOp);
+          }
+        }
+      }
+      for (auto cvtOp : opsToErase) {
+        cvtOp.erase();
+      }
       tt::replaceUsesAndPropagateType(builder, oldViewOp, newView);
       //oldViewOp->erase();
 }
@@ -632,6 +663,7 @@ void lowerMbar(tt::MbarAllocOp& op) {
     OpBuilder builder(op);
 
     Value barrierAlloc = createBarrierAlloc(op);
+    auto allocDescType = cast<triton::gpu::MemDescType>(barrierAlloc.getType());
 
     auto getBufferOps = getSmemAllocUsers<tt::GetBufferOp>(op);
 
@@ -640,13 +672,13 @@ void lowerMbar(tt::MbarAllocOp& op) {
     for (auto getBufferOp : getBufferOps){
         usedByTmaLoadOp = hasTMALoadUsers(getBufferOp);
         buffer = lowerGetBufferOp(getBufferOp, barrierAlloc);
-        replaceMbarBufferUses(getBufferOp, buffer);
+        replaceMbarBufferUses(getBufferOp, buffer, allocDescType);
         getBufferOp->erase();
         lowerMbarOps(buffer, usedByTmaLoadOp); // removed
     }
 
     usedByTmaLoadOp = hasTMALoadUsers(op);
-    replaceMbarBufferUses(op, barrierAlloc);
+    replaceMbarBufferUses(op, barrierAlloc, allocDescType);
     op->erase();
     lowerMbarOps(barrierAlloc, usedByTmaLoadOp);
     // Invalidate and deallocate barrier

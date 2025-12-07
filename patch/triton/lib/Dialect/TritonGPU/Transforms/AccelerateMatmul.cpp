@@ -595,11 +595,32 @@ public:
       auto dotXOp = dotOp;
       auto mma = rewriter.create<triton::nvidia_gpu::TCGen5MMAOp>(
           loc, tokType, a, b, accAlloc,
-          dotXOp.getMbar(),
+          Value(),
           /*useD=*/(bool)(dotXOp.getUseD()) ? (Value)dotXOp.getUseD() : (Value)vTrue,
-          /*pred=*/(bool)(dotXOp.getPred()) ? (Value)dotXOp.getPred() : (Value)vTrue);
-      if (dotXOp.getMbar())
+          /*pred=*/(bool)(dotXOp.getPred()) ? (Value)dotXOp.getPred() : (Value)vTrue
+          );
+      if (dotXOp.getMbar()) {
+        rewriter.setInsertionPoint(mma);
+
         mma.setIsAsync(true);
+
+        auto ctx = rewriter.getContext();
+        unsigned numCTAs = triton::gpu::TritonGPUDialect::getNumCTAs(
+            rewriter.getBlock()->getParentOp()->getParentOfType<ModuleOp>());
+        Attribute sharedMemorySpace =
+            SharedMemorySpaceAttr::get(rewriter.getContext());
+        auto barrierCTALayout =
+            CTALayoutAttr::get(/*context=*/ctx, /*CTAsPerCGA=*/{numCTAs},
+                                    /*CTASplitNum=*/{1}, /*CTAOrder=*/{0});
+        auto barrierEncoding =
+            SwizzledSharedEncodingAttr::get(ctx, 1, 1, 1, {0}, barrierCTALayout);
+        MemDescType memDescType = MemDescType::get(
+            {1}, rewriter.getI64Type(), barrierEncoding, sharedMemorySpace,
+            /*mutableMemory=*/true);
+        auto localAlloc =  rewriter.create<LocalAllocOp>(loc, memDescType, dotXOp.getMbar());
+        mma.addCompletionBarrier(localAlloc,
+                            rewriter.create<arith::ConstantIntOp>(loc, 1, 1));
+      }
       mma.setTwoCtas(useTwoCTAs);
     }
 

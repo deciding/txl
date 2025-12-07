@@ -4,6 +4,7 @@ from triton.language import core
 from triton.language.core import builtin, _shape_check_impl, _unwrap_if_constexpr, expand_dims, broadcast_to, _wrap_axis, _insertion_guard, \
         dtype, block_type
 from triton.language.standard import _elementwise_max, _sum_combine, _pick_sum_dtype, _argmax_combine_tie_break_fast, _argmax_combine_tie_break_left
+from triton import knobs
 from typing import Sequence, List
 from ..runtime.jit import jit
 from ._layouts import DistributedLayout
@@ -461,7 +462,7 @@ def _warp_reduce_with_indices(input, axis, combine_fn, keep_dims=False, _semanti
 
 @builtin
 def dotx(input, other, acc=None, mbar=None, useD=None, pred=None,
-        input_precision=None, allow_tf32=None, max_num_imprecise_acc=None, out_dtype=float32,
+        input_precision=None, allow_tf32=None, max_num_imprecise_acc=None, out_dtype=core.float32,
         _semantic=None):
     """
     Returns the matrix product of two blocks.
@@ -498,7 +499,7 @@ def dotx(input, other, acc=None, mbar=None, useD=None, pred=None,
     mbar = _unwrap_if_constexpr(mbar)
     useD = _unwrap_if_constexpr(useD)
     pred = _unwrap_if_constexpr(pred)
-    return _semantic.dot(input, other, acc, mbar, useD, pred, input_precision, max_num_imprecise_acc, out_dtype)
+    return _semantic.dotx(input, other, acc, mbar, useD, pred, input_precision, max_num_imprecise_acc, out_dtype)
 
 
 ### from standard

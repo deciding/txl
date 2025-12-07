@@ -3079,6 +3079,7 @@ def run_test(algo=0, dump_dir=None):
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
     #test_op(1, 2, 1536, 128, False, dtype=torch.float16, algo=4, no_tune=no_tune, profiling=PROFILING)
     test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=algo, no_tune=no_tune, profiling=PROFILING)
+    exit()
 
     print("BENCH...")
     bench_flash_attention.run(save_path=".", print_data=True, algo=algo, no_tune=no_tune)
@@ -3086,4 +3087,4 @@ def run_test(algo=0, dump_dir=None):
 if __name__ == "__main__":
     #run_test(6, dump_dir='dump/fa1113')
     #run_test(5, dump_dir='dump/1124fa')
-    run_test(3, dump_dir='dump/11251dot3')
+    run_test(3, dump_dir='dump/1207ablation')

@@ -507,7 +507,12 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, diff_select=None, log_dir=
         ]
     pass_funcs += [
         add_fence_insertion, # 0817
-        nvidia.passes.ttnvgpuir.add_lower_mma, # 0817
+    ]
+    if not use_txl:
+        pass_funcs += [
+            nvidia.passes.ttnvgpuir.add_lower_mma, # 0817
+        ]
+    pass_funcs += [
         passes.common.add_sccp, # 3.4.x
         passes.common.add_cse, # 0817
         passes.common.add_canonicalizer,

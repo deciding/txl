@@ -1546,6 +1546,7 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
     key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT"],
  )
 @txl.jit
+#@txl.jit(diff_mode='ttgir')
 def _attn_fwd_ws_tma_txl4(sm_scale, M,  #
               Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #
               HEAD_DIM: tl.constexpr,  #
@@ -3072,7 +3073,7 @@ def run_test(algo=0, dump_dir=None):
     print("TEST...")
     #test_op(1, 2, 1024, 128, False, dtype=torch.float16, no_tune=no_tune)
 
-    PROFILING=False
+    PROFILING=True
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=0, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=1, no_tune=no_tune, profiling=PROFILING)
     #test_op(16, 32, 1024, 128, False, dtype=torch.float16, algo=2, no_tune=no_tune, profiling=PROFILING)
@@ -3087,4 +3088,4 @@ def run_test(algo=0, dump_dir=None):
 if __name__ == "__main__":
     #run_test(6, dump_dir='dump/fa1113')
     #run_test(5, dump_dir='dump/1124fa')
-    run_test(3, dump_dir='dump/1207ablation')
+    run_test(4, dump_dir='dump/1207ablation')

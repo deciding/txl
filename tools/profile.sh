@@ -31,6 +31,7 @@ REGEX="flash|txl|coopA|softmax_kernel"
 #METRICS="sm__pipe_tensor_cycles_active"
 # NOTE: check stalls
 #METRICS="smsp__average_warp_latency_issue_stalled_gmma"
+METRICS="smsp__warps_issue_stalled_gmma"
 #METRICS="smsp__average_warp_latency_issue_stalled_barrier"
 #METRICS="smsp__average_warp_latency_issue_stalled_gmma,smsp__average_warp_latency_issue_stalled_barrier,smsp__average_warp_latency_issue_stalled_long_scoreboard"
 #METRICS="smsp__warp_issue_stalled_barrier_per_warp_active" # interesting
@@ -41,7 +42,7 @@ REGEX="flash|txl|coopA|softmax_kernel"
 #METRICS="l1tex__t_bytes_pipe_lsu_mem_local_op_ld,l1tex__t_bytes_pipe_lsu_mem_local_op_st"
 #METRICS="sm__sass_data_bytes_mem_local_op_ld,sm__sass_data_bytes_mem_local_op_st"
 # denormal
-METRICS="sm__sass_thread_inst_executed_op_fp16_pred_on,sm__sass_thread_inst_executed_op_fp32_pred_on"
+#METRICS="sm__sass_thread_inst_executed_op_fp16_pred_on,sm__sass_thread_inst_executed_op_fp32_pred_on"
 
 
 PY_SCRIPT=python/txl/tutorials/02-flash-attention.py 

@@ -114,11 +114,25 @@ def validate(mixed_precison=True, max_length=1024):
 
 print("start")
 validate(mixed_precison=True, max_length=1024)
-print("triton:", run_benchmark("triton"))
-print("txl:", run_benchmark("txl"))
-print("torch:", run_benchmark("torch"))
-print("triton long:", run_benchmark("triton", max_length=4096, need_gpt=False))
-print("txl long:", run_benchmark("txl", max_length=4096, need_gpt=False))
+# print("triton:", run_benchmark("triton"))
+# print("txl:", run_benchmark("txl"))
+# print("torch:", run_benchmark("torch"))
+# print("triton long:", run_benchmark("triton", max_length=4096, need_gpt=False))
+# print("txl long:", run_benchmark("txl", max_length=4096, need_gpt=False))
+for i in range(8, 11):
+    length = 2**i
+    torch_time = run_benchmark("torch", max_length=length)
+    triton_time = run_benchmark("triton", max_length=length)
+    txl_time = run_benchmark("txl", max_length=length)
+    speedup_triton = torch_time / triton_time
+    speedup_txl = torch_time / txl_time
+    print(f"length: {length}, torch: {torch_time:.2f} ms, triton: {triton_time:.2f} ms, txl: {txl_time:.2f} ms, speedup_triton: {speedup_triton:.2f}x, speedup_txl: {speedup_txl:.2f}x")
+for i in range(11, 13):
+    length = 2**i
+    triton_time = run_benchmark("triton", max_length=length, need_gpt=False)
+    txl_time = run_benchmark("txl", max_length=length, need_gpt=False)
+    speedup_txl = triton_time / txl_time
+    print(f"length: {length}, triton: {triton_time:.2f} ms, txl: {txl_time:.2f} ms, speedup_txl: {speedup_txl:.2f}x")
 # print("txl test:", run_benchmark("txl", max_length=1024, need_gpt=False))
 # print("triton test:", run_benchmark("triton", max_length=1024, need_gpt=False))
 # OLD SUMMARY

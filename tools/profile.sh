@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=1
+# export CUDA_VISIBLE_DEVICES=0
 export TRITON_ALWAYS_COMPILE=1
 
 CMD=$1 # ncu, nsys
@@ -43,12 +43,14 @@ REGEX="flash|txl|coopA|softmax_kernel"
 # denormal
 METRICS="sm__sass_thread_inst_executed_op_fp16_pred_on,sm__sass_thread_inst_executed_op_fp32_pred_on"
 
-
-PY_SCRIPT=python/txl/tutorials/02-flash-attention.py 
+PY_SCRIPT=test_txl.py
+# PY_SCRIPT=python/txl/tutorials/02-flash-attention.py 
 #PY_SCRIPT=python/txl/tutorials/04-softmax.py
 #PY_SCRIPT=python/txl/tests/wgid.py
 #PY_SCRIPT="python/txl/tutorials/01-matmul.py -K 16384"
 #PY_SCRIPT="python/txl/tutorials/01-matmul.py -K 2048"
+
+OUTPUT="/workspace/dump/nsys_profile"
 
 # Convert comma-separated sections to multiple --section flags
 section_flags=()
@@ -71,7 +73,7 @@ elif [ "$CMD" == "nsys" ]; then
     nsys profile \
         -t cuda \
         ${OUTPUT:+-o "$OUTPUT"} \
-        python $PY_SCRIPT
+        python -u $PY_SCRIPT
 else
     echo "Usage: $0 [ncu|nsys]"
     exit 1

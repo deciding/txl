@@ -1,8 +1,9 @@
 from modal import Image, App, Volume
 import pathlib
 local_dir = pathlib.Path(__file__).parent
+root_dir = local_dir.parent
 requirements_file = local_dir / "requirements.txt"
-txl_wheel_file = local_dir / "txl-3.4.0-cp312-cp312-linux_x86_64.whl"
+txl_wheel_file = root_dir / "txl-3.4.0-cp312-cp312-linux_x86_64.whl"
 
 test_file_bench = local_dir / "bench.py"
 test_file_gpt = local_dir / "gpt.py"

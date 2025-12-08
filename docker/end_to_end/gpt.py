@@ -355,7 +355,7 @@ def load_model_only(device):
     config = GPTConfig(
         vocab_size=50304,
         block_size=16384,
-        n_layer=24,
+        n_layer=12,
         n_head=12,
         n_embd=768,
         dropout=0.0,

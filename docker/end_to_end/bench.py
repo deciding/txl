@@ -2,6 +2,7 @@
 
 import torch
 import triton
+import time
 from transformers import AutoTokenizer
 from gpt import convert_hf_and_load_model, load_model_only
 
@@ -78,6 +79,38 @@ def run_benchmark(provider, warmup=25, rep=100, mixed_precison=True, max_length=
           fn = lambda: txl_model(inputs["input_ids"])
           return triton.testing.do_bench(fn, warmup=warmup, rep=rep)
 
+def run_benchmark_all(warmup=25, rep=100, mixed_precison=True, max_length=1024):
+    assert torch.cuda.is_available()
+    device = "cuda"
+    model_id = "gpt2"
+    model, hf_model, txl_model = convert_hf_and_load_model(model_id, device)
+    if mixed_precison:
+      model.to(torch.float16)
+      txl_model.to(torch.float16)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    inputs = tokenizer([STRING*1000] * 32, return_tensors="pt", max_length=max_length, truncation=True)
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    print("input_ids shape:", inputs["input_ids"].shape)
+    with torch.no_grad():
+      def fn():
+        if mixed_precison:
+          with torch.autocast(device_type="cuda", dtype=torch.float16):
+            return hf_model(**inputs).last_hidden_state
+        else:
+          return hf_model(**inputs).last_hidden_state
+      torch_time = triton.testing.do_bench(fn, warmup=warmup, rep=rep)
+      torch.cuda.synchronize()
+      time.sleep(1)  
+      fn = lambda: model(inputs["input_ids"])
+      triton_time = triton.testing.do_bench(fn, warmup=warmup, rep=rep)
+      torch.cuda.synchronize()
+      time.sleep(1)  
+      fn = lambda: txl_model(inputs["input_ids"])
+      txl_time = triton.testing.do_bench(fn, warmup=warmup, rep=rep)
+      torch.cuda.synchronize()
+      time.sleep(1)  
+    return torch_time, triton_time, txl_time
+
 def validate(mixed_precison=True, max_length=1024):
     assert torch.cuda.is_available()
     device = "cuda"
@@ -113,26 +146,24 @@ def validate(mixed_precison=True, max_length=1024):
 # triton: batch_size = 2048 && t = 3153.70
 
 print("start")
-validate(mixed_precison=True, max_length=1024)
+# validate(mixed_precison=True, max_length=1024)
 # print("triton:", run_benchmark("triton"))
 # print("txl:", run_benchmark("txl"))
 # print("torch:", run_benchmark("torch"))
 # print("triton long:", run_benchmark("triton", max_length=4096, need_gpt=False))
 # print("txl long:", run_benchmark("txl", max_length=4096, need_gpt=False))
-for i in range(8, 11):
+for i in range(8, 13):
     length = 2**i
-    torch_time = run_benchmark("torch", max_length=length)
-    triton_time = run_benchmark("triton", max_length=length)
-    txl_time = run_benchmark("txl", max_length=length)
+    torch_time , triton_time, txl_time = run_benchmark_all(max_length=length)
     speedup_triton = torch_time / triton_time
     speedup_txl = torch_time / txl_time
     print(f"length: {length}, torch: {torch_time:.2f} ms, triton: {triton_time:.2f} ms, txl: {txl_time:.2f} ms, speedup_triton: {speedup_triton:.2f}x, speedup_txl: {speedup_txl:.2f}x")
-for i in range(11, 13):
-    length = 2**i
-    triton_time = run_benchmark("triton", max_length=length, need_gpt=False)
-    txl_time = run_benchmark("txl", max_length=length, need_gpt=False)
-    speedup_txl = triton_time / txl_time
-    print(f"length: {length}, triton: {triton_time:.2f} ms, txl: {txl_time:.2f} ms, speedup_txl: {speedup_txl:.2f}x")
+# for i in range(11, 13):
+#     length = 2**i
+#     triton_time = run_benchmark("triton", max_length=length, need_gpt=False)
+#     txl_time = run_benchmark("txl", max_length=length, need_gpt=False)
+#     speedup_txl = triton_time / txl_time
+#     print(f"length: {length}, triton: {triton_time:.2f} ms, txl: {txl_time:.2f} ms, speedup_txl: {speedup_txl:.2f}x")
 # print("txl test:", run_benchmark("txl", max_length=1024, need_gpt=False))
 # print("triton test:", run_benchmark("triton", max_length=1024, need_gpt=False))
 # OLD SUMMARY

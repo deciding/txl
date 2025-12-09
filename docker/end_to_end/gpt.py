@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
-from transformers import GPT2Model as HFGPT2
+from transformers import GPT2Model, GPT2Config
 
 from kernels import (flash_attention_v1, fused_embeddings, fused_ffn,
                      fused_layer_norm, matmul_and_split_qkv)
@@ -339,7 +339,15 @@ def convert_huggingface_to_triton(hf_sd, hf_config):
 
 
 def convert_hf_and_load_model(model_id, device):
-    hf_model = HFGPT2.from_pretrained(model_id)
+    hf_config = GPT2Config(
+        n_positions=16384,
+        n_ctx=16384,
+        n_layer=12,
+        n_head=12,
+        n_embd=768,
+        vocab_size=50304,
+    )
+    hf_model = GPT2Model(hf_config)
     state_dict, config = convert_huggingface_to_triton(
         hf_model.state_dict(), hf_model.config
     )

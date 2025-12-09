@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 length_labels = [256, 512, 1024, 2048, 4096]          # 用来当 x 轴刻度标签
 x = list(range(len(length_labels)))       # 实际用于绘图的 x 坐标：0,1,2
 
-torch_times  = [14.92, 28.43, 55.59]
+torch_times  = [14.92, 28.43, 55.59, 113.88, 240.12]
 triton_times = [5.93, 13.09, 32.74, 76.94, 202.10]
 txl_times    = [8.28, 10.53, 22.13, 45.38, 102.71]
 

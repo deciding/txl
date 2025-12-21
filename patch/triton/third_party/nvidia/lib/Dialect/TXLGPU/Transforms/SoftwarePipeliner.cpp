@@ -1431,6 +1431,85 @@ void lowerFenceProxyAsync(ModuleOp moduleOp) {
   });
 }
 
+struct CompressIfYieldPattern : public OpRewritePattern<scf::IfOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::IfOp ifOp,
+                                PatternRewriter &rewriter) const override {
+    if (!ifOp.elseBlock()){
+        return failure();
+    }
+    auto thenYield = cast<scf::YieldOp>(ifOp.thenBlock()->getTerminator());
+    auto elseYield = cast<scf::YieldOp>(ifOp.elseBlock()->getTerminator());
+
+    // Step 1: dedup operands in each branch
+    SmallVector<Value> thenVals, elseVals;
+    llvm::SmallDenseMap<Value, int> index;
+    llvm::SmallDenseMap<int, int> oldToNewIndices;
+    auto dedup = [&](OperandRange ops, SmallVector<Value> &out) {
+      int i = 0;
+      for (Value v : ops) {
+        if (!index.contains(v)) {
+          index[v] = out.size();
+          out.push_back(v);
+        }
+        oldToNewIndices[i] = index[v];
+        i+=1;
+      }
+      index.clear();
+    };
+
+    dedup(thenYield.getOperands(), thenVals);
+    dedup(elseYield.getOperands(), elseVals);
+
+    // Step 2: the dedup lists must match in length and type
+    if (thenVals.size() != elseVals.size())
+      return failure();
+    if (thenYield->getNumOperands() == thenVals.size())
+      return failure();
+    // (Also check matching element types...)
+
+    // Step 3: Build new IfOp
+    auto newIf = rewriter.create<scf::IfOp>(
+        ifOp.getLoc(),
+        TypeRange(ValueRange(thenVals)), // fewer results
+        ifOp.getCondition(),
+        /*withElse=*/true);
+
+    newIf.getThenRegion().front().erase();
+    newIf.getElseRegion().front().erase();
+    // Replace bodies and yields
+    rewriter.inlineRegionBefore(ifOp.getThenRegion(), newIf.getThenRegion(),
+                                newIf.getThenRegion().begin());
+    rewriter.inlineRegionBefore(ifOp.getElseRegion(), newIf.getElseRegion(),
+                                newIf.getElseRegion().begin());
+
+    // Patch yields
+    auto newThenYield =
+        cast<scf::YieldOp>(newIf.thenBlock()->getTerminator());
+    auto newElseYield =
+        cast<scf::YieldOp>(newIf.elseBlock()->getTerminator());
+
+    rewriter.modifyOpInPlace(newThenYield, [&]{
+      newThenYield->setOperands(thenVals);
+    });
+    rewriter.modifyOpInPlace(newElseYield, [&]{
+      newElseYield->setOperands(elseVals);
+    });
+
+    unsigned newIdx = 0;
+    for (unsigned oldIdx = 0; oldIdx < thenYield.getNumOperands(); ++oldIdx) {
+      Value oldRes = ifOp.getResult(oldIdx);
+      Value newRes = newIf.getResult(oldToNewIndices[oldIdx]);
+      oldRes.replaceAllUsesWith(newRes);
+    }
+
+    //rewriter.eraseOp(ifOp);
+    return success();
+  }
+};
+
+
 class TXLGPUPipelinePass : public impl::TXLGPUPipelineBase<TXLGPUPipelinePass> {
 
 public:
@@ -1520,6 +1599,8 @@ public:
         getOperation().getContext()->getLoadedDialect<arith::ArithDialect>();
     RewritePatternSet patterns(getOperation().getContext());
     arithDialect->getCanonicalizationPatterns(patterns);
+    // TODO: to be finished
+    //patterns.add<CompressIfYieldPattern>(getOperation()->getContext());
     if (applyPatternsGreedily(getOperation(), std::move(patterns)).failed())
       return signalPassFailure();
 

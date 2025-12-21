@@ -58,5 +58,5 @@ def test_flash_attention():
         return
 
     from test_txl import run_test
-    run_test(3, "/workspace/dump")
+    run_test(10, "/workspace/dump")
     #run_test(3)

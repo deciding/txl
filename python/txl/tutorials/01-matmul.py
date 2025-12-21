@@ -409,7 +409,7 @@ def matmul_kernel_tma_persistent(a_desc, b_desc, c_desc,  #
             c_desc.store([offs_am_c, offs_bn_c], accumulator)
 
 
-def matmul_tma_persistent(a, b, warp_specialize: bool):
+def matmul_tma_persistent(a, b, warp_specialize: bool=True):
     # Check constraints.
     assert a.shape[1] == b.shape[1], "Incompatible dimensions"  # b is transposed
     assert a.dtype == b.dtype, "Incompatible dtypes"
@@ -826,8 +826,8 @@ def matmul_async_load_txl(a, b):
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
-#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
-@txl.jit(launch_metadata=_matmul_launch_metadata)
+@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+#@txl.jit(launch_metadata=_matmul_launch_metadata)
 def matmul_naive_tma_txl_kernel(
     a_desc,
     b_desc,
@@ -2709,8 +2709,8 @@ def matmul_persistent_nows_tma_txl_bw3(a, b):
     key=["M", "N", "K"],
     use_cuda_graph=True,
 )
-#@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
-@txl.jit(launch_metadata=_matmul_launch_metadata)
+@txl.jit(launch_metadata=_matmul_launch_metadata, diff_mode='ttgir')
+#@txl.jit(launch_metadata=_matmul_launch_metadata)
 #@txl.jit(launch_metadata=_matmul_launch_metadata, src_file='/workspace/matmul_persistent_nows_tma_txl_bw_kernel.ptx')
 def matmul_persistent_nows_tma_txl_bw_kernel4(
     a_desc,
@@ -3042,6 +3042,8 @@ def validate(M, N, K, dtype, log=False, algo='0'):
 
     if algo == "0":
         run_test(naive_result, lambda a, b: matmul_tma_persistent(a, b), a, b, "TMA Original Persistent", log=True)
+    if algo == "1":
+        run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
     elif algo == 'b1':
         run_test(naive_result, lambda a, b: matmul_bw1(a, bn), a, bn, "Blackwell simple matmul", log=True)
     elif algo == 'b2':
@@ -3106,7 +3108,7 @@ def test_matmul(dump_dir=None, algo='0'):
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-wgmma-pipeline"
-    knobs.runtime.override_arch='sm100'
+    #knobs.runtime.override_arch='sm100'
     knobs.autotuning.print=True
     knobs.compilation.always_compile=True
 
@@ -3135,11 +3137,12 @@ def test_matmul(dump_dir=None, algo='0'):
 
         proton.start("matmul", hook="triton")
         #proton.deactivate()
-        for K in range(args.K_range[0], args.K_range[1] + 1, args.K_step):
-            bench(K, dtype, algo=algo)
+        #for K in range(args.K_range[0], args.K_range[1] + 1, args.K_step):
+        for K in range(10, 15):
+            bench(2**K, dtype, algo=algo)
         proton.finalize()
         show_profile(args.prec, "matmul")
 
 if __name__ == "__main__":
-    test_matmul('dump/1206mm', 'b4')
+    test_matmul('dump/1206mm', '1')
     #test_matmul(None, 'b4')

@@ -87,6 +87,7 @@ cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TritonGPUToLLVM.cpp 
 cp ${FROM_DIR}/third_party/nvidia/triton_nvidia.cc ${TO_DIR}/third_party/nvidia/
 
 cp ${FROM_DIR}/third_party/proton/Dialect/lib/ProtonToProtonGPU/ProtonToProtonGPUPass.cpp ${TO_DIR}/third_party/proton/Dialect/lib/ProtonToProtonGPU/
+cp ${FROM_DIR}/third_party/proton/proton/hooks/instrumentation.py ${TO_DIR}/third_party/proton/proton/hooks
 cp ${FROM_DIR}/third_party/proton/proton/language.py ${TO_DIR}/third_party/proton/proton/
 
 # make sure folder no exist

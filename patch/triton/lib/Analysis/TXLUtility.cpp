@@ -206,6 +206,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
           continue;
         }
 
+        // Misc: other specific ops
         if (auto reduceOp = dyn_cast<ReduceOp>(user)){
             auto userRankedType = dyn_cast<RankedTensorType>(oldType);
             auto newRankedType = dyn_cast<RankedTensorType>(newType);
@@ -232,6 +233,27 @@ void propagateTypeRecursively(Value &val, Type newType) {
             propagateTypeRecursively(userResult, newSliceTy);
             continue;
         }
+
+        if (auto expandDimsOp = dyn_cast<ExpandDimsOp>(user)) {
+            SmallVector<Type> returnTypes;
+            if (failed(expandDimsOp.inferReturnTypes(
+                            expandDimsOp.getContext(),
+                            expandDimsOp.getLoc(),
+                            expandDimsOp->getOperands(),
+                            expandDimsOp->getAttrDictionary(),
+                            expandDimsOp->getPropertiesStorage(),
+                            expandDimsOp->getRegions(),
+                            returnTypes))) {
+                // handle failure
+                user->emitError("Propagation: ExpandDimsOp not able to infer the result type");
+            }
+            assert(returnTypes.size() && "ExpandDimsOp return type must have been inferred");
+            auto resType = dyn_cast<RankedTensorType>(returnTypes[0]);
+            assert(resType && "ExpandDimsOp return type must be RankedTensorType");
+            expandDimsOp.getResult().setType(resType);
+            continue;
+        }
+
         // TODO: should we givein to Elementwise?
         if (user->hasTrait<mlir::OpTrait::Elementwise>()){
           // Priority 3: as add_ptr offsets, should propagate also back to ptr type

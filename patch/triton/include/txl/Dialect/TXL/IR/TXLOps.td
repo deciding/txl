@@ -649,7 +649,9 @@ def TXL_SmemReshapeOp : TXL_Op<"smem_reshape", [Pure,
   let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
 }
 
-def TXL_DotXOp : TXL_Op<"dotx", [Pure, AttrSizedOperandSegments,
+def TXL_DotXOp : TXL_Op<"dotx", [AttrSizedOperandSegments,
+                             //MemoryEffects<[MemWrite<SmemMemory>]>,
+                             DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
                              DeclareOpInterfaceMethods<InferTypeOpInterface>,
                              DeclareOpInterfaceMethods<DotOpInterface>,
                              TypesMatchWith<"result's type matches accumulator's type",
@@ -673,6 +675,8 @@ def TXL_DotXOp : TXL_Op<"dotx", [Pure, AttrSizedOperandSegments,
       TTG_TensorOrMemDesc:$mbar,
       Optional<I1>:$useD,
       Optional<I1>:$pred,
+      UnitAttr:$is_async,
+      UnitAttr:$two_ctas,
       DefaultValuedAttr<TT_InputPrecisionAttr, "::mlir::triton::InputPrecision::IEEE">:$inputPrecision,
       DefaultValuedAttr<I32Attr, "0">:$maxNumImpreciseAcc
     );

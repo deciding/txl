@@ -1,3 +1,4 @@
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -456,12 +457,11 @@ void replaceSmemBufferUses(
       SmallVector<ttg::ConvertLayoutOp> opsToErase;
       for (Operation *user : oldViewOp->getUsers()) {
         if (auto convertLayoutOp = dyn_cast<ttg::ConvertLayoutOp>(user)) {
-          //if (hasAsyncLoadUsers(convertLayoutOp)) {
-          if (asAsyncLoadDst(convertLayoutOp)) { // only affect src cvt, not mask cvt
+          //if (asAsyncLoadDst(convertLayoutOp)) { // TODO: why mask matters? only affect src cvt, not mask cvt
             // replace all uses of userAlloc to newView
-            tt::replaceUsesAndPropagateType(builder, convertLayoutOp, newView);
+            //tt::replaceUsesAndPropagateType(builder, convertLayoutOp, newView);
+            replaceAndPropagate(convertLayoutOp, newView);
             opsToErase.push_back(convertLayoutOp);
-          }
         }
       }
       for (auto cvtOp : opsToErase) {
@@ -486,8 +486,10 @@ void replaceSmemBufferUses(
       }
       for (OpOperand *use: opds){
         Operation *user = use->getOwner();
+        int opIdx = use->getOperandNumber();
 
         // TODO: now need to enumerate all possible users of GetBufferOp
+        // Loop IterVar is especially an error case.
 
         if (auto asyncLoadOp = dyn_cast<tt::AsyncLoadOp>(user)) {
             if (use->getOperandNumber() == 0)
@@ -523,10 +525,50 @@ void replaceSmemBufferUses(
         else if (isa<tt::SmemIndexOp, tt::SmemSubsliceOp, tt::SmemTransOp, tt::SmemReshapeOp>(user)) {
             user->setOperand(0, newView);
         }
+        else if (auto forOp = dyn_cast<scf::ForOp>(user)) {
+          // Only replace if this use corresponds to an iter arg init.
+          // In scf.for: operands = lb, ub, step, initArgs...
+          // propagate to forop
+          Value suspiciousInput = forOp->getOperand(opIdx);
+          Type oldType = suspiciousInput.getType();
+          Type newType = newView.getType();
+          changeForOpArgType(forOp, opIdx, newType);
+          forOp->setOperand(opIdx, newView);
+          Value userResult = forOp->getResult(opIdx-3);
+          userResult.setType(newType);
+          auto iterArgNum = opIdx - 3; // TODO only 1 induction?
+          auto bbArg = forOp.getRegionIterArgs()[iterArgNum];
+          propagateTypeRecursively(bbArg, newType);
+          propagateTypeRecursively(userResult, newType);
+        }
+        else if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
+            // heuritic: directly yield get_buffer means, the smem is used for the whole loop,
+            // thus no local_load is needed
+            yieldOp->setOperand(opIdx, newView);
+            Region *region = yieldOp->getParentRegion();
+            Operation *parentOp = region->getParentOp();
+            auto ifOp = dyn_cast<scf::IfOp>(parentOp);
+            //auto ifOp = yieldOp->getParentOfType<scf::IfOp>();
+            if (ifOp) {
+                Value userResult = ifOp->getResult(opIdx);
+                Type newType = newView.getType();
+                userResult.setType(newType);
+                propagateTypeRecursively(userResult, newType);
+            }
+            auto forOp = dyn_cast<scf::ForOp>(parentOp);
+            //auto forOp = yieldOp->getParentOfType<scf::ForOp>();
+            if (forOp) {
+                Value userResult = forOp->getResult(opIdx);
+                Type newType = newView.getType();
+                userResult.setType(newType);
+                propagateTypeRecursively(userResult, newType);
+            }
+        }
         else {
             builder.setInsertionPoint(user);
             auto sharedLoad = builder.create<ttg::LocalLoadOp>(
                 user->getLoc(), oldViewOp->getResultTypes().front(), newView);
+            //sharedLoad->setAttr("TXL_DEBUG", builder.getStringAttr("test"));
             auto result = sharedLoad->getResults();
             oldViewOp->replaceAllUsesWith(result);
         }
@@ -1223,7 +1265,9 @@ void lowerAsyncLoadWaitOp(tt::AsyncLoadWaitOp &asyncLoadWait) {
     asyncLoadWait->erase();
 }
 void replaceForIfResultType(scf::YieldOp &yieldOp){
-    auto parentOp = yieldOp->getParentOp();
+    Region *region = yieldOp->getParentRegion();
+    Operation *parentOp = region->getParentOp();
+    //auto parentOp = yieldOp->getParentOp();
     if (isa<scf::IfOp, scf::ForOp>(parentOp)){
         //auto ifOp = dyn_cast<scf::IfOp>(parentOp);
         assert((yieldOp->getNumOperands() == parentOp->getNumResults()) && "Num of yields not same as num of if/for op results\n");
@@ -1355,6 +1399,53 @@ void lowerTmemAllocs(ModuleOp moduleOp) {
   }
 }
 
+void lowerDotXOp(tt::DotXOp dotXOp) {
+  OpBuilder builder(dotXOp);
+  Location loc = dotXOp->getLoc();
+  auto tokType = builder.getType<AsyncTokenType>();
+  auto vTrue = builder.create<arith::ConstantIntOp>(loc, 1, 1);
+  auto mma = builder.create<triton::nvidia_gpu::TCGen5MMAOp>(
+      loc, tokType,
+      dotXOp->getOperand(0),
+      dotXOp->getOperand(1),
+      dotXOp->getOperand(2),
+      Value(),
+      /*useD=*/(bool)(dotXOp.getUseD()) ? (Value)dotXOp.getUseD() : (Value)vTrue,
+      /*pred=*/(bool)(dotXOp.getPred()) ? (Value)dotXOp.getPred() : (Value)vTrue
+      );
+  if (dotXOp.getMbar()) {
+    builder.setInsertionPoint(mma);
+    mma.setIsAsync(true);
+
+    auto ctx = builder.getContext();
+    unsigned numCTAs = triton::gpu::TritonGPUDialect::getNumCTAs(
+        builder.getBlock()->getParentOp()->getParentOfType<ModuleOp>());
+    Attribute sharedMemorySpace =
+        SharedMemorySpaceAttr::get(builder.getContext());
+    auto barrierCTALayout =
+        CTALayoutAttr::get(/*context=*/ctx, /*CTAsPerCGA=*/{numCTAs},
+                                /*CTASplitNum=*/{1}, /*CTAOrder=*/{0});
+    auto barrierEncoding =
+        SwizzledSharedEncodingAttr::get(ctx, 1, 1, 1, {0}, barrierCTALayout);
+    MemDescType memDescType = MemDescType::get(
+        {1}, builder.getI64Type(), barrierEncoding, sharedMemorySpace,
+        /*mutableMemory=*/true);
+    mma.addCompletionBarrier(dotXOp.getMbar(),
+                        builder.create<arith::ConstantIntOp>(loc, 1, 1));
+  }
+}
+
+void lowerDotXOps(ModuleOp moduleOp) {
+  SmallVector<tt::DotXOp> dotXOps;
+
+  moduleOp->walk([&](tt::DotXOp dotXOp) { dotXOps.push_back(dotXOp); });
+  if (dotXOps.empty())
+    return;
+  for (auto dotXOp : dotXOps) {
+    lowerDotXOp(dotXOp);
+  }
+}
+
 void removeRedundantTMEMAllocs(ModuleOp moduleOp) {
   SmallVector<ttng::TMEMAllocOp> tmemAllocs;
 
@@ -1362,36 +1453,71 @@ void removeRedundantTMEMAllocs(ModuleOp moduleOp) {
   if (tmemAllocs.empty())
     return;
   for (auto tmemAllocOp : tmemAllocs) {
-      Value src = tmemAllocOp.getSrc();
-      if (src) {
+      //Value src = tmemAllocOp.getSrc();
+      if (tmemAllocOp->getNumOperands()) {
+        Value src = tmemAllocOp->getOperand(0);
+        // txl tmem alloc op
         auto srcTMEMAllocOp = isFromTmemAlloc(src);
         if (srcTMEMAllocOp) {
             Operation* curOp = srcTMEMAllocOp;
+            bool isBArg = false;
             while (true) {
+                // first check whether tmem_allocx is passed from for iter arg
+                // TODO: the block arg should be with type tmem as a MemDescView.
+                if (auto barg = llvm::dyn_cast<BlockArgument>(src)) {
+                    //Block *block = barg.getOwner();
+                    //Region *region = block->getParent();
+                    //Operation *parentOp = region->getParentOp();
+                    //unsigned argIdx = barg.getArgNumber();
+                    //if (auto forOp = llvm::dyn_cast<scf::ForOp>(parentOp)) {
+                    //  // Only iter_args map to block arguments after induction var
+                    //  // arg0 = induction variable
+                    //  if (argIdx > 0) {
+                    //    unsigned iterIdx = argIdx - 1;
+                    //    src = forOp.getInitArgs()[iterIdx];
+                    //    // 'init' is the initial value for this block argument
+                    //  }
+                    //}
+                    isBArg = true;
+                    //tmemAllocOp->getResult(0).replaceAllUsesWith(src);
+                    break;
+                }
                 curOp = src.getDefiningOp();
                 if (!curOp)
                     break;
                 if (auto convert = dyn_cast<ttg::ConvertLayoutOp>(curOp)) {
-                  src = convert.getSrc();
+                  //src = convert.getSrc();
+                  src = convert->getOperand(0);
                   continue;
                 }
 
                 if (auto localLoad = dyn_cast<ttg::LocalLoadOp>(curOp)) {
-                  src = localLoad.getSrc();
+                  //src = localLoad.getSrc();
+                  src = localLoad->getOperand(0);
                   continue;
                 }
+
                 break;
             }
+            if (!curOp)
+                continue;
             assert((curOp->hasTrait<OpTrait::MemDescViewTrait>() || isa<ttng::TMEMAllocOp>(curOp)) && "redundant tmem_alloc must be from another tmem_alloc directly or its MemDescView ops");
             auto srcTMEMAlloc = dyn_cast<ttng::TMEMAllocOp>(srcTMEMAllocOp);
             assert(srcTMEMAlloc && "assume here TmemAllocOp lowering is done");
             auto oldTy = srcTMEMAlloc.getType();
             auto newTy = tmemAllocOp.getType();
             assert(oldTy.getEncoding() == newTy.getEncoding() && "assume default and user set same tmem alloc enc");
-            tmemAllocOp->getResult(0).replaceAllUsesWith(curOp->getResult(0));
+
+            if (!isBArg) {
+                tmemAllocOp->getResult(0).replaceAllUsesWith(curOp->getResult(0));
+            }
+            else {
+                tmemAllocOp->getResult(0).replaceAllUsesWith(src);
+            }
             if (tmemAllocOp->getNumResults() > 1 && srcTMEMAlloc->getNumResults() > 1) {
               tmemAllocOp->getResult(1).replaceAllUsesWith(srcTMEMAlloc->getResult(1));
             }
+            tmemAllocOp.erase();
         }
       }
   }
@@ -1404,9 +1530,6 @@ void lowerLoads(ModuleOp moduleOp) {
   });
   moduleOp->walk([&](tt::AsyncLoadWaitOp asyncLoadWaitOp) {
       lowerAsyncLoadWaitOp(asyncLoadWaitOp);
-  });
-  moduleOp->walk([&](scf::YieldOp yieldOp) {
-      replaceForIfResultType(yieldOp);
   });
   moduleOp->walk([&](tt::TmaLoadOp tmaLoadOp) {
       lowerTmaLoadOp(tmaLoadOp);
@@ -1449,6 +1572,20 @@ struct CompressIfYieldPattern : public OpRewritePattern<scf::IfOp> {
     auto dedup = [&](OperandRange ops, SmallVector<Value> &out) {
       int i = 0;
       for (Value v : ops) {
+        if (auto barg = llvm::dyn_cast<BlockArgument>(v)) {
+            bool nonYieldOpFound = false;
+            for (Operation* innerOp : barg.getUsers()){
+                if (!isa<scf::YieldOp>(innerOp)) {
+                    nonYieldOpFound = true;
+                    break;
+                }
+            }
+            if (nonYieldOpFound) {
+              index[v] = out.size();
+              out.push_back(v);
+            }
+        }
+        // case1: repeat use of ifop operand
         if (!index.contains(v)) {
           index[v] = out.size();
           out.push_back(v);
@@ -1465,6 +1602,7 @@ struct CompressIfYieldPattern : public OpRewritePattern<scf::IfOp> {
     // Step 2: the dedup lists must match in length and type
     if (thenVals.size() != elseVals.size())
       return failure();
+    // size not changed? no need new If
     if (thenYield->getNumOperands() == thenVals.size())
       return failure();
     // (Also check matching element types...)
@@ -1545,10 +1683,15 @@ public:
       LDBG("DONE\n\n\n");
     });
     lowerTmemAllocs(m);
-    removeRedundantTMEMAllocs(m);
     LLVM_DEBUG({
       LDBG("SoftwarePipeliner After TmemAllocs\n");
       //m.dump();
+      LDBG(printModuleOp(m));
+      LDBG("DONE\n\n\n");
+    });
+    removeRedundantTMEMAllocs(m);
+    LLVM_DEBUG({
+      LDBG("SoftwarePipeliner After Removing RedundantTMEMAllocs\n");
       LDBG(printModuleOp(m));
       LDBG("DONE\n\n\n");
     });
@@ -1581,6 +1724,14 @@ public:
       LDBG("DONE\n\n\n");
     });
 
+    //lowerDotXOps(m);
+    //LLVM_DEBUG({
+    //  LDBG("SoftwarePipeliner After lowerDotXOps\n");
+    //  //m.dump();
+    //  LDBG(printModuleOp(m));
+    //  LDBG("DONE\n\n\n");
+    //});
+
     pipelineWgmma(m);
     lowerFenceProxyAsync(m);
     LLVM_DEBUG({
@@ -1595,12 +1746,21 @@ public:
 
     // Clean up arithmetic before applying the next level of pipelining to
     // simplify the IR.
+
+    // sometimes the yield op is not consisitent with if/for ops
+    m->walk([&](scf::YieldOp yieldOp) {
+        replaceForIfResultType(yieldOp);
+    });
+
     auto arithDialect =
         getOperation().getContext()->getLoadedDialect<arith::ArithDialect>();
     RewritePatternSet patterns(getOperation().getContext());
     arithDialect->getCanonicalizationPatterns(patterns);
+    auto *scfDialect =
+        getOperation().getContext()->getLoadedDialect<scf::SCFDialect>();
+    scfDialect->getCanonicalizationPatterns(patterns);
     // TODO: to be finished
-    //patterns.add<CompressIfYieldPattern>(getOperation()->getContext());
+    patterns.add<CompressIfYieldPattern>(getOperation()->getContext());
     if (applyPatternsGreedily(getOperation(), std::move(patterns)).failed())
       return signalPassFailure();
 

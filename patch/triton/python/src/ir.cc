@@ -1688,7 +1688,7 @@ void init_triton_ir(py::module &&m) {
              Value useDVal = useD.value_or(Value());
              Value predVal = pred.value_or(Value());
              return self.create<DotXOp>(c.getType(), a, b, c,
-                                       mbarVal, useDVal, predVal,
+                                       mbarVal, useDVal, predVal, false, false,
                                        inputPrecision,
                                        maxNumImpreciseAcc);
            })

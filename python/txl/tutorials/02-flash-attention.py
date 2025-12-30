@@ -1434,11 +1434,10 @@ def _attn_fwd_ws_tma_txl3(sm_scale, M,  #
                 txl.bar_wait(9, 256)
 
             # TODO
-            if start_n == low+BLOCK_N:
-                if txl.is_warpgroup([1]):
-                    cur_mbar_QK = txl.get_buffer(cMbar_QK1, bufIdxRK)
-                    cur_mbar_PV = txl.get_buffer(cMbar_PV1, bufIdxRV)
-                    qk = tl.dot(bQ0i, cur_bK.T)
+            if txl.is_warpgroup([1]):
+                cur_mbar_QK = txl.get_buffer(cMbar_QK1, bufIdxRK)
+                cur_mbar_PV = txl.get_buffer(cMbar_PV1, bufIdxRV)
+                qk = tl.dot(bQ0i, cur_bK.T)
 
             else: # [2]
                 cur_mbar_QK = txl.get_buffer(cMbar_QK2, bufIdxRK)
@@ -4326,6 +4325,6 @@ def run_test(algo=0, dump_dir=None):
 if __name__ == "__main__":
     #run_test(6, dump_dir='dump/fa1113')
     #run_test(5, dump_dir='dump/1124fa')
-    #run_test(4, dump_dir='dump/1220fa')
-    run_test(11, dump_dir='dump/1220fa')
+    run_test(3, dump_dir='dump/1220fa')
+    #run_test(10, dump_dir='dump/1220fa')
     #run_test(2, dump_dir='dump/1216fa2')

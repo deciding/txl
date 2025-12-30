@@ -40,12 +40,6 @@ static inline void insertBarrierTXL(OpBuilder &builder, Operation *op) {
   }
 }
 
-bool isFakeMemoryEffects(Operation* op){
-    bool fakeInTXL =  isa<triton::MbarExpectOp, triton::MbarWaitOp, triton::MbarArriveOp, triton::WGDotWaitOp, triton::FenceProxyAsyncOp, triton::TmaStoreOp, triton::TmaStoreWaitOp, triton::NamedBarrierArriveOp, triton::NamedBarrierWaitOp, triton::AsyncLoadWaitOp>(op);
-    bool fakeInTXLGPU = false;
-    return fakeInTXL || fakeInTXLGPU;
-}
-
 bool isTritonWrongSync(Operation* op){
     bool isWrong =  isa<ttng::InitBarrierOp>(op); // smem_index ignored offset, making overlap
     isWrong = isWrong || isa<ttng::AsyncTMACopyGlobalToLocalOp>(op); // tma_load + expect, as WAW
@@ -253,7 +247,7 @@ void MembarAnalysis::update(Operation *op, BlockInfo *blockInfo,
   } else {
     // Intra-function dependencies
     if (auto memoryEffectOpInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
-      if (!isFakeMemoryEffects(op)){
+      if (!triton::isFakeMemoryEffects(op)){
 
       // Explicit buffer
       SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>>

@@ -32,6 +32,12 @@ void TmemAllocOp::getEffects(
     effects.emplace_back(MemoryEffects::Write::get(),
                          SideEffects::DefaultResource::get());
 }
+void DotXOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+    effects.emplace_back(MemoryEffects::Read::get(), &getBMutable(),
+                         SideEffects::DefaultResource::get());
+}
 
 LogicalResult
 TmaGatherOp::verifyResultType(Operation *op,

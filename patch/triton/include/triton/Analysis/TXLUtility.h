@@ -12,6 +12,8 @@
 
 namespace mlir::triton{
 
+bool isFakeMemoryEffects(Operation* op);
+
 IntegerAttr getParentWithWGIDAttr(Operation *op);
 
 void setOpAttrWgId(Operation* op, int32_t wgid);
@@ -26,6 +28,7 @@ void setOpRegType(Operation* op, Type type);
 
 Type getOpRegType(Operation* op);
 
+void propagateTypeRecursively(Value &val, Type newType);
 void replaceAndPropagate(Operation *srcOp, Value newValue);
 
 Operation* getModuleFromOp(Operation *op);

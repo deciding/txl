@@ -335,6 +335,7 @@ struct TritonDotXPattern : public OpConversionPattern<triton::DotXOp> {
 
     addNamedAttrs(rewriter.replaceOpWithNewOp<triton::DotXOp>(
                       op, retType, a, b, c, op.getMbar(), op.getUseD(), op.getPred(),
+                      false, false,
                       adaptor.getInputPrecision(),
                       adaptor.getMaxNumImpreciseAcc()),
                   adaptor.getAttributes());

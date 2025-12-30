@@ -416,7 +416,7 @@ public:
                                       dotOp.getMaxNumImpreciseAcc());
       else if (isa<DotXOp>(dotOp))
           newDot = rewriter.create<DotXOp>(dotOp.getLoc(), newRetType, a, b, newAcc,
-                                      Value(), Value(), Value(),
+                                      Value(), Value(), Value(), false, false,
                                       dotOp.getInputPrecision(),
                                       dotOp.getMaxNumImpreciseAcc());
       else
@@ -574,11 +574,8 @@ public:
     TmemAllocOp tmemAlloc = dyn_cast<TmemAllocOp>(tmemAllocOp);
     tmemAlloc.setSharedEncAttr(accEncoding);
     tmemAlloc.setDistributedEncAttr(newDistributedEncoding);
-    //Value cvtAcc =
-    //    rewriter.create<ConvertLayoutOp>(loc, newAccType, dotOp.getOperand(2));
+
     auto tokType = rewriter.getType<AsyncTokenType>();
-    //auto acc = rewriter.create<triton::nvidia_gpu::TMEMAllocOp>(
-    //    loc, accMemDescType, tokType, cvtAcc);
     auto vTrue = rewriter.create<arith::ConstantIntOp>(dotOp.getLoc(), 1, 1);
 
     Value cvtAcc =
@@ -593,6 +590,7 @@ public:
     }
     else if constexpr (std::is_same_v<DOT, DotXOp>) {
       auto dotXOp = dotOp;
+
       auto mma = rewriter.create<triton::nvidia_gpu::TCGen5MMAOp>(
           loc, tokType, a, b, accAlloc,
           Value(),
@@ -601,9 +599,7 @@ public:
           );
       if (dotXOp.getMbar()) {
         rewriter.setInsertionPoint(mma);
-
         mma.setIsAsync(true);
-
         auto ctx = rewriter.getContext();
         unsigned numCTAs = triton::gpu::TritonGPUDialect::getNumCTAs(
             rewriter.getBlock()->getParentOp()->getParentOfType<ModuleOp>());
@@ -620,14 +616,21 @@ public:
         auto localAlloc =  rewriter.create<LocalAllocOp>(loc, memDescType, dotXOp.getMbar());
         mma.addCompletionBarrier(localAlloc,
                             rewriter.create<arith::ConstantIntOp>(loc, 1, 1));
+
+        //dotXOp.setIsAsync(true);
+
       }
       mma.setTwoCtas(useTwoCTAs);
+
+      //dotXOp.setTwoCtas(useTwoCTAs);
     }
 
     //auto ld = rewriter.create<triton::nvidia_gpu::TMEMLoadOp>(
     //    loc, newAccType, tokType, acc, /*dep=*/mma.getToken());
     //rewriter.replaceOpWithNewOp<ConvertLayoutOp>(dotOp, oldRetType, ld);
+
     dotOp.replaceAllUsesWith(acc);
+
     return success();
   }
 };

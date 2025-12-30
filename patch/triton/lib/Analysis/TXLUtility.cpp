@@ -1,6 +1,8 @@
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -25,6 +27,21 @@ namespace ttg = mlir::triton::gpu;
 namespace ttng = mlir::triton::nvidia_gpu;
 
 namespace mlir::triton{
+
+bool isFakeMemoryEffects(Operation* op){
+    bool fakeInTXL =  isa<
+        triton::MbarExpectOp, triton::MbarWaitOp, triton::MbarArriveOp,
+        triton::NamedBarrierArriveOp, triton::NamedBarrierWaitOp,
+        triton::DotXOp, // this truly affect tmem, but no need mbar
+        triton::WGDotWaitOp,
+        triton::AsyncLoadWaitOp,
+        triton::TmaStoreOp, triton::TmaStoreWaitOp,
+        triton::FenceProxyAsyncOp
+      >(op);
+    bool fakeInTXLGPU = false;
+    return fakeInTXL || fakeInTXLGPU;
+}
+
 
 // txl
 auto getParentWithWGIDAttr(Operation *op) -> IntegerAttr {
@@ -111,18 +128,41 @@ void propagateTypeRecursively(Value &val, Type newType) {
     Operation* user = use.getOwner();
     unsigned opNum = use.getOperandNumber();
     // For loop yield, backpropagate to input, and it must be a const
+    if (isa<scf::ForOp>(user)){
+        // propagate to forop
+        //llvm::outs() << "\n case forop\n";
+        auto forOp = dyn_cast<scf::ForOp>(user);
+        Value suspiciousInput = forOp->getOperand(opNum);
+        Type oldType = suspiciousInput.getType();
+        changeForOpArgType(forOp, opNum, newType);
+        Value userResult = forOp->getResult(opNum-3);
+        userResult.setType(newType);
+        //llvm::outs() << "\n done forop\n";
+        auto iterArgNum = opNum - 3; // TODO only 1 induction?
+        auto bbArg = forOp.getRegionIterArgs()[iterArgNum];
+        propagateTypeRecursively(bbArg, newType);
+        propagateTypeRecursively(userResult, newType);
+        continue;
+    }
     if (isa<scf::YieldOp>(user)){
+        //llvm::outs() << "\n case yieldop\n";
         auto yieldOp = dyn_cast<scf::YieldOp>(user);
-        auto forOp = yieldOp->getParentOfType<scf::ForOp>();
+        Region *region = yieldOp->getParentRegion();
+        Operation *parentOp = region->getParentOp();
+        auto forOp = dyn_cast<scf::ForOp>(parentOp);
+        //auto forOp = yieldOp->getParentOfType<scf::ForOp>();
         if (forOp){
+            //llvm::outs() << "\n case yieldop forop\n";
+            // propagate to forop
             Value suspiciousInput = forOp->getOperand(opNum+3);
             Type oldType = suspiciousInput.getType();
             changeForOpArgType(forOp, opNum+3, newType);
             Value userResult = forOp->getResult(opNum);
             userResult.setType(newType);
+            //llvm::outs() << "\n done yieldop forop\n";
             propagateTypeRecursively(userResult, newType);
 
-            // backpropagate to const
+            // backpropagate to const forop init arg
             auto constOp = suspiciousInput.getDefiningOp<arith::ConstantOp>();
             if (constOp){
                 auto attr = dyn_cast<DenseElementsAttr>(constOp.getValue());
@@ -138,8 +178,18 @@ void propagateTypeRecursively(Value &val, Type newType) {
                 }
             }
             else {
-                user->emitError("Type backpropagate failed: ForOp input is not const");
+                //user->emitError("Type backpropagate failed: ForOp input is not const");
             }
+            continue;
+        }
+        auto ifOp = dyn_cast<scf::IfOp>(parentOp);
+        //auto ifOp = yieldOp->getParentOfType<scf::IfOp>();
+        if (ifOp){
+            //llvm::outs() << "\n case yieldop ifop\n";
+            Value userResult = ifOp->getResult(opNum);
+            userResult.setType(newType);
+            //llvm::outs() << "\n done yieldop ifop\n";
+            propagateTypeRecursively(userResult, newType);
             continue;
         }
     }
@@ -159,6 +209,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
                 auto newRankedType = dyn_cast<RankedTensorType>(newType);
                 auto userRankedType = dyn_cast<RankedTensorType>(oldType);
                 if (attr) {
+                    //llvm::outs() << "\n case elemwiseop with const\n";
                     OpBuilder builder(constOp);
                     auto scalarValue = attr.getSplatValue<Attribute>();
                     auto splatValue = SplatElementsAttr::get(newRankedType, scalarValue);
@@ -172,6 +223,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
                             userRankedType.getElementType(),
                             newRankedType.getEncoding());
                     userResult.setType(userBasedTensorTy);
+                    //llvm::outs() << "\n done elemwiseop with const\n";
                     propagateTypeRecursively(userResult, userBasedTensorTy);
                     continue;
                 }
@@ -179,6 +231,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
             // Priority 1.2: if the other is splat, should create a new splat, and op is not addptr
             auto splatOp = otherOperand.getDefiningOp<triton::SplatOp>();
             if (splatOp && !isa<AddPtrOp>(user)){
+                //llvm::outs() << "\n case elemwiseop with splatop (not addptr)\n";
                 auto newRankedType = dyn_cast<RankedTensorType>(newType);
                 auto userRankedType = dyn_cast<RankedTensorType>(oldType);
                 OpBuilder builder(splatOp);
@@ -192,6 +245,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
                         userRankedType.getElementType(),
                         newRankedType.getEncoding());
                 userResult.setType(userBasedTensorTy);
+                //llvm::outs() << "\n done elemwiseop with splatop (not addptr)\n";
                 propagateTypeRecursively(userResult, userBasedTensorTy);
                 continue;
             }
@@ -200,14 +254,17 @@ void propagateTypeRecursively(Value &val, Type newType) {
 
         // Priority 2: if same shape givein to new Type
         if (oldType != newType && sameShapeAndElementType(oldType, newType)) {
+          //llvm::outs() << "\n case same shape same elemtype\n";
           userResult.setType(newType);
           // Recurse on this user's result
+          //llvm::outs() << "\n done same shape same elemtype\n";
           propagateTypeRecursively(userResult, newType);
           continue;
         }
 
         // Misc: other specific ops
         if (auto reduceOp = dyn_cast<ReduceOp>(user)){
+            //llvm::outs() << "\n case reduceop\n";
             auto userRankedType = dyn_cast<RankedTensorType>(oldType);
             auto newRankedType = dyn_cast<RankedTensorType>(newType);
             if (isa<IntegerType>(oldType) || isa<FloatType>(oldType)) {
@@ -230,11 +287,16 @@ void propagateTypeRecursively(Value &val, Type newType) {
             auto newSliceTy = RankedTensorType::get(sliceShape, newRankedType.getElementType(), newSliceEnc);
             userResult.setType(newSliceTy);
             // Recurse on this user's result
+            //llvm::outs() << "\n done reduceop\n";
             propagateTypeRecursively(userResult, newSliceTy);
             continue;
         }
 
         if (auto expandDimsOp = dyn_cast<ExpandDimsOp>(user)) {
+            //llvm::outs() << "\n case expandDimsOp\n";
+            //expandDimsOp->setAttr("TXL", StringAttr::get(expandDimsOp.getContext(), "X"));
+            //auto mod = dyn_cast<ModuleOp>(getModuleFromOp(expandDimsOp));
+            //llvm::outs() << printModuleOp(mod);
             SmallVector<Type> returnTypes;
             if (failed(expandDimsOp.inferReturnTypes(
                             expandDimsOp.getContext(),
@@ -250,7 +312,30 @@ void propagateTypeRecursively(Value &val, Type newType) {
             assert(returnTypes.size() && "ExpandDimsOp return type must have been inferred");
             auto resType = dyn_cast<RankedTensorType>(returnTypes[0]);
             assert(resType && "ExpandDimsOp return type must be RankedTensorType");
-            expandDimsOp.getResult().setType(resType);
+            auto userResult = expandDimsOp.getResult();
+            userResult.setType(resType);
+            //llvm::outs() << "\n done expandDimsOp\n";
+            propagateTypeRecursively(userResult, resType);
+            continue;
+        }
+        if (auto broadcastOp = dyn_cast<BroadcastOp>(user)) {
+            //llvm::outs() << "\n case BroadcastOp\n";
+            auto newRankedType = dyn_cast<RankedTensorType>(newType);
+            auto userRankedType = dyn_cast<RankedTensorType>(oldType);
+            auto userBasedTensorTy = RankedTensorType::get(
+                    userRankedType.getShape(),
+                    userRankedType.getElementType(),
+                    newRankedType.getEncoding());
+            userResult.setType(userBasedTensorTy);
+            //llvm::outs() << "\n done BroadcastOp\n";
+            propagateTypeRecursively(userResult, userBasedTensorTy);
+            continue;
+        }
+        if (auto selectOp = dyn_cast<arith::SelectOp>(user)) {
+            //llvm::outs() << "\n case SelectOp\n";
+            userResult.setType(newType); // Assume true/false values are/will be the same
+            //llvm::outs() << "\n done SelectOp\n";
+            propagateTypeRecursively(userResult, newType);
             continue;
         }
 
@@ -260,12 +345,14 @@ void propagateTypeRecursively(Value &val, Type newType) {
           if (auto addPtr = dyn_cast<AddPtrOp>(user)){
               auto ptr = addPtr.getPtr();
               if (auto splatPtr = ptr.getDefiningOp<SplatOp>()){
+                //llvm::outs() << "\n case elemwiseop with addptrop\n";
                 auto splatResult = splatPtr->getResult(0);
                 auto splatResultType = dyn_cast<RankedTensorType>(splatResult.getType());
                 auto ty = cast<RankedTensorType>(newType);
                 auto ptrType = RankedTensorType::get(ty.getShape(), splatResultType.getElementType(), ty.getEncoding());
                 splatResult.setType(ptrType);
                 userResult.setType(ptrType);
+                //llvm::outs() << "\n done elemwiseop with addptrop\n";
                 // Recurse on this user's result
                 propagateTypeRecursively(userResult, ptrType);
                 //OpBuilder builder(splatPtr);
@@ -286,6 +373,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
           auto userTensorTy = dyn_cast<RankedTensorType>(oldType);
           auto newTensorTy = dyn_cast<RankedTensorType>(newType);
           if (userTensorTy && newTensorTy && userTensorTy.getElementType() != newTensorTy.getElementType()){
+            //llvm::outs() << "\n case cast maybe\n";
             auto userBasedTensorTy = RankedTensorType::get(
                     userTensorTy.getShape(),
                     userTensorTy.getElementType(),
@@ -295,17 +383,19 @@ void propagateTypeRecursively(Value &val, Type newType) {
                     );
             //val.setType(userBasedTensorTy);
             userResult.setType(userBasedTensorTy);
+            //llvm::outs() << "\n done cast maybe\n";
             propagateTypeRecursively(userResult, userBasedTensorTy);
             //llvm::outs() << "\n op givein to type\n";
             //llvm::outs() << userBasedTensorTy;
             continue;
           }
 
+          //llvm::outs() << "\n case fallback\n";
           // if using resultType, no need to propagate
           // TODO: if changed the val type, should also change other users?
           // Priority 5, fallback, should not change val type, instead, add convert_layout
           val.setType(oldType);
-          //llvm::outs() << "\n op givein to type\n";
+          //llvm::outs() << "\n done fallback\n";
           //llvm::outs() << oldType;
           return;
         }
@@ -370,6 +460,16 @@ Operation* isFromTmemAlloc(Value v) {
     Operation *op = v.getDefiningOp();
     if (!op)
       return nullptr;
+
+    if (isa<scf::ForOp>(op)) {
+      auto forOp = dyn_cast<scf::ForOp>(op);
+      auto result = dyn_cast<OpResult>(v);
+      assert(result && "ForOp result should be retrievable");
+      unsigned resIdx = result.getResultNumber();
+
+      v = forOp.getInitArgs()[resIdx];
+      continue;
+    }
 
     // Direct allocation source.
     if (isa<TmemAllocOp>(op) || isa<ttng::TMEMAllocOp>(op)) {

@@ -317,10 +317,9 @@ private:
         // bufferRange.insert(
         //     {buffer, Interval(operationId.at(op), operationId.at(op) + 1)});
         int wgId = getOpAttrWgId(op);
-        if (wgId == -1) {
-          bufferRange.insert(
-              {buffer, Interval(operationId.at(op), operationId.at(op) + 1)});
-        } else {
+        int wId = getOpAttrWId(op);
+        assert((wgId==-1 || wId == -1) && "is_warp and is_warpgroup can not be used at the same time");
+        if (wgId != -1) {
           buffer->regionIds.insert(wgId);
           // For warp-specialized code, we can assume each region has its own
           // copy of a scratch buffer, i.e each region is for a single taskId.
@@ -328,6 +327,15 @@ private:
           // buffers.
           bufferRange.insert({buffer, Interval(operationId.lookup(op),
                                                operationId.lookup(op) + 1)});
+        }
+        else if (wId != -1) {
+          buffer->regionIds.insert(wId);
+          bufferRange.insert({buffer, Interval(operationId.lookup(op),
+                                               operationId.lookup(op) + 1)});
+        }
+        else {
+          bufferRange.insert(
+              {buffer, Interval(operationId.at(op), operationId.at(op) + 1)});
         }
 
         LLVM_DEBUG({
@@ -373,6 +381,9 @@ private:
                       int wgId = getOpAttrWgId(liveOp);
                       if (wgId != -1)
                         buffer->regionIds.insert(wgId);
+                      int wId = getOpAttrWId(liveOp);
+                      if (wId != -1)
+                        buffer->regionIds.insert(wId);
                     });
 
       auto minId = std::numeric_limits<size_t>::max();

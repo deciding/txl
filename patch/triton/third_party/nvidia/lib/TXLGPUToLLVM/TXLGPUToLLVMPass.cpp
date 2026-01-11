@@ -73,6 +73,15 @@ const std::string Lane_Id_Op =
     "mov.u32 $0, %lane_id;          \n"
     "}";
 
+const std::string Warp_Id_Op =
+    "{\n"
+    ".reg .u32 %tid_x;              \n"
+    ".reg .u32 %warp_id;            \n"
+    "mov.u32 %tid_x, %tid.x;        \n"
+    "shr.u32 %warp_id, %tid_x, 5;   \n" // warp_id = tid.x / 32
+    "mov.u32 $0, %warp_id;          \n"
+    "}";
+
 const std::string Cluster_CTA_Rank_Op =
     "{\n"
     ".reg .u32 %ctarank;                  \n"
@@ -412,6 +421,8 @@ public:
         context, Canonical_Warpgroup_Id_Op, Constraints({"=r"}), Constraints());
     patterns.add<TXLGPUOpGenericPattern<ttx::LaneIdOp>>(
         context, Lane_Id_Op, Constraints({"=r"}), Constraints());
+    patterns.add<TXLGPUOpGenericPattern<ttx::WarpIdOp>>(
+        context, Warp_Id_Op, Constraints({"=r"}), Constraints());
     patterns.add<TXLGPUOpGenericPattern<ttx::ClusterCTARankOp>>(
         context, Cluster_CTA_Rank_Op, Constraints({"=r"}), Constraints());
 

@@ -1399,6 +1399,7 @@ void lowerTmemAllocs(ModuleOp moduleOp) {
   }
 }
 
+#if 0
 void lowerDotXOp(tt::DotXOp dotXOp) {
   OpBuilder builder(dotXOp);
   Location loc = dotXOp->getLoc();
@@ -1445,6 +1446,7 @@ void lowerDotXOps(ModuleOp moduleOp) {
     lowerDotXOp(dotXOp);
   }
 }
+#endif
 
 void removeRedundantTMEMAllocs(ModuleOp moduleOp) {
   SmallVector<ttng::TMEMAllocOp> tmemAllocs;

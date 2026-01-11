@@ -17,6 +17,11 @@ def TXLGPU_CanonicalWarpgroupIdOp : TXLGPU_Op<"canonical_warpgroup_id", [Pure]> 
   let assemblyFormat = "attr-dict";
 }
 
+def TXLGPU_WarpIdOp : TXLGPU_Op<"warp_id", [Pure]> {
+  let results = (outs I32:$result);
+  let assemblyFormat = "attr-dict";
+}
+
 def TXLGPU_LaneIdOp : TXLGPU_Op<"lane_id", [Pure]> {
   let results = (outs I32:$result);
   let assemblyFormat = "attr-dict";

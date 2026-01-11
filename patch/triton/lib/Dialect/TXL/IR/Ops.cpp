@@ -170,6 +170,25 @@ bool DotXOp::verifyDims() {
   return aShape[aShape.size() - 1] == bShape[aShape.size() - 2];
 }
 
+static ParseResult
+parseBarriersAndPreds(OpAsmParser &p,
+                      SmallVectorImpl<OpAsmParser::UnresolvedOperand> &barriers,
+                      SmallVectorImpl<OpAsmParser::UnresolvedOperand> &preds) {
+  while (succeeded(p.parseOptionalComma())) {
+    if (p.parseOperand(barriers.emplace_back()) || p.parseLSquare() ||
+        p.parseOperand(preds.emplace_back()) || p.parseRSquare())
+      return failure();
+  }
+  return success();
+}
+static void printBarriersAndPreds(OpAsmPrinter &p, Operation *op,
+                                  OperandRange barriers, OperandRange preds) {
+  assert(barriers.size() == preds.size());
+  for (auto [barrier, pred] : llvm::zip(barriers, preds)) {
+    p << ", " << barrier << '[' << pred << ']';
+  }
+}
+
 } // namespace triton
 } // namespace mlir
 

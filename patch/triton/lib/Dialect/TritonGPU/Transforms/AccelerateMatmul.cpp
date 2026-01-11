@@ -415,8 +415,8 @@ public:
                                       dotOp.getInputPrecision(),
                                       dotOp.getMaxNumImpreciseAcc());
       else if (isa<DotXOp>(dotOp))
-          newDot = rewriter.create<DotXOp>(dotOp.getLoc(), newRetType, a, b, newAcc,
-                                      Value(), Value(), Value(), false, false,
+          // TODO: No need to support ampere
+          newDot = rewriter.create<DotOp>(dotOp.getLoc(), newRetType, a, b, newAcc,
                                       dotOp.getInputPrecision(),
                                       dotOp.getMaxNumImpreciseAcc());
       else
@@ -597,25 +597,21 @@ public:
           /*useD=*/(bool)(dotXOp.getUseD()) ? (Value)dotXOp.getUseD() : (Value)vTrue,
           /*pred=*/(bool)(dotXOp.getPred()) ? (Value)dotXOp.getPred() : (Value)vTrue
           );
-      if (dotXOp.getMbar()) {
+      if (dotXOp.getBarriers().size()) {
         rewriter.setInsertionPoint(mma);
         mma.setIsAsync(true);
-        auto ctx = rewriter.getContext();
-        unsigned numCTAs = triton::gpu::TritonGPUDialect::getNumCTAs(
-            rewriter.getBlock()->getParentOp()->getParentOfType<ModuleOp>());
-        Attribute sharedMemorySpace =
-            SharedMemorySpaceAttr::get(rewriter.getContext());
-        auto barrierCTALayout =
-            CTALayoutAttr::get(/*context=*/ctx, /*CTAsPerCGA=*/{numCTAs},
-                                    /*CTASplitNum=*/{1}, /*CTAOrder=*/{0});
-        auto barrierEncoding =
-            SwizzledSharedEncodingAttr::get(ctx, 1, 1, 1, {0}, barrierCTALayout);
-        MemDescType memDescType = MemDescType::get(
-            {1}, rewriter.getI64Type(), barrierEncoding, sharedMemorySpace,
-            /*mutableMemory=*/true);
-        auto localAlloc =  rewriter.create<LocalAllocOp>(loc, memDescType, dotXOp.getMbar());
-        mma.addCompletionBarrier(localAlloc,
-                            rewriter.create<arith::ConstantIntOp>(loc, 1, 1));
+
+        OperandRange barriers = dotXOp.getBarriers();
+        OperandRange preds    = dotXOp.getBarrierPreds();
+
+        // 1. Assert same size
+        assert(barriers.size() == preds.size() &&
+               "barriers and barrier preds must have the same size");
+
+        // 2. Iterate pairwise and call addCompletionBarrier
+        for (auto [barrier, pred] : llvm::zip(barriers, preds)) {
+          mma.addCompletionBarrier(barrier, pred);
+        }
 
         //dotXOp.setIsAsync(true);
 

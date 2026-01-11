@@ -3,6 +3,7 @@
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -54,6 +55,16 @@ auto getParentWithWGIDAttr(Operation *op) -> IntegerAttr {
   return nullptr; // Return nullptr if no parent has the attribute
 }
 
+auto getParentWithWIDAttr(Operation *op) -> IntegerAttr {
+  while (op) {
+    auto attr = op->getAttrOfType<IntegerAttr>("ttxg.wid");
+    if (attr)
+      return attr;
+    op = op->getParentOp();
+  }
+  return nullptr; // Return nullptr if no parent has the attribute
+}
+
 
 void changeForOpArgType(scf::ForOp forOp, unsigned int opNum, Type newType){
     auto initArgs = forOp.getInitArgs();
@@ -84,6 +95,55 @@ int getOpAttrWgId(Operation* op){
         return  attr.getInt();
     }
     return -1;
+}
+
+void setOpAttrWIds(Operation* op, std::vector<int32_t> wids){
+    OpBuilder builder(op);
+    auto attr = mlir::DenseI32ArrayAttr::get(builder.getContext(), wids);
+    op->setAttr("ttxg.wids", attr);
+}
+
+SmallVector<int32_t> getOpAttrWIds(Operation* op){
+  llvm::SmallVector<int32_t> result;
+  auto attr = op->getAttrOfType<mlir::DenseI32ArrayAttr>("ttxg.wids");
+  if (!attr)
+    return result;
+
+  result.append(attr.asArrayRef().begin(), attr.asArrayRef().end());
+  return result;
+}
+
+void setOpAttrWId(Operation* op, int32_t wid){
+    auto attrTy = IntegerType::get(op->getContext(), 32);
+    op->setAttr("ttxg.wid", IntegerAttr::get(attrTy, wid));
+}
+
+int getOpAttrWId(Operation* op){
+    auto attr = op->getAttrOfType<IntegerAttr>("ttxg.wid");
+    if (attr) {
+        assert(attr.getType().isInteger(32) && "ttxg.wid must be 32 bit int\n");
+        return  attr.getInt();
+    }
+    return -1;
+}
+
+int getExecutingThreadId(Operation * op) {
+    // txl
+    int wgId = getOpAttrWgId(op);
+    int executingThreadId = 0;
+    if (wgId != -1) {
+      auto mod = op->getParentOfType<ModuleOp>();
+      int numWarps = triton::gpu::lookupNumWarps(op);
+      int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
+      executingThreadId = wgId * numWarps * warpSize;
+    }
+    int wId = getOpAttrWId(op);
+    if (wId != -1) {
+      auto mod = op->getParentOfType<ModuleOp>();
+      int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
+      executingThreadId = wId * warpSize;
+    }
+    return executingThreadId;
 }
 
 void setOpAttrWarpReduce(Operation* op){
@@ -541,6 +601,11 @@ Operation* isFromTmemAlloc(Value v) {
     // Any other op: chain breaks.
     return nullptr;
   }
+}
+
+void addCompletionBarrier(DotXOp op, Value barrier, Value pred) {
+  op.getBarrierPredsMutable().append(pred);
+  op.getBarriersMutable().append(barrier);
 }
 
 }

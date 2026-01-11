@@ -334,7 +334,9 @@ struct TritonDotXPattern : public OpConversionPattern<triton::DotXOp> {
     c = rewriter.create<triton::gpu::ConvertLayoutOp>(c.getLoc(), retType, c);
 
     addNamedAttrs(rewriter.replaceOpWithNewOp<triton::DotXOp>(
-                      op, retType, a, b, c, op.getMbar(), op.getUseD(), op.getPred(),
+                      op, retType, a, b, c,
+                      op.getUseD(), op.getPred(),
+                      op.getBarriers(), op.getBarrierPreds(),
                       false, false,
                       adaptor.getInputPrecision(),
                       adaptor.getMaxNumImpreciseAcc()),

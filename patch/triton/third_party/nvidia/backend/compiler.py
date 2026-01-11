@@ -236,7 +236,11 @@ class CUDABackend(BaseBackend):
             num_warpgroups = metadata['num_warpgroups']
         else:
             num_warpgroups = 1
-        passes.ttir.add_ws_code_partition_txl(pm, num_warpgroups)
+        if 'num_warps' in metadata:
+            num_warps = metadata['num_warps']
+        else:
+            num_warps = 4
+        passes.ttir.add_ws_code_partition_txl(pm, num_warpgroups, num_warps)
         if capability // 10 < 9:
             passes.ttir.add_rewrite_tensor_descriptor_to_pointer(pm)
         passes.common.add_canonicalizer(pm)

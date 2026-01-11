@@ -290,7 +290,7 @@ def make_nv_dbg_ttir(mod, metadata, opt, capability, diff_select=None, log_dir=N
     pm2.enable_debug()
 
     def add_ws_code_partition_txl(i):
-        passes.ttir.add_ws_code_partition_txl(i, metadata['num_warpgroups'])
+        passes.ttir.add_ws_code_partition_txl(i, metadata['num_warpgroups'], metadata['num_warps'])
 
     pass_funcs = [
         passes.common.add_inliner,

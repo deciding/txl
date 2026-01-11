@@ -108,6 +108,10 @@ def is_warpgroup(ids, _semantic=None):
     return _semantic.is_warpgroup(ids)
 
 @builtin
+def is_warp(ids, _semantic=None):
+    return _semantic.is_warp(ids)
+
+@builtin
 def reg_alloc(count, _semantic=None):
     count = _unwrap_if_constexpr(count)
     return _semantic.reg_alloc(count)
@@ -461,7 +465,8 @@ def _warp_reduce_with_indices(input, axis, combine_fn, keep_dims=False, _semanti
     return rvalue, rindices
 
 @builtin
-def dotx(input, other, acc=None, mbar=None, useD=None, pred=None,
+def dotx(input, other, acc=None, useD=None, pred=None,
+        mbars=[], mbarPreds=[],
         input_precision=None, allow_tf32=None, max_num_imprecise_acc=None, out_dtype=core.float32,
         _semantic=None):
     """
@@ -496,10 +501,11 @@ def dotx(input, other, acc=None, mbar=None, useD=None, pred=None,
     out_dtype = _unwrap_if_constexpr(out_dtype)
     max_num_imprecise_acc = _unwrap_if_constexpr(max_num_imprecise_acc)
     acc = _unwrap_if_constexpr(acc)
-    mbar = _unwrap_if_constexpr(mbar)
+    mbars = [_unwrap_if_constexpr(mbar) for mbar in mbars]
+    mbarPreds = [_unwrap_if_constexpr(mbarPred) for mbarPred in mbarPreds]
     useD = _unwrap_if_constexpr(useD)
     pred = _unwrap_if_constexpr(pred)
-    return _semantic.dotx(input, other, acc, mbar, useD, pred, input_precision, max_num_imprecise_acc, out_dtype)
+    return _semantic.dotx(input, other, acc, useD, pred, mbars, mbarPreds, input_precision, max_num_imprecise_acc, out_dtype)
 
 
 ### from standard

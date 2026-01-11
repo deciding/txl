@@ -1316,6 +1316,10 @@ int getWarpOffset(Operation *op) {
   if (wgId != -1) {
     return 4 * wgId; // each WG has 4 warps
   }
+  int wId = getOpAttrWId(op);
+  if (wId != -1) {
+    return wId;
+  }
   return 0;
 }
 Value getWGThreadId(OpBuilder& rewriter, Location loc, Operation* op){

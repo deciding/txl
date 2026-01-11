@@ -26,35 +26,55 @@ using ttn::OperandsAndConstraints;
 
 namespace {
 
-void addAttrWgIdToOpTree(Operation *op, int wgid){
+void addAttrAsyncIdToOpTree(Operation *op, int asyncId, SpecMode mode){
 
   if (op->getNumRegions() == 0) {
-    // case 1: direct assign wgid, base case
-    setOpAttrWgId(op, wgid);
+    // case 1: direct assign asyncId, base case
+    if (mode == SpecMode::WARPGROUP) {
+      setOpAttrWgId(op, asyncId);
+    }
+    else {
+      setOpAttrWId(op, asyncId);
+    }
   } else {
     // case 2: ops with blocks
     if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
-      setOpAttrWgId(ifOp, wgid);
+      if (mode == SpecMode::WARPGROUP) {
+        setOpAttrWgId(ifOp, asyncId);
+      }
+      else {
+        setOpAttrWId(ifOp, asyncId);
+      }
       for (Operation &op : ifOp.thenBlock()->getOperations()) {
-          addAttrWgIdToOpTree(&op, wgid);
+          addAttrAsyncIdToOpTree(&op, asyncId, mode);
       }
       if (ifOp.elseBlock()){
         for (Operation &op : ifOp.elseBlock()->getOperations()) {
-            addAttrWgIdToOpTree(&op, wgid);
+            addAttrAsyncIdToOpTree(&op, asyncId, mode);
         }
       }
     } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-      setOpAttrWgId(forOp, wgid);
+      if (mode == SpecMode::WARPGROUP) {
+        setOpAttrWgId(forOp, asyncId);
+      }
+      else {
+        setOpAttrWId(forOp, asyncId);
+      }
       for (Operation &op : forOp.getBody()->getOperations()) {
-          addAttrWgIdToOpTree(&op, wgid);
+          addAttrAsyncIdToOpTree(&op, asyncId, mode);
       }
     } else if (auto reduceOp = dyn_cast<ReduceOp>(op)) {
-      setOpAttrWgId(reduceOp, wgid);
+      if (mode == SpecMode::WARPGROUP) {
+        setOpAttrWgId(reduceOp, asyncId);
+      }
+      else {
+        setOpAttrWId(reduceOp, asyncId);
+      }
       reduceOp->walk(
           [&](Operation *childOp) {
               if (isa<ReduceOp>(childOp))
                 return;
-              addAttrWgIdToOpTree(childOp, wgid);
+              addAttrAsyncIdToOpTree(childOp, asyncId, mode);
           });
     } else {
       llvm_unreachable("Unexpected Op with regions\n");
@@ -63,15 +83,21 @@ void addAttrWgIdToOpTree(Operation *op, int wgid){
 
 }
 
-void addAttrWgIdToIfChildren(scf::IfOp ifOp){
-    int32_t asyncTaskId = getOpAttrWgId(ifOp);
+void addAttrAsyncIdToIfChildren(scf::IfOp ifOp, SpecMode mode){
+    int32_t asyncTaskId = -1;
+    if (mode == SpecMode::WARPGROUP) {
+       asyncTaskId = getOpAttrWgId(ifOp);
+    }
+    else {
+       asyncTaskId = getOpAttrWId(ifOp);
+    }
     if (asyncTaskId != -1) {
         for (Operation &op : ifOp.thenBlock()->getOperations()) {
-            addAttrWgIdToOpTree(&op, asyncTaskId);
+            addAttrAsyncIdToOpTree(&op, asyncTaskId, mode);
         }
         if (ifOp.elseBlock()){
           for (Operation &op : ifOp.elseBlock()->getOperations()) {
-              addAttrWgIdToOpTree(&op, asyncTaskId);
+              addAttrAsyncIdToOpTree(&op, asyncTaskId, mode);
           }
         }
     }
@@ -87,7 +113,8 @@ public:
     ModuleOp mod = getOperation();
 
     mod->walk([&](scf::IfOp op){
-        addAttrWgIdToIfChildren(op);
+        addAttrAsyncIdToIfChildren(op, SpecMode::WARPGROUP);
+        addAttrAsyncIdToIfChildren(op, SpecMode::WARP);
     });
 
   }

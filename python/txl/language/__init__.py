@@ -10,6 +10,7 @@ from .core import (
     lane_id,
     cta_rank,
     is_warpgroup,
+    is_warp,
     reg_alloc,
     reg_dealloc,
     smem_alloc,

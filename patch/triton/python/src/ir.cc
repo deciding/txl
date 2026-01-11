@@ -1681,16 +1681,21 @@ void init_triton_ir(py::module &&m) {
       .def("create_dotx",
            [](TritonOpBuilder &self, mlir::Value &a, mlir::Value &b,
               mlir::Value &c,
-              std::optional<Value>& mbar, std::optional<Value>& useD, std::optional<Value>& pred,
+              std::optional<Value>& useD, std::optional<Value>& pred,
+              std::vector<Value>& mbars, std::vector<Value>& mbarPreds,
               InputPrecision inputPrecision,
               int maxNumImpreciseAcc) -> mlir::Value {
-             Value mbarVal = mbar.value_or(Value());
              Value useDVal = useD.value_or(Value());
              Value predVal = pred.value_or(Value());
-             return self.create<DotXOp>(c.getType(), a, b, c,
-                                       mbarVal, useDVal, predVal, false, false,
-                                       inputPrecision,
-                                       maxNumImpreciseAcc);
+             auto mma = self.create<DotXOp>(c.getType(), a, b, c,
+                                       useDVal, predVal, ValueRange{}, ValueRange{});
+
+             mma.setInputPrecision(inputPrecision);
+             mma.setMaxNumImpreciseAcc(maxNumImpreciseAcc);
+             for (auto [barrier, pred] : llvm::zip(mbars, mbarPreds)) {
+               addCompletionBarrier(mma, barrier, pred);
+             }
+             return mma;
            })
       .def("create_dot_scaled",
            [](TritonOpBuilder &self, mlir::Value &lhs,
@@ -2371,6 +2376,10 @@ void init_triton_ir(py::module &&m) {
            [](TritonOpBuilder &self, std::vector<int32_t> &wgids) -> Value {
              return self.create<IsWarpgroupOp>(wgids);
            })
+      .def("create_is_warp",
+           [](TritonOpBuilder &self, std::vector<int32_t> &wids) -> Value {
+             return self.create<IsWarpOp>(wids);
+           })
       .def("create_get_canonical_wrapgroup_id",
            [](TritonOpBuilder& self) -> Value{
                return self.create<mlir::triton::txlgpu::CanonicalWarpgroupIdOp>(self.getBuilder().getI32Type());
@@ -2378,6 +2387,10 @@ void init_triton_ir(py::module &&m) {
       .def("create_get_lane_id",
            [](TritonOpBuilder& self) -> Value{
                return self.create<mlir::triton::txlgpu::LaneIdOp>(self.getBuilder().getI32Type());
+           })
+      .def("create_get_warp_id",
+           [](TritonOpBuilder& self) -> Value{
+               return self.create<mlir::triton::txlgpu::WarpIdOp>(self.getBuilder().getI32Type());
            })
       .def("create_get_cta_rank",
            [](TritonOpBuilder& self) -> Value{

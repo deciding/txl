@@ -447,6 +447,19 @@ def TXL_IsWarpgroupOp : TXL_Op<"is_warpgroup", []> {
   let assemblyFormat = "attr-dict `:` type($result)";
 }
 
+def TXL_IsWarpOp : TXL_Op<"is_warp", []> {
+  let summary = "Check if is warp id";
+  let description = [{
+    check whether the warp id is as specified
+  }];
+  let arguments = (ins
+    DenseI32ArrayAttr:$ids
+  );
+  let results = (outs I1:$result);
+
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
 def TXL_AsyncLoadOp : TXL_Op<"async_load", [
   AttrSizedOperandSegments,
   MemoryEffects<[MemWrite]>,
@@ -672,9 +685,11 @@ def TXL_DotXOp : TXL_Op<"dotx", [AttrSizedOperandSegments,
       TT_FpIntTensor:$a,
       TT_FpIntTensor:$b,
       TT_FpIntTensor:$c,
-      TTG_TensorOrMemDesc:$mbar,
+      //TTG_TensorOrMemDesc:$mbar,
       Optional<I1>:$useD,
       Optional<I1>:$pred,
+      Variadic<TTG_TensorOrMemDesc>:$barriers,
+      Variadic<I1>:$barrier_preds,
       UnitAttr:$is_async,
       UnitAttr:$two_ctas,
       DefaultValuedAttr<TT_InputPrecisionAttr, "::mlir::triton::InputPrecision::IEEE">:$inputPrecision,
@@ -686,8 +701,10 @@ def TXL_DotXOp : TXL_Op<"dotx", [AttrSizedOperandSegments,
     // attr-dict prints enums as integers.  To get inputPrecision printed as a
     // string, we need to specify it explicitly.
     let assemblyFormat = [{
-      $a`,` $b`,` $c `,` $mbar (`useD` $useD^)? (`pred` $pred^)? (`,` `inputPrecision` `=` $inputPrecision^)? attr-dict `:`
-      type($a) `*` type($b) type($mbar) `->` type($d) (`useD` type($useD)^)? (`pred` type($pred)^)?
+      $a`,` $b`,` $c (`useD` $useD^)? (`pred` $pred^)?
+      custom<BarriersAndPreds>($barriers, $barrier_preds)
+      (`,` `inputPrecision` `=` $inputPrecision^)? attr-dict `:`
+      type($a) `*` type($b) type($barriers) `->` type($d) (`useD` type($useD)^)? (`pred` type($pred)^)?
     }];
 
     let hasVerifier = 1;

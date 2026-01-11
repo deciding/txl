@@ -2,7 +2,7 @@ import math
 from triton._C.libtriton import ir
 from triton.language import core as tl
 from triton.language.semantic import TritonSemantic, TensorTy
-from typing import Optional, Tuple, Sequence
+from typing import Optional, Tuple, Sequence, List
 from .core import distributed_type
 
 def pairs_to_tikz(pairs, nrows, ncols):
@@ -114,6 +114,9 @@ class TXLSemantic(TritonSemantic):
 
     def is_warpgroup(self, ids) -> TensorTy:
         return self.tensor(self.builder.create_is_warpgroup(ids), tl.int1)
+
+    def is_warp(self, ids) -> TensorTy:
+        return self.tensor(self.builder.create_is_warp(ids), tl.int1)
 
     def reg_alloc(self, count:int):
         self.builder.create_reg_alloc(count)
@@ -477,9 +480,10 @@ class TXLSemantic(TritonSemantic):
         return getattr(ir.INPUT_PRECISION, input_precision)
 
     def dotx(self, lhs: TensorTy, rhs: TensorTy, acc: TensorTy,
-            mbar: Optional[TensorTy],
             useD: Optional[TensorTy],
             pred: Optional[TensorTy],
+            mbars: Optional[List[TensorTy]],
+            mbarPreds: Optional[List[TensorTy]],
             input_precision: Optional[str],
             max_num_imprecise_acc: int, out_dtype: tl.dtype) -> TensorTy:
         assert lhs.type.is_block() and rhs.type.is_block()
@@ -570,11 +574,14 @@ class TXLSemantic(TritonSemantic):
             if lhs.dtype.is_fp8() and rhs.dtype.is_fp8() and max_num_imprecise_acc > K:
                 raise ValueError(f"max_num_imprecise_acc ({max_num_imprecise_acc}) must be <= K ({K})")
 
-        mbar_handle = mbar.handle if mbar else None
         useD_handle = useD.handle if useD else None
         pred_handle = pred.handle if pred else None
 
+        mbars = [mbar.handle for mbar in mbars]
+        mbarPreds = [mbarPred.handle for mbarPred in mbarPreds]
+
         return self.tensor(
             self.builder.create_dotx(lhs.handle, rhs.handle, acc_handle,
-                                     mbar_handle, useD_handle, pred_handle,
+                                     useD_handle, pred_handle,
+                                     mbars, mbarPreds,
                                      input_precision, max_num_imprecise_acc), ret_ty)

@@ -134,10 +134,11 @@ def test_flash_attention():
     import_cuBLAS_lib()
 
     from test_txl import test_matmul
+    #test_matmul("/workspace/dump", "0")
     #test_matmul(None, "1")
     #test_matmul("/workspace/dump", "b3")
     #test_matmul(None, "b4")
-    test_matmul(None, "b5")
+    test_matmul('/workspace/dump', "b6")
     #import subprocess
     #p = subprocess.Popen(
     #        ["/usr/local/cuda-12.4/bin/cuda-gdb", "-ex", "run", "--args", "python", "/workspace/test_txl.py"],

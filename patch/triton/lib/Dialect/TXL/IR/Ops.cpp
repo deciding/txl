@@ -4,10 +4,14 @@
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "txl/Dialect/TXL/IR/OpsEnums.cpp.inc"
+
+//#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 
 namespace mlir {
 namespace triton {
@@ -32,11 +36,29 @@ void TmemAllocOp::getEffects(
     effects.emplace_back(MemoryEffects::Write::get(),
                          SideEffects::DefaultResource::get());
 }
+//void DotXOp::getEffects(
+//    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+//        &effects) {
+//    effects.emplace_back(MemoryEffects::Read::get(), &getBMutable(),
+//                         SideEffects::DefaultResource::get());
+//}
 void DotXOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-    effects.emplace_back(MemoryEffects::Read::get(), &getBMutable(),
+  // The op reads the accumulator if `useD` is not known to be false.
+  APInt useD;
+  if (!matchPattern(getUseD(), m_ConstantInt(&useD)) || !useD.isZero()) {
+    effects.emplace_back(MemoryEffects::Read::get(), &getCMutable(),
                          SideEffects::DefaultResource::get());
+  }
+  effects.emplace_back(MemoryEffects::Write::get(), &getCMutable(),
+                       SideEffects::DefaultResource::get());
+
+  effects.emplace_back(MemoryEffects::Read::get(), &getAMutable(),
+                       SideEffects::DefaultResource::get());
+
+  effects.emplace_back(MemoryEffects::Read::get(), &getBMutable(),
+                       gpu::SharedMemory::get());
 }
 
 LogicalResult

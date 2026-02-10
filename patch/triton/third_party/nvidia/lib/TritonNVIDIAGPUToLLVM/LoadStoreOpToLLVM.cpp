@@ -23,6 +23,7 @@
 #include "triton/Analysis/TXLUtility.h" // txl
 
 #include <cassert>
+#include <cstdint>
 
 using namespace mlir;
 using namespace mlir::triton;
@@ -1316,9 +1317,13 @@ int getWarpOffset(Operation *op) {
   if (wgId != -1) {
     return 4 * wgId; // each WG has 4 warps
   }
-  int wId = getOpAttrWId(op);
-  if (wId != -1) {
-    return wId;
+  //int wId = getOpAttrWId(op);
+  //if (wId != -1) {
+  //  return wId;
+  //}
+  SmallVector<int32_t> wIds = getOpAttrWIds(op);
+  if (wIds.size() != 0) {
+    return wIds[0]; // here assume tma only use the 1 warp
   }
   return 0;
 }

@@ -663,7 +663,7 @@ def TXL_SmemReshapeOp : TXL_Op<"smem_reshape", [Pure,
 }
 
 def TXL_DotXOp : TXL_Op<"dotx", [AttrSizedOperandSegments,
-                             //MemoryEffects<[MemWrite<SmemMemory>]>,
+                             //MemoryEffects<[MemWrite]>,
                              DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
                              DeclareOpInterfaceMethods<InferTypeOpInterface>,
                              DeclareOpInterfaceMethods<DotOpInterface>,

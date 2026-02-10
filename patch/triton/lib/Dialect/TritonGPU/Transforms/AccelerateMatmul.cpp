@@ -24,6 +24,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/LogicalResult.h"
 #include <type_traits>
 
 namespace mlir {
@@ -519,10 +520,15 @@ public:
   mlir::LogicalResult
   matchAndRewrite(DOT dotOp,
                   mlir::PatternRewriter &rewriter) const override {
+    auto attr = dotOp->template getAttrOfType<IntegerAttr>("txl-accel-matmul");
+    if (attr) {
+        return  failure();
+    }
     RankedTensorType oldRetType = dotOp.getType();
     if (!oldRetType.getEncoding() ||
-        mlir::isa<NvidiaMmaEncodingAttr>(oldRetType.getEncoding()))
+        mlir::isa<NvidiaMmaEncodingAttr>(oldRetType.getEncoding())) {
       return failure();
+    }
 
     // get MMA encoding for the given number of warps
     auto retShapePerCTA = getShapePerCTA(oldRetType);
@@ -530,6 +536,12 @@ public:
     auto CTALayout = getCTALayout(oldRetType.getEncoding());
 
     int versionMajor = getMMAVersionSafe<DOT>(computeCapability, dotOp);
+
+    //llvm::outs() << "\n bef tcgen05 lower \n";
+    //ModuleOp m = dyn_cast<ModuleOp>(getModuleFromOp(dotOp));
+    //llvm::outs() << printModuleOp(m);
+    //llvm::outs() << "\n";
+
     if (versionMajor != 5)
       return failure();
     Location loc = dotOp.getLoc();
@@ -564,13 +576,19 @@ public:
         oldRetType.getShape(), oldRetType.getElementType(), accEncoding,
         tensorMemorySpace,
         /*mutableMemory=*/true);
-    auto newDistributedEncoding = nvidia_gpu::getTmemCompatibleLayout(
-        instrShape[0], instrShape[1], oldRetType, numWarps);
-    auto newAccType = oldRetType.cloneWithEncoding(newDistributedEncoding);
-    auto acc = dotOp.getOperand(2);
 
+    auto acc = dotOp.getOperand(2);
     Operation * tmemAllocOp = isFromTmemAlloc(acc);
     assert(tmemAllocOp && "tcgen05 c must from tmem");
+    int numWarpsTmemAlloc = lookupNumWarps(tmemAllocOp);
+    //llvm::outs() << "\n numWarpsTmemAlloc\n";
+    //llvm::outs() << numWarpsTmemAlloc;
+    //llvm::outs() << "\n";
+
+    auto newDistributedEncoding = nvidia_gpu::getTmemCompatibleLayout(
+        instrShape[0], instrShape[1], oldRetType, numWarpsTmemAlloc);
+    auto newAccType = oldRetType.cloneWithEncoding(newDistributedEncoding);
+
     TmemAllocOp tmemAlloc = dyn_cast<TmemAllocOp>(tmemAllocOp);
     tmemAlloc.setSharedEncAttr(accEncoding);
     tmemAlloc.setDistributedEncAttr(newDistributedEncoding);
@@ -591,41 +609,45 @@ public:
     else if constexpr (std::is_same_v<DOT, DotXOp>) {
       auto dotXOp = dotOp;
 
-      auto mma = rewriter.create<triton::nvidia_gpu::TCGen5MMAOp>(
-          loc, tokType, a, b, accAlloc,
-          Value(),
-          /*useD=*/(bool)(dotXOp.getUseD()) ? (Value)dotXOp.getUseD() : (Value)vTrue,
-          /*pred=*/(bool)(dotXOp.getPred()) ? (Value)dotXOp.getPred() : (Value)vTrue
-          );
-      if (dotXOp.getBarriers().size()) {
-        rewriter.setInsertionPoint(mma);
-        mma.setIsAsync(true);
+      //auto mma = rewriter.create<triton::nvidia_gpu::TCGen5MMAOp>(
+      //    loc, tokType, a, b, accAlloc,
+      //    Value(),
+      //    /*useD=*/(bool)(dotXOp.getUseD()) ? (Value)dotXOp.getUseD() : (Value)vTrue,
+      //    /*pred=*/(bool)(dotXOp.getPred()) ? (Value)dotXOp.getPred() : (Value)vTrue
+      //    );
+      //if (dotXOp.getBarriers().size()) {
+      //  rewriter.setInsertionPoint(mma);
+      //  mma.setIsAsync(true);
 
-        OperandRange barriers = dotXOp.getBarriers();
-        OperandRange preds    = dotXOp.getBarrierPreds();
+      //  OperandRange barriers = dotXOp.getBarriers();
+      //  OperandRange preds    = dotXOp.getBarrierPreds();
 
-        // 1. Assert same size
-        assert(barriers.size() == preds.size() &&
-               "barriers and barrier preds must have the same size");
+      //  // 1. Assert same size
+      //  assert(barriers.size() == preds.size() &&
+      //         "barriers and barrier preds must have the same size");
 
-        // 2. Iterate pairwise and call addCompletionBarrier
-        for (auto [barrier, pred] : llvm::zip(barriers, preds)) {
-          mma.addCompletionBarrier(barrier, pred);
-        }
+      //  // 2. Iterate pairwise and call addCompletionBarrier
+      //  for (auto [barrier, pred] : llvm::zip(barriers, preds)) {
+      //    mma.addCompletionBarrier(barrier, pred);
+      //  }
 
-        //dotXOp.setIsAsync(true);
+      //  //dotXOp.setIsAsync(true);
 
-      }
-      mma.setTwoCtas(useTwoCTAs);
+      //}
+      //mma.setTwoCtas(useTwoCTAs);
 
-      //dotXOp.setTwoCtas(useTwoCTAs);
+      dotXOp.setTwoCtas(useTwoCTAs);
     }
 
     //auto ld = rewriter.create<triton::nvidia_gpu::TMEMLoadOp>(
     //    loc, newAccType, tokType, acc, /*dep=*/mma.getToken());
     //rewriter.replaceOpWithNewOp<ConvertLayoutOp>(dotOp, oldRetType, ld);
 
+    auto attrTy = IntegerType::get(context, 32);
+    dotOp->setAttr("txl-accel-matmul", IntegerAttr::get(attrTy, 1));
     dotOp.replaceAllUsesWith(acc);
+    //dotOp.erase();
+
 
     return success();
   }
@@ -946,7 +968,10 @@ public:
     // Now that we have picked the mma type, decompose dot that are not natively
     // supported.
     decomposeMixedModeDotOp<DotOp>(m, computeCapability);
-    decomposeMixedModeDotOp<DotXOp>(m, computeCapability);
+    // TODO: decompose is useful for non-tcgen05 mma, but if involve dotx into normal dot, need to
+    // hint it is v5 or v3
+    //decomposeMixedModeDotOp<DotXOp>(m, computeCapability);
+    //llvm::outs() << printModuleOp(m);
   }
 };
 

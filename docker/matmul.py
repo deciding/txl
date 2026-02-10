@@ -4,18 +4,20 @@ local_dir = pathlib.Path(__file__).parent
 root_dir = local_dir.parent
 requirements_file = root_dir / "requirements.txt"
 
-Use_TXL = True
+Use_TXL = False
 app_name = 'txl' if Use_TXL else 'triton'
 
 
 #txl
 txl_wheel_file = local_dir / "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
 
+dump_dir = 'modal_dump'
+
 test_file = root_dir / "python" / "txl" / "tutorials" / "01-matmul.py"
-ptx_file_name = "matmul_persistent_nows_tma_txl_bw_kernel"
-ptx_file = local_dir / f"{ptx_file_name}.ptx"
-signature_file = local_dir / f"{ptx_file_name}_signature.json"
-json_file = local_dir / f"{ptx_file_name}.json"
+ptx_file_name = "matmul_persistent_tma_txl_bw_kernel6"
+ptx_file = local_dir / dump_dir / f"{ptx_file_name}.ptx"
+signature_file = local_dir / dump_dir / f"{ptx_file_name}_signature.json"
+json_file = local_dir / dump_dir / f"{ptx_file_name}.json"
 
 # txl
 app = App(name=f"{app_name}-matmul")  # Note: this is optional since Modal 0.57
@@ -89,6 +91,9 @@ def test_flash_attention():
             result = subprocess.run(['find', '/', '-name', 'cuda-gdb'], capture_output=True, text=True, check=True)
             output = result.stdout
             print(output)
+            result = subprocess.run(['find', '/', '-name', 'ncu'], capture_output=True, text=True, check=True)
+            output = result.stdout
+            print(output)
             # Execute nvidia-smi command to query GPU details
             result = subprocess.run(['nvidia-smi', '-q'], capture_output=True, text=True, check=True)
             output = result.stdout
@@ -134,11 +139,12 @@ def test_flash_attention():
     import_cuBLAS_lib()
 
     from test_txl import test_matmul
-    #test_matmul("/workspace/dump", "0")
+    test_matmul("/workspace/dump", "0")
     #test_matmul(None, "1")
     #test_matmul("/workspace/dump", "b3")
     #test_matmul(None, "b4")
-    test_matmul('/workspace/dump', "b6")
+    #test_matmul('/workspace/dump', "b6")
+    #test_matmul(None, "b6")
     #import subprocess
     #p = subprocess.Popen(
     #        ["/usr/local/cuda-12.4/bin/cuda-gdb", "-ex", "run", "--args", "python", "/workspace/test_txl.py"],

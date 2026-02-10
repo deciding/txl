@@ -949,7 +949,7 @@ bool supportMMA(triton::DotXOp op, int version) {
       return false;
     if (op.getType().getRank() != 2)
       return false;
-    if (numWarps != 4 && numWarps != 8) {
+    if (numWarps != 1 && numWarps != 4 && numWarps != 8) {
       // Currently only support numWarps 4 or 8 for TMEM load and store.
       return false;
     }

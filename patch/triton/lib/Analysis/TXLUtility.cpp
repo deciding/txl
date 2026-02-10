@@ -23,11 +23,18 @@
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/TritonGPUInterfaces.h"
+#include "llvm/Support/Signals.h"
 
 namespace ttg = mlir::triton::gpu;
 namespace ttng = mlir::triton::nvidia_gpu;
 
 namespace mlir::triton{
+
+uint32_t nextPowerOf2(uint32_t n) {
+    if (n <= 1) return 1;
+    // __builtin_clz counts leading zeros
+    return 1 << (32 - __builtin_clz(n - 1));
+}
 
 bool isFakeMemoryEffects(Operation* op){
     bool fakeInTXL =  isa<
@@ -55,6 +62,7 @@ auto getParentWithWGIDAttr(Operation *op) -> IntegerAttr {
   return nullptr; // Return nullptr if no parent has the attribute
 }
 
+// DEPRECATED
 auto getParentWithWIDAttr(Operation *op) -> IntegerAttr {
   while (op) {
     auto attr = op->getAttrOfType<IntegerAttr>("ttxg.wid");
@@ -64,6 +72,44 @@ auto getParentWithWIDAttr(Operation *op) -> IntegerAttr {
   }
   return nullptr; // Return nullptr if no parent has the attribute
 }
+
+auto getParentWithWIDsAttr(Operation *op) -> SmallVector<int32_t> {
+  Operation *current = op;
+
+  while (current) {
+    // Check special handling for scf.if
+    if (auto ifOp = dyn_cast<scf::IfOp>(current)) {
+      // Determine whether the original op is inside the else region
+      bool inElseRegion = false;
+      if (!ifOp.getElseRegion().empty()) {
+        inElseRegion = ifOp.getElseRegion().isAncestor(op->getParentRegion());
+      }
+
+      if (inElseRegion) {
+        auto elseWids = getOpAttrWIds(current, true);
+        if (elseWids.size()) {
+          return elseWids;
+        }
+      } else {
+        auto wids = getOpAttrWIds(current, false);
+        if (wids.size()) {
+          return wids;
+        }
+      }
+    } else {
+      // Non-if op: check ttxg.wids directly
+      auto wids = getOpAttrWIds(current, false);
+      if (wids.size()) {
+        return wids;
+      }
+    }
+
+    current = current->getParentOp();
+  }
+
+  return {};
+}
+
 
 
 void changeForOpArgType(scf::ForOp forOp, unsigned int opNum, Type newType){
@@ -97,27 +143,38 @@ int getOpAttrWgId(Operation* op){
     return -1;
 }
 
-void setOpAttrWIds(Operation* op, std::vector<int32_t> wids){
+void setOpAttrWIds(Operation* op, std::vector<int32_t> wids, bool isElse){
     OpBuilder builder(op);
     auto attr = mlir::DenseI32ArrayAttr::get(builder.getContext(), wids);
-    op->setAttr("ttxg.wids", attr);
+    if (!isElse)
+        op->setAttr("ttxg.wids", attr);
+    else
+        op->setAttr("ttxg.else.wids", attr);
 }
 
-SmallVector<int32_t> getOpAttrWIds(Operation* op){
+SmallVector<int32_t> getOpAttrWIds(Operation* op, bool isElse){
   llvm::SmallVector<int32_t> result;
-  auto attr = op->getAttrOfType<mlir::DenseI32ArrayAttr>("ttxg.wids");
-  if (!attr)
+  ArrayRef<int32_t> attr;
+  if (!op->hasAttr("ttxg.wids"))
+      return result;
+  if (!isElse)
+      attr = op->getAttrOfType<mlir::DenseI32ArrayAttr>("ttxg.wids");
+  else
+      attr = op->getAttrOfType<mlir::DenseI32ArrayAttr>("ttxg.else.wids");
+  if (attr.size() == 0)
     return result;
 
-  result.append(attr.asArrayRef().begin(), attr.asArrayRef().end());
+  result.append(attr.begin(), attr.end());
   return result;
 }
 
+// DEPRECATED
 void setOpAttrWId(Operation* op, int32_t wid){
     auto attrTy = IntegerType::get(op->getContext(), 32);
     op->setAttr("ttxg.wid", IntegerAttr::get(attrTy, wid));
 }
 
+// DEPRECATED
 int getOpAttrWId(Operation* op){
     auto attr = op->getAttrOfType<IntegerAttr>("ttxg.wid");
     if (attr) {
@@ -137,8 +194,9 @@ int getExecutingThreadId(Operation * op) {
       int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
       executingThreadId = wgId * numWarps * warpSize;
     }
-    int wId = getOpAttrWId(op);
-    if (wId != -1) {
+    auto wIds = getParentWithWIDsAttr(op);
+    if (wIds.size()) {
+      int wId = wIds[0]; // TODO: now just get the first, assume it is sorted
       auto mod = op->getParentOfType<ModuleOp>();
       int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
       executingThreadId = wId * warpSize;
@@ -606,6 +664,69 @@ Operation* isFromTmemAlloc(Value v) {
 void addCompletionBarrier(DotXOp op, Value barrier, Value pred) {
   op.getBarrierPredsMutable().append(pred);
   op.getBarriersMutable().append(barrier);
+}
+
+// Helper function to trace back to a MemDescType
+mlir::Value traceToMemDesc(mlir::Value initialValue) {
+    mlir::Value currentValue = initialValue;
+
+    while (currentValue) {
+        // 1. Check if the current value matches the desired type
+        if (auto memDescType = llvm::dyn_cast<ttg::MemDescType>(currentValue.getType())) {
+            return currentValue;
+        }
+
+        // 2. If not, try to find the defining operation
+        mlir::Operation *defOp = currentValue.getDefiningOp();
+        
+        // 3. If there is no defining op (it's a block argument) 
+        // or the op has no operands, we can't trace further.
+        if (!defOp || defOp->getNumOperands() == 0) {
+            break;
+        }
+
+        // 4. Move to the first operand of the defining op and continue tracing
+        currentValue = defOp->getOperand(0);
+    }
+
+    return nullptr; // Return null if no MemDescType is found in the chain
+}
+
+mlir::Value convertToMemDesc(mlir::Value initialValue) {
+    mlir::Value currentValue = initialValue;
+    while (currentValue) {
+        // 1. Check if the current value matches the desired type
+        if (auto memDescType = llvm::dyn_cast<ttg::MemDescType>(currentValue.getType())) {
+            return currentValue;
+        }
+
+        // 2. If not, try to find the defining operation
+        mlir::Operation *defOp = currentValue.getDefiningOp();
+        
+        // 3. If there is no defining op (it's a block argument) 
+        // or the op has no operands, we can't trace further.
+        if (!defOp || defOp->getNumOperands() == 0) {
+            break;
+        }
+        if (auto transOp = dyn_cast<triton::TransOp>(defOp)) {
+            Value transSrc = transOp.getSrc();
+            Operation* transSrcOp = transSrc.getDefiningOp();
+            if (auto localLoadOp = dyn_cast<triton::gpu::LocalLoadOp>(transSrcOp)){ 
+                OpBuilder builder(transOp);
+                Value memDescTrans = builder.create<triton::gpu::MemDescTransOp>(
+                        transOp.getLoc(),
+                        localLoadOp.getSrc(),
+                        ArrayRef<int32_t>({1, 0})
+                );
+                return memDescTrans;
+
+            }
+        }
+
+        // 4. Move to the first operand of the defining op and continue tracing
+        currentValue = defOp->getOperand(0);
+    }
+    return nullptr;
 }
 
 }

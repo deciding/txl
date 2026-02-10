@@ -9,6 +9,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/Support/ErrorHandling.h"
+#include <cstdint>
 
 #include "txl/Dialect/TXL/IR/Dialect.h"
 
@@ -18,6 +19,8 @@ enum SpecMode {
     WARP=0,
     WARPGROUP=1
 };
+
+uint32_t nextPowerOf2(uint32_t n);
 
 bool isFakeMemoryEffects(Operation* op);
 
@@ -30,8 +33,9 @@ int getOpAttrWgId(Operation* op);
 void setOpAttrWId(Operation* op, int32_t wid);
 int getOpAttrWId(Operation* op);
 
-void setOpAttrWIds(Operation* op, std::vector<int32_t> wids);
-SmallVector<int32_t> getOpAttrWIds(Operation* op);
+void setOpAttrWIds(Operation* op, std::vector<int32_t> wids, bool isElse=false);
+SmallVector<int32_t> getOpAttrWIds(Operation* op, bool isElse=false);
+SmallVector<int32_t> getParentWithWIDsAttr(Operation *op);
 
 int getExecutingThreadId(Operation * op);
 
@@ -54,5 +58,8 @@ void changeForOpArgType(scf::ForOp forOp, unsigned int opNum, Type newType);
 
 Operation* isFromTmemAlloc(Value v);
 void addCompletionBarrier(DotXOp op, Value barrier, Value pred);
+
+Value traceToMemDesc(Value initialValue);
+Value convertToMemDesc(Value initialValue);
 
 }

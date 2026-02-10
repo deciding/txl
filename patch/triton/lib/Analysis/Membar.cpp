@@ -9,6 +9,7 @@
 
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include <cstdint>
 #include <deque>
 
 namespace ttng = mlir::triton::nvidia_gpu;
@@ -23,6 +24,10 @@ static inline void insertBarrierTXL(OpBuilder &builder, Operation *op) {
   auto barrierOp = builder.create<mlir::gpu::BarrierOp>(op->getLoc());
   auto attr = triton::getParentWithWGIDAttr(op);
 
+  auto mod = op->getParentOfType<ModuleOp>();
+  int numWarps = mlir::triton::gpu::lookupNumWarps(op);
+  int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
+
   int nameBarrierIdBegin = 1; // TODO align with python
   int nameBarrierIdEnd = 8; // python should start from 8
   if (attr) {
@@ -31,10 +36,18 @@ static inline void insertBarrierTXL(OpBuilder &builder, Operation *op) {
 
     int barId = asyncTaskId + nameBarrierIdBegin;
     assert(barId < nameBarrierIdEnd);
-    auto mod = op->getParentOfType<ModuleOp>();
-    int numWarps = mlir::triton::gpu::lookupNumWarps(op);
-    int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
-    int numThreads = numWarps * warpSize;
+    // NOTE: assume numWarps is always 4 in this case.
+    int numThreads = 4 * warpSize;
+    barrierOp->setAttr("bar_id", builder.getI64IntegerAttr(barId));
+    barrierOp->setAttr("num_threads", builder.getI64IntegerAttr(numThreads));
+  }
+
+  SmallVector<int32_t> wids = triton::getParentWithWIDsAttr(op);
+  if (wids.size()) {
+    int barId = wids[0] + nameBarrierIdBegin; // NOTE: assume sorted wids
+    assert(barId < nameBarrierIdEnd);
+    // NOTE: assume numWarps is always 4 in this case.
+    int numThreads = wids.size() * warpSize;
     barrierOp->setAttr("bar_id", builder.getI64IntegerAttr(barId));
     barrierOp->setAttr("num_threads", builder.getI64IntegerAttr(numThreads));
   }
@@ -55,6 +68,13 @@ Interval<size_t> getWGBufferInterval(Interval<size_t> range, Operation* op){
   if (attr) {
     assert(attr.getType().isInteger(32) && "ttxg.wgid must be 32 bit int\n");
     int32_t asyncTaskId = attr.getInt();
+    auto newOff = asyncTaskId * 300000;// TODO: hardcoded
+    Interval<size_t> newRange(range.start() + newOff, range.end() + newOff);
+    return newRange;
+  }
+  SmallVector<int32_t> wids = triton::getParentWithWIDsAttr(op);
+  if (wids.size()) {
+    int32_t asyncTaskId = wids[0];
     auto newOff = asyncTaskId * 300000;// TODO: hardcoded
     Interval<size_t> newRange(range.start() + newOff, range.end() + newOff);
     return newRange;

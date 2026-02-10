@@ -1,5 +1,6 @@
 #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "triton/Analysis/Allocation.h"
@@ -17,6 +18,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
+#include "triton/Analysis/TXLUtility.h"
 
 #include <functional>
 #include <optional>
@@ -346,6 +348,27 @@ applyLinearLayout(Location loc, RewriterBase &rewriter,
   return outIndices;
 }
 
+std::optional<int> getWIDsStartThreadId(Block *block) {
+  using namespace triton::gpu;
+
+  // Look for an enclosing `ttg.warp_specialize` op.
+  while (block && block->getParentOp() &&
+         (!isa<scf::IfOp>(block->getParentOp()) || !(block->getParentOp()->getAttrOfType<IntegerAttr>("ttxg.wids"))))
+    block = block->getParentOp()->getBlock();
+  if (!block || !block->getParentOp())
+    return {};
+
+  auto widsIfOp = cast<scf::IfOp>(block->getParentOp());
+  assert(!block->empty() && "expected block to have at least one operation");
+  mlir::Operation &firstOp = block->front();
+  auto startIds = getParentWithWIDsAttr(&firstOp);
+  assert(startIds.size() && "cannot get warp group ID before warp group allocation");
+  int32_t warpStartId = startIds[0];
+  int threadsPerWarp =
+      TritonGPUDialect::getThreadsPerWarp(firstOp.getParentOfType<ModuleOp>());
+  return warpStartId * threadsPerWarp;
+}
+
 std::optional<int> getWarpGroupStartThreadId(Block *block) {
   using namespace triton::gpu;
 
@@ -376,6 +399,12 @@ Value getThreadId(OpBuilder &rewriter, Location loc) {
   // thread ID within the warp group.
   if (std::optional<int> startId =
           getWarpGroupStartThreadId(rewriter.getInsertionBlock())) {
+    TritonLLVMOpBuilder b(loc, rewriter);
+    tid = rewriter.create<arith::SubIOp>(loc, tid, b.i32_val(*startId));
+  }
+  // txl
+  if (std::optional<int> startId =
+          getWIDsStartThreadId(rewriter.getInsertionBlock())) {
     TritonLLVMOpBuilder b(loc, rewriter);
     tid = rewriter.create<arith::SubIOp>(loc, tid, b.i32_val(*startId));
   }

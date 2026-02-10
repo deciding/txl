@@ -1,4 +1,6 @@
 #include <cstdint>
+#include <cwctype>
+#include <future>
 #include <memory>
 #include <cassert>
 
@@ -29,8 +31,10 @@
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "proton/Dialect/include/Dialect/Proton/IR/Dialect.h"
 #include "proton/Dialect/include/Dialect/ProtonGPU/IR/Dialect.h"
+#include "llvm/ADT/SmallVector.h"
 #include <deque>
 #include <memory>
+#include <vector>
 
 using namespace mlir::triton::gpu;
 namespace tt = mlir::triton;
@@ -227,11 +231,15 @@ SmallVector<scf::IfOp> findOuterWarpIf(Operation* op) {
 
 Operation *SpecializeOp(Operation *op, IRMapping &mapping,
                         OpBuilder &builder,
-                        int asyncTaskId, llvm::ArrayRef<int32_t> rootTaskIds, SpecMode mode);
+                        SmallVector<int32_t> asyncTaskIds, llvm::ArrayRef<int32_t> rootTaskIds, SpecMode mode);
 
+// Currently only for is_warpgroup
 Operation *SpecializeSpecializedIfOp(scf::IfOp ifOp, IRMapping &mapping,
                           OpBuilder &builder,
                           int asyncTaskId, llvm::ArrayRef<int32_t> rootTaskIds, SpecMode mode) {
+  LLVM_DEBUG({
+    LDBG("specialize specialized ifOp ");
+  });
   Value cond = ifOp.getCondition();
   ArrayRef<int32_t> ids;
   if (mode == SpecMode::WARPGROUP) {
@@ -322,7 +330,7 @@ Operation *SpecializeSpecializedIfOp(scf::IfOp ifOp, IRMapping &mapping,
 
   // Handle thenRegion of this IfOp.
   for (Operation &selectedOp : selectedBlock->without_terminator()) {
-    SpecializeOp(&selectedOp, mapping, builder, asyncTaskId, selectedTaskIds, mode);
+    SpecializeOp(&selectedOp, mapping, builder, {asyncTaskId}, selectedTaskIds, mode);
   }
   // for other task ids
   //if (ifOp.elseBlock()) {
@@ -345,12 +353,15 @@ Operation *SpecializeSpecializedIfOp(scf::IfOp ifOp, IRMapping &mapping,
 // ordinary if
 Operation *SpecializeIfOp(scf::IfOp ifOp, IRMapping &mapping,
                           OpBuilder &builder,
-                          int asyncTaskId, llvm::ArrayRef<int32_t> rootTaskIds, SpecMode mode) {
+                          SmallVector<int32_t> asyncTaskIds, llvm::ArrayRef<int32_t> rootTaskIds, SpecMode mode) {
   LLVM_DEBUG({
     LDBG("specialize ifOp ");
     ifOp.dump();
   });
 
+  auto loc = ifOp->getLoc();
+
+  // Step1: result type copy to newIf
   // if op don't have block args, but just yield
   // however, the yield may contain blockarg from parent forop
   unsigned resultIdx = 0;
@@ -367,16 +378,46 @@ Operation *SpecializeIfOp(scf::IfOp ifOp, IRMapping &mapping,
     newResultTypes.push_back(ifOp->getResultTypes()[idx]);
   }
 
+  // Step2: process for wids new cond
+  Value cond = mapping.lookup(ifOp.getCondition());
+  SmallVector<int32_t> ids;
+  bool useIsWarp = isa<tt::IsWarpOp>(cond.getDefiningOp());
+  if (useIsWarp) {
+      assert(mode==SpecMode::WARP && "IsWarpOp mus be used solely without IsWarpgroupOp");
+      auto warpOp = dyn_cast<tt::IsWarpOp>(cond.getDefiningOp());
+      auto wids = warpOp.getIds();
+      ids = SmallVector<int32_t>{wids.begin(), wids.end()};
+      auto curAsyncTaskId = builder.create<ttxg::WarpIdOp>(loc, builder.getI32Type());
+      Value geLower = builder.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::sge, curAsyncTaskId,
+          builder.create<arith::ConstantIntOp>(loc, ids[0], 32));
+      Value leUpper = builder.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::sle, curAsyncTaskId,
+          builder.create<arith::ConstantIntOp>(loc, ids[ids.size()-1], 32));
+      cond = builder.create<arith::AndIOp>(loc, geLower, leUpper);
+  }
+
+  // Step3 set op attr of wgid/wids
   // Mind the builder insertion point
   // TODO: elseblock direct copy?
+  SmallVector<int32_t> thenVec(asyncTaskIds.begin(), asyncTaskIds.end());
+  SmallVector<int32_t> elseVec(asyncTaskIds.begin(), asyncTaskIds.end());
   auto newIfOp = builder.create<scf::IfOp>(
-      ifOp.getLoc(), newResultTypes, mapping.lookup(ifOp.getCondition()), true,
+      loc, newResultTypes, cond, true,
       ifOp.elseBlock());
   if (mode == SpecMode::WARPGROUP) {
-      setOpAttrWgId(newIfOp, asyncTaskId);
+      assert(asyncTaskIds.size() == 1 && "asyncTaskIds for Warpgroup should always has 1 element");
+      setOpAttrWgId(newIfOp, asyncTaskIds[0]);
   }
-  else {
-      setOpAttrWId(newIfOp, asyncTaskId);
+  else if(mode == SpecMode::WARP && useIsWarp){
+      // update the wids and else wids
+      thenVec=ids;
+      std::vector<int32_t> thenIds(thenVec.begin(), thenVec.end());
+      elseVec.clear();
+      subtractArrayRefs(asyncTaskIds, thenIds, elseVec);
+      std::vector<int32_t> elseIds(elseVec.begin(), elseVec.end());
+      setOpAttrWIds(newIfOp, thenIds);
+      setOpAttrWIds(newIfOp, elseIds, true);
   }
 
   OpBuilder ifBuilder(ifOp.getContext());
@@ -384,13 +425,13 @@ Operation *SpecializeIfOp(scf::IfOp ifOp, IRMapping &mapping,
   // Handle thenRegion of this IfOp.
   ifBuilder.setInsertionPointToEnd(newIfOp.thenBlock());
   for (Operation &thenOp : ifOp.thenBlock()->getOperations()) {
-    SpecializeOp(&thenOp, mapping, ifBuilder, asyncTaskId, rootTaskIds, mode);
+    SpecializeOp(&thenOp, mapping, ifBuilder, thenVec, rootTaskIds, mode);
   }
   // Similarly: Handle elseRegion of the IfOp.
   if (ifOp.elseBlock()) {
     ifBuilder.setInsertionPointToEnd(newIfOp.elseBlock());
     for (Operation &elseOp : ifOp.elseBlock()->getOperations()) {
-      SpecializeOp(&elseOp, mapping, ifBuilder, asyncTaskId, rootTaskIds, mode);
+      SpecializeOp(&elseOp, mapping, ifBuilder, elseVec, rootTaskIds, mode);
     }
   }
 
@@ -404,8 +445,11 @@ Operation *SpecializeIfOp(scf::IfOp ifOp, IRMapping &mapping,
 
 Operation *SpecializeForOp(scf::ForOp forOp, IRMapping &mapping,
                            OpBuilder &builder,
-                           int asyncTaskId, llvm::ArrayRef<int32_t> rootTaskIds, SpecMode mode) {
+                           SmallVector<int32_t> asyncTaskIds, llvm::ArrayRef<int32_t> rootTaskIds, SpecMode mode) {
 
+  LLVM_DEBUG({
+    LDBG("specialize forOp ");
+  });
   // Prepare newLoopArgs.
   SmallVector<Value> newLoopArgs;
   for (auto arg : forOp.getInitArgs()) {
@@ -423,10 +467,12 @@ Operation *SpecializeForOp(scf::ForOp forOp, IRMapping &mapping,
   auto newForOp = builder.create<scf::ForOp>(
       forOp.getLoc(), newLowerBound, newUpperBound, newStep, newLoopArgs);
   if (mode == SpecMode::WARPGROUP) {
-    setOpAttrWgId(newForOp, asyncTaskId);
+    assert(asyncTaskIds.size() == 1 && "asyncTaskIds for Warpgroup should always has 1 element");
+    setOpAttrWgId(newForOp, asyncTaskIds[0]);
   }
   else {
-    setOpAttrWId(newForOp, asyncTaskId);
+    std::vector<int32_t> vec(asyncTaskIds.begin(), asyncTaskIds.end());
+    setOpAttrWIds(newForOp, vec);
   }
   if (forOp->getAttr("tt.loop_schedule"))
     newForOp->setAttr("tt.loop_schedule", forOp->getAttr("tt.loop_schedule"));
@@ -444,7 +490,7 @@ Operation *SpecializeForOp(scf::ForOp forOp, IRMapping &mapping,
   OpBuilder forBuilder(forOp.getContext());
   forBuilder.setInsertionPointToStart(newForOp.getBody());
   for (Operation &op : forOp.getBody()->without_terminator()) {
-    SpecializeOp(&op, mapping, forBuilder, asyncTaskId, rootTaskIds, mode);
+    SpecializeOp(&op, mapping, forBuilder, asyncTaskIds, rootTaskIds, mode);
   }
 
   // Create YieldOp for newForOp.
@@ -465,10 +511,11 @@ Operation *SpecializeForOp(scf::ForOp forOp, IRMapping &mapping,
     auto newYieldOp =
         forBuilder.create<scf::YieldOp>(yieldOp.getLoc(), newYieldOperands);
     if (mode == SpecMode::WARPGROUP) {
-      setOpAttrWgId(newYieldOp, asyncTaskId);
+      setOpAttrWgId(newYieldOp, asyncTaskIds[0]);
     }
     else {
-      setOpAttrWId(newYieldOp, asyncTaskId);
+      std::vector<int32_t> vec(asyncTaskIds.begin(), asyncTaskIds.end());
+      setOpAttrWIds(newYieldOp, vec);
     }
   }
 
@@ -484,39 +531,45 @@ Operation *SpecializeForOp(scf::ForOp forOp, IRMapping &mapping,
 
 Operation *SpecializeOp(Operation *op, IRMapping &mapping,
                         OpBuilder &builder,
-                        int asyncTaskId, llvm::ArrayRef<int32_t> rootTaskIds, SpecMode mode) {
+                        SmallVector<int32_t> asyncTaskIds, llvm::ArrayRef<int32_t> rootTaskIds, SpecMode mode) {
+  LLVM_DEBUG({
+    LDBG("specialize General Ops ");
+  });
   if (op->getNumRegions() == 0) {
     // case 1: direct clone
     Operation *newOp = builder.clone(*op, mapping);
     for (unsigned i = 0; i < op->getNumResults(); ++i)
       mapping.map(op->getResult(i), newOp->getResult(i));
     if (mode == SpecMode::WARPGROUP) {
-      setOpAttrWgId(newOp, asyncTaskId);
+      assert(asyncTaskIds.size() == 1 && "asyncTaskIds for Warpgroup should always has 1 element");
+      setOpAttrWgId(newOp, asyncTaskIds[0]);
     }
     else {
-      setOpAttrWId(newOp, asyncTaskId);
+      std::vector<int32_t> vec(asyncTaskIds.begin(), asyncTaskIds.end());
+      setOpAttrWIds(newOp, vec);
     }
     return newOp;
   } else {
     // case 2: ops with blocks
     if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
-      if (isWarpgroupIf(ifOp)) {
-          return SpecializeSpecializedIfOp(ifOp, mapping, builder, asyncTaskId, rootTaskIds, mode);
+      if (isWarpgroupIf(ifOp)) { // only for warpgroup if
+          return SpecializeSpecializedIfOp(ifOp, mapping, builder, asyncTaskIds[0], rootTaskIds, mode);
       } else {
-          return SpecializeIfOp(ifOp, mapping, builder, asyncTaskId, rootTaskIds, mode);
+          return SpecializeIfOp(ifOp, mapping, builder, asyncTaskIds, rootTaskIds, mode);
       }
     } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-      return SpecializeForOp(forOp, mapping, builder, asyncTaskId, rootTaskIds, mode);
+      return SpecializeForOp(forOp, mapping, builder, asyncTaskIds, rootTaskIds, mode);
     } else if (auto reduceOp = dyn_cast<ReduceOp>(op)) {
       Operation *newOp = builder.clone(*op, mapping);
       // recursively set async task ids for child ops
       for (unsigned i = 0; i < op->getNumResults(); ++i)
         mapping.map(op->getResult(i), newOp->getResult(i));
       if (mode == SpecMode::WARPGROUP) {
-        setOpAttrWgId(newOp, asyncTaskId);
+        setOpAttrWgId(newOp, asyncTaskIds[0]);
       }
       else {
-        setOpAttrWId(newOp, asyncTaskId);
+        std::vector<int32_t> vec(asyncTaskIds.begin(), asyncTaskIds.end());
+        setOpAttrWIds(newOp, vec);
       }
       return newOp;
     } else {
@@ -541,7 +594,7 @@ void SpecializeOuterSpecializedIf(scf::IfOp ifOp, int32_t numAsyncIds, bool hasT
 
   LLVM_DEBUG({
     LDBG("\n\n");
-    LDBG("Start specializing region");
+    LDBG("Start specializing outer if region");
   });
 
   MLIRContext *context = ifOp.getContext();
@@ -567,6 +620,7 @@ void SpecializeOuterSpecializedIf(scf::IfOp ifOp, int32_t numAsyncIds, bool hasT
 
 
   SmallVector<int32_t> rootTaskIds;
+  numAsyncIds = nextPowerOf2(numAsyncIds);
   for (int32_t i=0; i < numAsyncIds; i++)
       rootTaskIds.push_back(i);
   SmallVector<int32_t> elseIds;
@@ -582,131 +636,195 @@ void SpecializeOuterSpecializedIf(scf::IfOp ifOp, int32_t numAsyncIds, bool hasT
       blockVec.push_back(ifOp.elseBlock());
   }
 
-
   //if (ifOp.elseBlock())
   //    ifOp->emitError("Outermost is_warpgroup should not have else block\n");
 
-  for (int i = 0; i < idsVec.size(); i++){
+  if (mode == SpecMode::WARPGROUP) {
+    for (int i = 0; i < idsVec.size(); i++){
 
-    DenseMap<int, scf::IfOp> tasksToIfOp;
+        DenseMap<int, scf::IfOp> tasksToIfOp;
 
-    // Stage 1
-    // Clone all operations into the corresponding if blocks. If the operation
-    // has multiple taskIds, it will be cloned for multiple if blocks.
-    // If the original code has an IfOp, we should only clone its
-    // body with the right asyncTaskId, instead of cloning the IfOp.
-    for (int asyncTaskId : idsVec[i]) { // all asyncTaskId inside
-      builder.setInsertionPoint(ifOp);
-      // Create IfOp for each asyncTaskId.
-      Value cond = builder.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::eq, curAsyncTaskId,
-          builder.create<arith::ConstantIntOp>(loc, asyncTaskId, 32));
+        // Stage 1
+        // Clone all operations into the corresponding if blocks. If the operation
+        // has multiple taskIds, it will be cloned for multiple if blocks.
+        // If the original code has an IfOp, we should only clone its
+        // body with the right asyncTaskId, instead of cloning the IfOp.
+        for (int asyncTaskId : idsVec[i]) { // all asyncTaskId inside
+          builder.setInsertionPoint(ifOp);
+          // Create IfOp for each asyncTaskId.
+          Value cond = builder.create<arith::CmpIOp>(
+              loc, arith::CmpIPredicate::eq, curAsyncTaskId,
+              builder.create<arith::ConstantIntOp>(loc, asyncTaskId, 32));
 
-      auto newIfOp = builder.create<scf::IfOp>(loc, cond);
-      tasksToIfOp[asyncTaskId] = newIfOp;
+          auto newIfOp = builder.create<scf::IfOp>(loc, cond);
+          tasksToIfOp[asyncTaskId] = newIfOp;
 
-      if (mode == SpecMode::WARPGROUP) {
           setOpAttrWgId(newIfOp, asyncTaskId);
           newIfOp->setAttr("txl-outer-warpgroup", builder.getI32IntegerAttr(1));
-      }
-      else {
-          setOpAttrWId(newIfOp, asyncTaskId);
-          newIfOp->setAttr("txl-outer-warp", builder.getI32IntegerAttr(1));
-      }
 
-      OpBuilder taskBuilder(context);
+          OpBuilder taskBuilder(context);
 
-      // Set insertion point before yieldOp.
-      auto yieldOp = newIfOp.thenYield();
-      taskBuilder.setInsertionPoint(yieldOp);
+          // Set insertion point before yieldOp.
+          auto yieldOp = newIfOp.thenYield();
+          taskBuilder.setInsertionPoint(yieldOp);
 
-      // copy over the ops inside the region to the new ifop
-      IRMapping mapping;
-      for (Operation &op : blockVec[i]->getOperations()) {
-        SpecializeOp(&op, mapping, taskBuilder, asyncTaskId, idsVec[i], mode);
-      }
+          // copy over the ops inside the region to the new ifop
+          IRMapping mapping;
+          for (Operation &op : blockVec[i]->getOperations()) {
+            SpecializeOp(&op, mapping, taskBuilder, {asyncTaskId}, idsVec[i], mode);
+          }
 
-      // TODO: to enable yield we either:
-      // 1. yield dummy for else
-      // 2. nest if else in else
-      //unsigned resultIdx = 0;
-      //SmallVector<unsigned> keptResultVec;
-      //if (!ifOp->getResultTypes().empty()) {
-      //  for (Value yieldV : ifOp.thenYield()->getOperands()) {
-      //    keptResultVec.push_back(resultIdx);
-      //    ++resultIdx;
-      //  }
-      //}
+          // TODO: to enable yield we either:
+          // 1. yield dummy for else
+          // 2. nest if else in else
+          //unsigned resultIdx = 0;
+          //SmallVector<unsigned> keptResultVec;
+          //if (!ifOp->getResultTypes().empty()) {
+          //  for (Value yieldV : ifOp.thenYield()->getOperands()) {
+          //    keptResultVec.push_back(resultIdx);
+          //    ++resultIdx;
+          //  }
+          //}
 
-      //SmallVector<Type> newResultTypes;
-      //for (auto idx : keptResultVec) {
-      //  newResultTypes.push_back(ifOp->getResultTypes()[idx]);
-      //}
+          //SmallVector<Type> newResultTypes;
+          //for (auto idx : keptResultVec) {
+          //  newResultTypes.push_back(ifOp->getResultTypes()[idx]);
+          //}
 
-      //for (auto idx : keptResultVec) {
-      //  auto oldIfResultSrc = ifOp.thenYield()->getOperands()[idx]; // then or else
-      //  auto flatIfResult = mapping.lookupOrDefault(oldIfResultSrc);
-      //  assert(flatIfResult && "Unexpected missing mapping");
+          //for (auto idx : keptResultVec) {
+          //  auto oldIfResultSrc = ifOp.thenYield()->getOperands()[idx]; // then or else
+          //  auto flatIfResult = mapping.lookupOrDefault(oldIfResultSrc);
+          //  assert(flatIfResult && "Unexpected missing mapping");
 
-      //  mapping.map(ifOp.getResult(idx), flatIfResult);
-      //}
+          //  mapping.map(ifOp.getResult(idx), flatIfResult);
+          //}
 
-      yieldOp->erase();
+          yieldOp->erase();
 
-      LLVM_DEBUG({
-        LDBG("\n\nAfter replication:");
-        newIfOp->dump();
-      });
-    }
+          LLVM_DEBUG({
+            LDBG("\n\nAfter replication:");
+            newIfOp->dump();
+          });
+        }
 
-    // Stage 2
-    // Decide if this taskId is a producer or a consumer, and create either
-    // ONLY For Warpgroups
-    // RegAllocOp or RegDeallocOp accordingly.
-    for (auto ifOps : tasksToIfOp) {
-      int asyncTaskId = ifOps.first;
-      auto newIfOp = ifOps.second;
 
-      OpBuilder taskBuilder(newIfOp.getContext());
-      auto regAlloc = scanRegUsage(newIfOp.thenBlock(), asyncTaskId, 0, 0, numAsyncIds, hasTma); //TODO: user control
+        // Stage 2
+        // Decide if this taskId is a producer or a consumer, and create either
+        // ONLY For Warpgroups
+        // RegAllocOp or RegDeallocOp accordingly.
+        for (auto ifOps : tasksToIfOp) {
+          int asyncTaskId = ifOps.first;
+          auto newIfOp = ifOps.second;
 
-      Block &firstBlock = newIfOp.getThenRegion().front();
-      Operation& firstOp = firstBlock.front();
-      if (isa<RegAllocOp, RegDeallocOp>(firstOp)){
-          continue;
-      }
-      taskBuilder.setInsertionPointToStart(&firstBlock);
-      if (regAlloc.second)
-        taskBuilder.create<ttxg::RegAllocOp>(
-            loc, taskBuilder.getI32IntegerAttr(regAlloc.first));
-      else
-        taskBuilder.create<ttxg::RegDeallocOp>(
-            loc, taskBuilder.getI32IntegerAttr(regAlloc.first));
+          OpBuilder taskBuilder(newIfOp.getContext());
+          auto regAlloc = scanRegUsage(newIfOp.thenBlock(), asyncTaskId, 0, 0, numAsyncIds, hasTma); //TODO: user control
 
-    }
-
-    // Stage 3
-    // check proton record op exist and add ctx ops
-    for (auto ifOps : tasksToIfOp) {
-      int asyncTaskId = ifOps.first;
-      // don't create new segment for master warp
-      if (asyncTaskId == 0)
-          continue;
-      auto newIfOp = ifOps.second;
-
-      OpBuilder taskBuilder(newIfOp.getContext());
-
-      Block &firstBlock = newIfOp.getThenRegion().front();
-
-      if (hasOperator<Operation, ttp::RecordOp>(newIfOp)) {
+          Block &firstBlock = newIfOp.getThenRegion().front();
+          Operation& firstOp = firstBlock.front();
+          if (isa<RegAllocOp, RegDeallocOp>(firstOp)){
+              continue;
+          }
           taskBuilder.setInsertionPointToStart(&firstBlock);
-          taskBuilder.create<ttxg::RestoreCtxOp>(loc, asyncTaskId);
+          if (regAlloc.second)
+            taskBuilder.create<ttxg::RegAllocOp>(
+                loc, taskBuilder.getI32IntegerAttr(regAlloc.first));
+          else
+            taskBuilder.create<ttxg::RegDeallocOp>(
+                loc, taskBuilder.getI32IntegerAttr(regAlloc.first));
 
-          taskBuilder.setInsertionPoint(newIfOp.thenYield());
-          taskBuilder.create<ttxg::SaveCtxOp>(loc, asyncTaskId);
+        }
+
+        // Stage 3
+        // check proton record op exist and add ctx ops
+        for (auto ifOps : tasksToIfOp) {
+          int asyncTaskId = ifOps.first;
+          // don't create new segment for master warp
+          if (asyncTaskId == 0)
+              continue;
+          auto newIfOp = ifOps.second;
+
+          OpBuilder taskBuilder(newIfOp.getContext());
+
+          Block &firstBlock = newIfOp.getThenRegion().front();
+
+          if (hasOperator<Operation, ttp::RecordOp>(newIfOp)) {
+              taskBuilder.setInsertionPointToStart(&firstBlock);
+              taskBuilder.create<ttxg::RestoreCtxOp>(loc, asyncTaskId);
+
+              taskBuilder.setInsertionPoint(newIfOp.thenYield());
+              taskBuilder.create<ttxg::SaveCtxOp>(loc, asyncTaskId);
+          }
+
+        }
+    }
+  }
+  else { // SpecMode.WARP
+    builder.setInsertionPoint(ifOp);
+    // Create IfOp for each asyncTaskId.
+    Value geLower = builder.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sge, curAsyncTaskId,
+        builder.create<arith::ConstantIntOp>(loc, idsVec[0][0], 32));
+    Value leUpper = builder.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sle, curAsyncTaskId,
+        builder.create<arith::ConstantIntOp>(loc, idsVec[0][idsVec[0].size()-1], 32));
+    Value cond = builder.create<arith::AndIOp>(loc, geLower, leUpper);
+
+    // TODO: assumes no result type
+    auto newIfOp = builder.create<scf::IfOp>(loc, cond, idsVec.size()>1);
+    //tasksToIfOp[asyncTaskId] = newIfOp;
+
+    setOpAttrWIds(newIfOp, idsVec[0]);
+    if (idsVec.size() > 1)
+      setOpAttrWIds(newIfOp, idsVec[1], true);
+    newIfOp->setAttr("txl-outer-warp", builder.getI32IntegerAttr(1));
+
+    OpBuilder taskBuilder(context);
+
+    // Set insertion point before yieldOp.
+    auto yieldOp = newIfOp.thenYield();
+    taskBuilder.setInsertionPoint(yieldOp);
+
+    // copy over the ops inside the region to the new ifop
+    IRMapping mapping;
+    for (Operation &op : blockVec[0]->getOperations()) {
+      SmallVector<int32_t> vec{idsVec[0].begin(), idsVec[0].end()};
+      SpecializeOp(&op, mapping, taskBuilder, vec, idsVec[0], mode);
+    }
+    yieldOp->erase();
+
+    if (blockVec.size() > 1) {
+      auto elseYieldOp = newIfOp.elseYield();
+      taskBuilder.setInsertionPoint(elseYieldOp);
+      for (Operation &op : blockVec[1]->getOperations()) {
+        SmallVector<int32_t> vec{idsVec[1].begin(), idsVec[1].end()};
+        SpecializeOp(&op, mapping, taskBuilder, vec, idsVec[1], mode);
       }
+      elseYieldOp.erase();
+
+      Block* elseBlock = blockVec[1];
 
     }
+    if (hasOperator<Operation, ttp::RecordOp>(newIfOp)) {
+        for (int i = 0; i<idsVec.size(); i++) {
+            for (auto asyncTaskId : idsVec[i]) {
+              if (asyncTaskId != 0) {
+                  taskBuilder.setInsertionPointToStart(blockVec[i]);
+                  taskBuilder.create<ttxg::RestoreCtxOp>(loc, asyncTaskId);
+
+                  if (i == 0)
+                      taskBuilder.setInsertionPoint(newIfOp.thenYield());
+                  else
+                      taskBuilder.setInsertionPoint(newIfOp.elseYield());
+                  taskBuilder.create<ttxg::SaveCtxOp>(loc, asyncTaskId);
+              }
+            }
+        }
+    }
+
+    LLVM_DEBUG({
+      LDBG("\n\nAfter replication:");
+      newIfOp->dump();
+    });
   }
 
   // Stage 3: clean up original region
@@ -767,6 +885,15 @@ public:
         hasTma = true;
     });
 
+    llvm::DenseSet<int32_t> allWarps;
+    m->walk([&](tt::IsWarpOp isWarpOp) {
+        auto ids = isWarpOp.getIds();
+        for (auto i : ids) {
+          allWarps.insert(i);
+        }
+    });
+    int32_t numAllWarps = allWarps.size();
+
     m->walk([&](tt::FuncOp funcOp) {
         // Find the outermost if with warp group condition
         SmallVector<scf::IfOp> wgOps = findOuterWarpGroupIf(funcOp);
@@ -788,7 +915,7 @@ public:
             });
         }
         for (scf::IfOp outerIf : wOps) {
-          SpecializeOuterSpecializedIf(outerIf, numWarps, hasTma, SpecMode::WARP); // hasTma is used for heuristic reg alloc
+          SpecializeOuterSpecializedIf(outerIf, numAllWarps, hasTma, SpecMode::WARP); // hasTma is used for heuristic reg alloc
         }
 
         // add init context
@@ -803,6 +930,18 @@ public:
       DBGS() << "Module after ws code parition:\n";
       DBGS() << printModuleOp(m);
     });
+
+    llvm::SmallDenseSet<int32_t> widsSet;
+    m->walk([&](triton::IsWarpOp warpOp) {
+      auto wids = warpOp.getIds();
+      assert(wids.size() && "IsWarpOp expected to have ids attribute");
+
+      for (auto id: wids) {
+        widsSet.insert(id);
+      }
+    });
+    size_t numUniqueWIds = widsSet.size();
+
     m->walk([&](tt::IsWarpgroupOp isWarpgroupOp) {
         assert(isWarpgroupOp->use_empty() && "is_warpgroup not lowered!\n");
         isWarpgroupOp->erase();
@@ -811,8 +950,16 @@ public:
         assert(isWarpOp->use_empty() && "is_warp not lowered!\n");
         isWarpOp->erase();
     });
+
     OpBuilder builder(m);
-    m->setAttr("ttg.total-num-warps", builder.getI32IntegerAttr(numWarpgroups*4));
+    if (numUniqueWIds == 0)
+        m->setAttr("ttg.total-num-warps", builder.getI32IntegerAttr(numWarpgroups*4));
+    else {
+        m->setAttr("ttg.total-num-warps", builder.getI32IntegerAttr(numUniqueWIds));
+        llvm::outs() << "\n total num warps \n";
+        llvm::outs() << numUniqueWIds;
+        llvm::outs() << "\n";
+    }
     if (numWarpgroups == 1)
         m->setAttr("ttg.txl-warpgroups-set", builder.getI32IntegerAttr(0));
     else

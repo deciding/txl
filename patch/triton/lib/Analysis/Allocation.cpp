@@ -1,6 +1,7 @@
 #include "triton/Analysis/Allocation.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 
 #include "mlir/Analysis/Liveness.h"
@@ -317,8 +318,9 @@ private:
         // bufferRange.insert(
         //     {buffer, Interval(operationId.at(op), operationId.at(op) + 1)});
         int wgId = getOpAttrWgId(op);
-        int wId = getOpAttrWId(op);
-        assert((wgId==-1 || wId == -1) && "is_warp and is_warpgroup can not be used at the same time");
+        //int wId = getOpAttrWId(op);
+        SmallVector<int32_t> wIds = getOpAttrWIds(op);
+        assert((wgId==-1 || wIds.size() == 0) && "is_warp and is_warpgroup can not be used at the same time");
         if (wgId != -1) {
           buffer->regionIds.insert(wgId);
           // For warp-specialized code, we can assume each region has its own
@@ -328,8 +330,9 @@ private:
           bufferRange.insert({buffer, Interval(operationId.lookup(op),
                                                operationId.lookup(op) + 1)});
         }
-        else if (wId != -1) {
-          buffer->regionIds.insert(wId);
+        else if (wIds.size() != 0) {
+          for (auto wId : wIds)
+            buffer->regionIds.insert(wId);
           bufferRange.insert({buffer, Interval(operationId.lookup(op),
                                                operationId.lookup(op) + 1)});
         }
@@ -381,9 +384,11 @@ private:
                       int wgId = getOpAttrWgId(liveOp);
                       if (wgId != -1)
                         buffer->regionIds.insert(wgId);
-                      int wId = getOpAttrWId(liveOp);
-                      if (wId != -1)
-                        buffer->regionIds.insert(wId);
+                      //int wId = getOpAttrWId(liveOp);
+                      auto wIds = getOpAttrWIds(liveOp);
+                      if (wIds.size() != 0)
+                        for (auto wId: wIds)
+                          buffer->regionIds.insert(wId);
                     });
 
       auto minId = std::numeric_limits<size_t>::max();

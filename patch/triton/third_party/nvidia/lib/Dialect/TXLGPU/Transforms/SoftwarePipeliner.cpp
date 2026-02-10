@@ -393,6 +393,13 @@ Value createTMemAllocTXL(tt::TmemAllocOp tmemAllocOp) {
       triton::nvidia_gpu::TensorMemorySpaceAttr::get(context);
   auto sharedEnc = tmemAllocOp.getSharedEncAttr();
   auto distributedEnc = tmemAllocOp.getDistributedEncAttr();
+  //llvm::outs() << "\ncreateTMemAllocTXL\n";
+  //llvm::outs() << oldRetType;
+  //llvm::outs() << "\n";
+  //llvm::outs() << sharedEnc;
+  //llvm::outs() << "\n";
+  //llvm::outs() << distributedEnc;
+  //llvm::outs() << "\n";
   Type accMemDescType = triton::gpu::MemDescType::get(
       shape, oldRetType.getElementType(), sharedEnc,
       tensorMemorySpace, /*mutableMemory=*/true);
@@ -1399,12 +1406,35 @@ void lowerTmemAllocs(ModuleOp moduleOp) {
   }
 }
 
-#if 0
 void lowerDotXOp(tt::DotXOp dotXOp) {
   OpBuilder builder(dotXOp);
   Location loc = dotXOp->getLoc();
   auto tokType = builder.getType<AsyncTokenType>();
   auto vTrue = builder.create<arith::ConstantIntOp>(loc, 1, 1);
+  Value a = dotXOp->getOperand(0);
+  if (!isa<TypedValue<MemDescType>>(a)) {
+      Value mem = convertToMemDesc(a);
+      if (!mem){
+          dotXOp->emitError("Operand A of dotx is not from memdesc\n");
+      }
+      dotXOp->setOperand(0, mem);
+  }
+  Value b = dotXOp->getOperand(1);
+  if (!isa<TypedValue<MemDescType>>(b)) {
+      Value mem = convertToMemDesc(b);
+      if (!mem){
+          dotXOp->emitError("Operand B of dotx is not from memdesc\n");
+      }
+      dotXOp->setOperand(1, mem);
+  }
+  Value c = dotXOp->getOperand(2);
+  if (!isa<TypedValue<MemDescType>>(c)) {
+      Value mem = traceToMemDesc(c);
+      if (!mem){
+          dotXOp->emitError("Operand C of dotx is not from memdesc\n");
+      }
+      dotXOp->setOperand(2, mem);
+  }
   auto mma = builder.create<triton::nvidia_gpu::TCGen5MMAOp>(
       loc, tokType,
       dotXOp->getOperand(0),
@@ -1414,26 +1444,24 @@ void lowerDotXOp(tt::DotXOp dotXOp) {
       /*useD=*/(bool)(dotXOp.getUseD()) ? (Value)dotXOp.getUseD() : (Value)vTrue,
       /*pred=*/(bool)(dotXOp.getPred()) ? (Value)dotXOp.getPred() : (Value)vTrue
       );
-  if (dotXOp.getMbar()) {
+  if (dotXOp.getBarriers().size()) {
     builder.setInsertionPoint(mma);
     mma.setIsAsync(true);
 
-    auto ctx = builder.getContext();
-    unsigned numCTAs = triton::gpu::TritonGPUDialect::getNumCTAs(
-        builder.getBlock()->getParentOp()->getParentOfType<ModuleOp>());
-    Attribute sharedMemorySpace =
-        SharedMemorySpaceAttr::get(builder.getContext());
-    auto barrierCTALayout =
-        CTALayoutAttr::get(/*context=*/ctx, /*CTAsPerCGA=*/{numCTAs},
-                                /*CTASplitNum=*/{1}, /*CTAOrder=*/{0});
-    auto barrierEncoding =
-        SwizzledSharedEncodingAttr::get(ctx, 1, 1, 1, {0}, barrierCTALayout);
-    MemDescType memDescType = MemDescType::get(
-        {1}, builder.getI64Type(), barrierEncoding, sharedMemorySpace,
-        /*mutableMemory=*/true);
-    mma.addCompletionBarrier(dotXOp.getMbar(),
-                        builder.create<arith::ConstantIntOp>(loc, 1, 1));
+    OperandRange barriers = dotXOp.getBarriers();
+    OperandRange preds    = dotXOp.getBarrierPreds();
+
+    // 1. Assert same size
+    assert(barriers.size() == preds.size() &&
+           "barriers and barrier preds must have the same size");
+
+    // 2. Iterate pairwise and call addCompletionBarrier
+    for (auto [barrier, pred] : llvm::zip(barriers, preds)) {
+      mma.addCompletionBarrier(barrier, pred);
+    }
   }
+  mma.setTwoCtas(dotXOp.getTwoCtas());
+  dotXOp->erase();
 }
 
 void lowerDotXOps(ModuleOp moduleOp) {
@@ -1446,7 +1474,6 @@ void lowerDotXOps(ModuleOp moduleOp) {
     lowerDotXOp(dotXOp);
   }
 }
-#endif
 
 void removeRedundantTMEMAllocs(ModuleOp moduleOp) {
   SmallVector<ttng::TMEMAllocOp> tmemAllocs;
@@ -1726,13 +1753,13 @@ public:
       LDBG("DONE\n\n\n");
     });
 
-    //lowerDotXOps(m);
-    //LLVM_DEBUG({
-    //  LDBG("SoftwarePipeliner After lowerDotXOps\n");
-    //  //m.dump();
-    //  LDBG(printModuleOp(m));
-    //  LDBG("DONE\n\n\n");
-    //});
+    lowerDotXOps(m);
+    LLVM_DEBUG({
+      LDBG("SoftwarePipeliner After lowerDotXOps\n");
+      //m.dump();
+      LDBG(printModuleOp(m));
+      LDBG("DONE\n\n\n");
+    });
 
     pipelineWgmma(m);
     lowerFenceProxyAsync(m);

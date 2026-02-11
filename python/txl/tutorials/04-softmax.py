@@ -126,6 +126,7 @@ def softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_stride, n
         output_ptrs = output_row_start_ptr + col_offsets
         tl.store(output_ptrs, softmax_output, mask=mask)
 
+# TODO: currently warp=8 will stuch at cluster wait
 @txl.jit
 #@txl.jit(diff_mode='ttgir')
 #@txl.jit(src_file='dump/1103sm/EVXHWDXBSFGUEJF2BXKQR2KMUSDV47TOC5AYVC2FX7WEDZUG34MQ/cluster_softmax_kernel.ptx')
@@ -160,10 +161,12 @@ def cluster_softmax_small_kernel(output_ptr, input_ptr, input_row_stride, output
 
     mbar_buf = txl.mbar_alloc(1); mbar = txl.get_buffer(mbar_buf, 0)
 
+    # each cta has num_warps warp-sync values
     layout_warp_reduce: tl.constexpr = txl.BlockedLayout(
             size_per_thread=[1], threads_per_warp=[1], warps_per_cta=[num_warps], order=[0],
             ctas_per_cga=[2], cta_split_num=[2], cta_order=[0]
     )
+    # each warp perform the same reduction
     layout_all_reduce: tl.constexpr = txl.BlockedLayout(
             size_per_thread=[1], threads_per_warp=[num_warps], warps_per_cta=[num_warps], order=[0],
             ctas_per_cga=[2], cta_split_num=[2], cta_order=[0]
@@ -198,6 +201,7 @@ def cluster_softmax_small_kernel(output_ptr, input_ptr, input_row_stride, output
         txl.frag_smem_store(sum_smem, cur_denom, layout_warp_reduce)
 
 
+        # element num * byte size * 2 var
         txl.mbar_expect(mbar, num_warps*4*2)
         if rid == 0:
             txl.frag_smem_store(max_smem1, cur_max, layout_warp_reduce, None, 1, mbar)
@@ -211,6 +215,7 @@ def cluster_softmax_small_kernel(output_ptr, input_ptr, input_row_stride, output
             #txl.smem_store(sum_smem1, cur_denom, 0)
         txl.mbar_wait(mbar, 0)
 
+        # 128 = expand the layout to full warpgroup 128 threads
         warp_max = txl.frag_smem_load(max_smem, [128], layout_all_reduce, -float('inf'))
         warp_denom = txl.frag_smem_load(sum_smem, [128], layout_all_reduce, 0.0)
 
@@ -309,7 +314,6 @@ def cluster_softmax_kernel(output_ptr, input_ptr, input_row_stride, output_row_s
         #sum_smem1 = txl.smem_slice(sum_smem, num_warps, num_warps, 0)
         txl.frag_smem_store(max_smem, cur_max, layout_warp_reduce)
         txl.frag_smem_store(sum_smem, cur_denom, layout_warp_reduce)
-
 
         txl.mbar_expect(mbar, num_warps*4*2)
         if rid == 0:
@@ -733,10 +737,11 @@ def fused_softmax(x, num_programs, LOG2_E, bench: bool=False):
     # increasing the number of warps (`num_warps`) over which each row is distributed.
     # You will see in the next tutorial how to auto-tune this value in a more natural
     # way so you don't have to come up with manual heuristics yourself.
-    if n_cols > 16 * 1024:
-        num_warps = 8
-    else:
-        num_warps = 4
+    #if n_cols > 16 * 1024:
+    #    num_warps = 8
+    #else:
+    #    num_warps = 4
+    num_warps = 4
 
     # Number of software pipelining stages.
     #num_stages = 4 if SIZE_SMEM > 200000 else 2
@@ -774,13 +779,13 @@ def fused_softmax(x, num_programs, LOG2_E, bench: bool=False):
     #softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
     #softmax_kernel_txl2[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
 
-    softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages)
+    #softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages)
     #online_softmax_kernel_txl[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols, BLOCK_SIZE, LOG2_E, num_stages, num_warps=4)
-    #cluster_softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0),
-    #                                             n_rows, n_cols, BLOCK_SIZE, LOG2_E,
-    #                                             num_stages, num_warps=num_warps,
-    #                                             num_ctas=2
-    #                                             )
+    cluster_softmax_kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0),
+                                                 n_rows, n_cols, BLOCK_SIZE, LOG2_E,
+                                                 num_stages, num_warps=num_warps,
+                                                 num_ctas=2
+                                                 )
     return y
 
 
@@ -867,7 +872,8 @@ def test_softmax(dump_dir=None, M=32*1024, N=32*1024):
     elif KERNEL == "SM":
         LOG2_E = math.log2(math.e)
         # Softmax
-        compiled_func_ref = torch.compile(lambda x, target: F.softmax(x, dim=-1))
+        #compiled_func_ref = torch.compile(lambda x, target: F.softmax(x, dim=-1))
+        compiled_func_ref = lambda x, target: F.softmax(x, dim=-1)
         if HAS_QUACK:
             quack_fn = lambda: softmax(x)
 
@@ -958,6 +964,6 @@ def test_softmax(dump_dir=None, M=32*1024, N=32*1024):
 
 if __name__ == "__main__":
     #test_softmax('dump/1104sm', 8*1024, 32*1024)
-    test_softmax(M=8*1024, N=16*1024)
-    #test_softmax()
-    #test_softmax(size=32*1024)
+    #test_softmax(M=8*1024, N=16*1024)
+    #test_softmax('dump/0211sm')
+    test_softmax()

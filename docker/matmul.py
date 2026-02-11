@@ -4,7 +4,9 @@ local_dir = pathlib.Path(__file__).parent
 root_dir = local_dir.parent
 requirements_file = root_dir / "requirements.txt"
 
-Use_TXL = False
+Use_TXL = True
+GPU_model = 'H100' # B200
+#GPU_model = 'B200' # B200
 app_name = 'txl' if Use_TXL else 'triton'
 
 
@@ -76,14 +78,13 @@ else:
     )
 
 # Example function that uses the image
-#@app.function(gpu="H100", image=txl_image, timeout=60,
-@app.function(gpu="B200", image=txl_image, timeout=300,
+@app.function(gpu=GPU_model, image=txl_image, timeout=60,
 		volumes={"/workspace/dump": volume})
 def test_flash_attention():
 
     def get_gpu_type():
         import subprocess
-    
+
         try:
             result = subprocess.run(['find', '/', '-name', 'libcublas.so*'], capture_output=True, text=True, check=True)
             output = result.stdout
@@ -103,7 +104,9 @@ def test_flash_attention():
                 if "Product Name" in line:
                     print(line)
                     #if 'H100' in line and 'HBM3' in line:
-                    if 'B200' in line:
+                    if GPU_model in line:
+                        if GPU_model == 'H100' and 'HBM3' not in line:
+                            return False
                         return True
         except subprocess.CalledProcessError as e:
             print(f"Error running nvidia-smi: {e}")
@@ -139,8 +142,9 @@ def test_flash_attention():
     import_cuBLAS_lib()
 
     from test_txl import test_matmul
-    test_matmul("/workspace/dump", "0")
+    #test_matmul("/workspace/dump", "0")
     #test_matmul(None, "1")
+    test_matmul("/workspace/dump", "h1")
     #test_matmul("/workspace/dump", "b3")
     #test_matmul(None, "b4")
     #test_matmul('/workspace/dump', "b6")

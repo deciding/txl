@@ -3445,6 +3445,8 @@ def bench(K, dtype, reps=100, warmup_reps=25, algo='0'):
         bench_fn("tma_persistent_nows", reps, warmup_reps, lambda a, b: matmul_tma_persistent(a, b, False), a, b) #2
     elif algo == "h0":
         bench_fn("naive_tma_txl", reps, warmup_reps, matmul_naive_tma_txl, a, b)
+    elif algo == "h1":
+        bench_fn("tma_ws_persistent_txl", reps, warmup_reps, matmul_tma_ws_persistent_txl, a, b) #2
     elif algo == 'b1':
         bench_fn("blackwell1", reps, warmup_reps, matmul_bw1, a, bn)
     elif algo == 'b2':
@@ -3526,6 +3528,8 @@ def validate(M, N, K, dtype, log=False, algo='0'):
         run_test(naive_result, lambda a, b: matmul_tma_persistent(a, b, False), a, b, "TMA Original No-WASP Persistent", log=True)
     elif algo == "h0":
         run_test(naive_result, lambda a, b: matmul_naive_tma_txl(a, b), a, b, "TXL TMA Naive", log=log)
+    elif algo == "h1":
+        run_test(naive_result, lambda a, b: matmul_tma_ws_persistent_txl(a, b), a, b, "TXL TMA WS Persistent", log=True)
     elif algo == 'b1':
         run_test(naive_result, lambda a, b: matmul_bw1(a, bn), a, bn, "Blackwell simple matmul", log=True)
     elif algo == 'b2':
@@ -3596,7 +3600,9 @@ def test_matmul(dump_dir=None, algo='0'):
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-wgmma-pipeline"
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-ws-code-partition"
-    knobs.runtime.override_arch='sm100'
+    # NOTE: my local machine is not blackwell, thus override
+    if algo.startswith('b'):
+        knobs.runtime.override_arch='sm100'
     knobs.autotuning.print=True
     knobs.compilation.always_compile=True
 

@@ -287,8 +287,8 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
 
                 # frag_smem_store
                 #if idx_in_warpgroup % 4 == 0: # first col of mma layout
-                txl.frag_smem_store(cur_Max, m_ij0, layout=max_reg_layout)
-                #txl.smem_store(cur_Max, m_ij0)
+                #txl.frag_smem_store(cur_Max, m_ij0, layout=max_reg_layout)
+                txl.smem_store(cur_Max, m_ij0)
 
                 txl.bar_arrive(12, 256) # BAR 12 Max0 ready
 
@@ -304,7 +304,8 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
 
                 txl.bar_wait(14, 256) # BAR 14 Max1 ready
 
-                m_ij1 = txl.frag_smem_load(cur_Max, [BLOCK_M], max_reg_layout) # load Max1
+                #m_ij1 = txl.frag_smem_load(cur_Max, [BLOCK_M], max_reg_layout) # load Max1
+                m_ij1 = txl.smem_load(cur_Max, max_reg_layout) # load Max1
                 alpha1 = tl.math.exp2(m_i - m_ij1)
                 m_i = m_ij1
 
@@ -332,14 +333,15 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
                 phase ^= 1
 
             #if idx_in_warpgroup % 4 == 0: # 0123 has same value
-            txl.frag_smem_store(cur_L0, l_i, layout=max_reg_layout)
-            #txl.smem_store(cur_L0, l_i)
+            #txl.frag_smem_store(cur_L0, l_i, layout=max_reg_layout)
+            txl.smem_store(cur_L0, l_i)
 
             txl.bar_arrive(9, 256) # BAR 9 L0 ready
 
             txl.bar_wait(8, 256) # BAR 8 L1 ready
 
-            L1_reg = txl.frag_smem_load(cur_L1, (64,), max_reg_layout)
+            #L1_reg = txl.frag_smem_load(cur_L1, (64,), max_reg_layout)
+            L1_reg = txl.smem_load(cur_L1, max_reg_layout)
             l_i = l_i + L1_reg # l0+l1
             m_i += tl.math.log2(l_i)
             accL = accL / l_i[:, None]
@@ -402,7 +404,8 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
 
                 txl.bar_wait(12, 256) # BAR 12 Max0 ready
 
-                m_ij0 = txl.frag_smem_load(cur_Max, [64], max_reg_layout) # max0 -> wg2
+                #m_ij0 = txl.frag_smem_load(cur_Max, [64], max_reg_layout) # max0 -> wg2
+                m_ij0 = txl.smem_load(cur_Max, max_reg_layout) # max0 -> wg2
 
                 m_ij1 = tl.maximum(m_ij0, tl.max(acc_s, 1) * qk_scale)
                 alpha1 = tl.math.exp2(m_i - m_ij1)
@@ -415,8 +418,8 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
 
                 # frag_smem_store
                 #if idx_in_warpgroup % 4 == 0:
-                txl.frag_smem_store(cur_Max, m_ij1, layout=max_reg_layout) # max_all -> wg1
-                #txl.smem_store(cur_Max, m_ij1) # max_all -> wg1
+                #txl.frag_smem_store(cur_Max, m_ij1, layout=max_reg_layout) # max_all -> wg1
+                txl.smem_store(cur_Max, m_ij1) # max_all -> wg1
 
                 txl.bar_arrive(14, 256) # BAR 14 Max1 ready
 
@@ -442,15 +445,16 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
 
             # frag_smem_store
             #if idx_in_warpgroup % 4 == 0:
-            txl.frag_smem_store(cur_L1, l_i, layout=max_reg_layout) # l1 -> wg1, TODO: sync
-            #txl.smem_store(cur_L1, l_i) # l1 -> wg1, TODO: sync
+            #txl.frag_smem_store(cur_L1, l_i, layout=max_reg_layout) # l1 -> wg1, TODO: sync
+            txl.smem_store(cur_L1, l_i) # l1 -> wg1, TODO: sync
 
             #txl.bar_wait(9, 128)
             txl.bar_arrive(8, 256) # BAR 8 L1 ready
 
             txl.bar_wait(9, 256) # BAR 9 L0 ready
 
-            L0_reg = txl.frag_smem_load(cur_L0, (64,), max_reg_layout)
+            #L0_reg = txl.frag_smem_load(cur_L0, (64,), max_reg_layout)
+            L0_reg = txl.smem_load(cur_L0, max_reg_layout)
             l_i = l_i + L0_reg # l0+l1
             accR = accR / l_i[:, None]
 

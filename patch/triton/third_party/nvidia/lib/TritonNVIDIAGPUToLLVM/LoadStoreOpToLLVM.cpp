@@ -2,6 +2,7 @@
 #include "TargetInfo.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -1327,6 +1328,8 @@ int getWarpOffset(Operation *op) {
   }
   return 0;
 }
+
+// DEPRECATED: use getThreadId directly please
 Value getWGThreadId(OpBuilder& rewriter, Location loc, Operation* op){
     Value tid =
         rewriter.create<::mlir::gpu::ThreadIdOp>(loc, ::mlir::gpu::Dimension::x);
@@ -1380,7 +1383,8 @@ struct AsyncTMACopyGlobalToLocalOpConversion
     Value dstBase = dstMemObj.getShmemAffineBase(loc, rewriter, dstTy);
     auto voidTy = void_ty(op->getContext());
     // NOTE: txl, we don't need warpID-warpOffset, because assuming tmaLoad always at wg0
-    auto id = getWGThreadId(rewriter, loc, op);
+    //auto id = getWGThreadId(rewriter, loc, op);
+    auto id = getThreadId(rewriter, loc);
 
     auto mod = op->getParentOfType<ModuleOp>();
     int numWarps = ttg::lookupNumWarps(op);
@@ -1478,7 +1482,8 @@ LogicalResult convertTMAStoreLikeOp(Operation *op,
       LLVM::getSharedMemoryObjectFromStruct(loc, src, llvmElemTy, rewriter);
   Value dstBase = dstMemObj.getShmemAffineBase(loc, rewriter, srcTy);
   auto voidTy = void_ty(op->getContext());
-  auto id = getWGThreadId(rewriter, loc, op); // NOTE: txl
+  //auto id = getWGThreadId(rewriter, loc, op); // NOTE: txl
+  auto id = getThreadId(rewriter, loc);
   // Select just one thread for the TMA copy. This also helps the compiler to
   // figure out that the op is uniform.
   Value pred = LLVM::NVIDIA::createElectPredicate(loc, rewriter);

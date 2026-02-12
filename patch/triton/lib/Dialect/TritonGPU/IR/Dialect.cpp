@@ -3350,6 +3350,10 @@ std::optional<int> triton::gpu::maybeLookupNumWarps(Operation *op) {
   if (wids.size()) {
       return wids.size();
   }
+  auto wgid = getParentWithWGIDAttr(op);
+  if (wgid) {
+      return 4; // 1WG always have 4 warps
+  }
   if (Operation *parent = op->getParentOp())
     return maybeLookupNumWarps(parent);
   return {};

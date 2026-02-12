@@ -94,6 +94,7 @@ const std::string Reg_Dealloc_Op = "setmaxnreg.dec.sync.aligned.u32 #regCount;";
 
 const std::string Named_Barrier_Arrive_Op = "bar.arrive #bar, #numThreads;";
 const std::string Named_Barrier_Wait_Op = "bar.sync #bar, #numThreads;";
+const std::string Barrier_Wait_All_Op = "barrier.sync 0;";
 
 template <typename SourceOp>
 class TXLGPUOpGenericPattern : public OpRewritePattern<SourceOp> {
@@ -435,6 +436,8 @@ public:
         Constraints());
     patterns.add<TXLGPUOpGenericPattern<ttx::NamedBarrierWaitOp>>(
         context, Named_Barrier_Wait_Op, Constraints(), Constraints());
+    patterns.add<TXLGPUOpGenericPattern<ttx::BarrierWaitAllOp>>(
+        context, Barrier_Wait_All_Op, Constraints(), Constraints());
 
     if (applyPatternsGreedily(mod, std::move(patterns)).failed())
       signalPassFailure();

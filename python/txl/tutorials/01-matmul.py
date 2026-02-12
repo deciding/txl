@@ -3646,6 +3646,6 @@ def test_matmul(dump_dir=None, algo='0'):
 
 if __name__ == "__main__":
     #test_matmul('dump/1206mm', '1')
-    test_matmul('dump/0209', 'b6')
+    test_matmul('dump/mm0211', 'b6')
     #test_matmul('dump/0114', 'b5')
     #test_matmul('dump/0114', 'h0')

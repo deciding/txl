@@ -44,9 +44,10 @@ ws_cuta_cfg = dict(BLOCK_M=64, BLOCK_N=64, NUM_STAGES=1)  # 可按需调优
     key=["KV_SEQ_LEN","D","PE_DIM"]
 )
 @txl.jit
-#@txl.jit(src_file='dump/1107mla/ENHKSWNKWUIZUX7DHO4HA2ZRZBQBQLWHT3AD4YLIWFQ5KCCEZSPA/mla_decode_latent_sharedZ_ws_dim2_2K_txl_change.ptx')
+#@txl.jit(src_file='dump/mla0211txl/4BA5RZ7AZATIGIZSEIBWXKMDZIVPIMPUBYL2BBADRSWWJO3G5R5Q/mla_txl.ptx')
+#@txl.jit(src_file='dump/mla0211/DEKCRKUZ4CESPDBYRLYVOX5JJFONGJALQG4TOBBGR2XCJCNHDZSA/mla_txl.ptx')
 def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为我这边还没有写奇数倍数的逻辑
-    sm_scale, M,                          
+    sm_scale, M,
     B, H, H_KV,
     desc_qhat,                            # [B,H,N_Q,D]
     desc_zkv,                             # [B,H_KV,KV_SEQ_LEN,D]
@@ -62,13 +63,14 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
 ):
     tl.static_assert(BLOCK_N <= D)
     tl.static_assert(D % 2 == 0)
-    tl.static_assert(PE_DIM == BLOCK_N)  
+    tl.static_assert(PE_DIM == BLOCK_N)
     tl.static_assert(NUM_STAGES == 1)
     dtype = tl.float16
+    tidx = txl.tid(0)
 
-    pid_m = tl.program_id(0)        
+    pid_m = tl.program_id(0)
     off_kvh_SMs = tl.program_id(1) # [KV_HEADS, NUM_SMS]          
-    batch_per_cta = B // NUM_SMS          
+    batch_per_cta = B // NUM_SMS
     off_kvh = off_kvh_SMs // NUM_SMS
     off_SMs = off_kvh_SMs %  NUM_SMS
     begin_batch = off_SMs * batch_per_cta
@@ -118,13 +120,13 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
     bL1 = txl.smem_alloc([BLOCK_M], dtype=tl.float32, num_stages=1)
 
     mma_layout: tl.constexpr = txl.NVMMADistributedLayout(
-        version=[3, 0],           
-        warps_per_cta=[4, 1],     
-        instr_shape=[16, 64, 16], 
+        version=[3, 0],
+        warps_per_cta=[4, 1],
+        instr_shape=[16, 64, 16],
     )
 
     max_reg_layout: tl.constexpr = txl.SliceLayout(
-            dim=1,            
+            dim=1,
             parent=mma_layout
     )
 
@@ -168,11 +170,13 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
     cur_L1 = txl.get_buffer(bL1, 0)
 
     if txl.is_warpgroup([0]):
-        
+        txl.reg_dealloc(40)
         phase = 1
         q_phase = 0
 
         for off_z in range(begin_batch, end_batch):
+            #if tidx == 0 and pid_m == 0 and off_kvh_SMs == 0:
+            #    txl.print('wg0 off_z', off_z)
 
             heads_per_kv = H // H_KV
             q_base = off_z * (H * N_Q) + off_kvh * (heads_per_kv * N_Q) # [Z,H,N_Q,R0] =>[Z,KV_HEADS,q_heads_per_kv_heads*N_Q,R0]
@@ -187,14 +191,16 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
             txl.mbar_wait(cur_mQ0, q_phase^1)
             txl.mbar_wait(cur_mQ1, q_phase^1)
 
-            txl.tma_load(cur_bQ, desc_qhat, [qo_off, 0], cur_mQ) 
+            txl.tma_load(cur_bQ, desc_qhat, [qo_off, 0], cur_mQ)
             txl.mbar_wait(cur_mQ, q_phase)
             txl.tma_load(cur_bQpe,  desc_qpe, [qo_off, 0], cur_mQpe)
             txl.mbar_wait(cur_mQpe, q_phase)
-            
+
             q_phase ^= 1
 
             for _n in range(0, KV_SEQ_LEN, BLOCK_N*2):
+                #if tidx == 0 and pid_m == 0 and off_kvh_SMs == 0:
+                #    txl.print('_n', _n)
 
                 # pe only participate in QK, not PV
                 txl.mbar_wait(cur_mQK0, phase)
@@ -223,9 +229,13 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
 
                 kv_off += 2*BLOCK_N
                 phase ^= 1
+                #if tidx == 0 and pid_m == 0 and off_kvh_SMs == 0:
+                #    txl.print('_n1', _n)
 
     # wg1: QK0, P0 and PVl, pass P0 to wg1
     if txl.is_warpgroup([1]):  # left consumer
+        txl.reg_alloc(232)
+        #txl.print('wg1')
 
         phase = 0
         q_phase = 0
@@ -242,7 +252,7 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
             offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
             qk_scale = sm_scale * 1.44269504
 
-            m_i = tl.full([BLOCK_M], -float("inf"), tl.float32) 
+            m_i = tl.full([BLOCK_M], -float("inf"), tl.float32)
             l_i = tl.full([BLOCK_M], 1.0, tl.float32)
             accL= tl.zeros([BLOCK_M, D//2], dtype=tl.float32)
 
@@ -313,7 +323,7 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
                 l_i = l_i * alpha1 # TODO
 
                 txl.bar_wait(10, 256) # BAR 10 P1 ready
-                
+
                 txl.fence_proxy_async()
                 accL = tl.dot(cur_P1.to(dtype), cur_bZL1, accL) # PVl1 -> PVl
                 txl.dot_wait(0)
@@ -343,6 +353,7 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
 
     # wg2: QK1, P1 and PVr
     if txl.is_warpgroup([2]):  # right consumer
+        txl.reg_alloc(232)
 
         phase = 0
         q_phase = 0
@@ -359,7 +370,7 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
             offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
             qk_scale = sm_scale * 1.44269504
 
-            m_i = tl.full([BLOCK_M], -float("inf"), tl.float32) 
+            m_i = tl.full([BLOCK_M], -float("inf"), tl.float32)
             l_i = tl.full([BLOCK_M], 1.0, tl.float32)
             accR= tl.zeros([BLOCK_M, D//2], dtype=tl.float32)
 
@@ -620,7 +631,7 @@ def bench_op(Z, H, N_Q, KV_HEADS, KV_SEQ_LEN, R0, PE_DIM, dtype=torch.float16, a
         warmup_reps,
         lambda q, kv, qpe, kpe, sm_scale, algo: mla_test(q, kv, qpe, kpe, sm_scale, algo),
         q, kv, qpe, kpe, sm_scale, algo
-    )    
+    )
 
 def test_op(Z, H, N_Q, KV_HEADS, KV_SEQ_LEN, R0, PE_DIM, dtype=torch.float16, algo=0, no_tune=False):
     q = (torch.randn((Z, H, N_Q, R0), dtype=dtype, device=DEVICE))
@@ -673,13 +684,15 @@ def show_profile(profile_name):
 if __name__ == "__main__":
     no_tune=True
 
-    dump_dir="/workspace/dump/"
-    #dump_dir=None
+    dump_dir=None
+
+    #dump_dir="/workspace/dump/"
+    #dump_dir="dump/mla0211txl"
     print("TEST...")
     from triton import knobs
 
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
-    knobs.runtime.override_arch='sm90'
+    #knobs.runtime.override_arch='sm90'
     knobs.autotuning.print=True
     knobs.compilation.always_compile=True
 
@@ -690,10 +703,13 @@ if __name__ == "__main__":
         # knobs.cache.override_dir=dump_dir
     # NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
     # print(f"NUM_SMS: {NUM_SMS}") # 132
-    test_op(132, 32, 64, 1, 256, 512, 64, algo=0, no_tune=no_tune)
+    #test_op(132, 32, 64, 1, 256, 512, 64, algo=0, no_tune=no_tune)
+    B = 114
+    test_op(B, 32, 64, 1, 256, 512, 64, algo=0, no_tune=no_tune)
+    #exit()
 
     proton.start("mla", hook="triton")
     proton.deactivate()
-    bench_op(132, 32, 64, 1, 256, 512, 64, algo=0, reps=100, warmup_reps=100)
+    bench_op(B, 32, 64, 1, 256, 512, 64, algo=0, reps=100, warmup_reps=100)
     proton.finalize()
     show_profile("mla")

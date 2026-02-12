@@ -712,6 +712,7 @@ void SpecializeOuterSpecializedIf(scf::IfOp ifOp, int32_t numAsyncIds, bool hasT
         // Decide if this taskId is a producer or a consumer, and create either
         // ONLY For Warpgroups
         // RegAllocOp or RegDeallocOp accordingly.
+        // BarrierWaitAllOp
         for (auto ifOps : tasksToIfOp) {
           int asyncTaskId = ifOps.first;
           auto newIfOp = ifOps.second;
@@ -720,17 +721,19 @@ void SpecializeOuterSpecializedIf(scf::IfOp ifOp, int32_t numAsyncIds, bool hasT
           auto regAlloc = scanRegUsage(newIfOp.thenBlock(), asyncTaskId, 0, 0, numAsyncIds, hasTma); //TODO: user control
 
           Block &firstBlock = newIfOp.getThenRegion().front();
+          taskBuilder.setInsertionPointToStart(&firstBlock);
           Operation& firstOp = firstBlock.front();
           if (isa<RegAllocOp, RegDeallocOp>(firstOp)){
+              taskBuilder.create<ttxg::BarrierWaitAllOp>(loc);
               continue;
           }
-          taskBuilder.setInsertionPointToStart(&firstBlock);
           if (regAlloc.second)
             taskBuilder.create<ttxg::RegAllocOp>(
                 loc, taskBuilder.getI32IntegerAttr(regAlloc.first));
           else
             taskBuilder.create<ttxg::RegDeallocOp>(
                 loc, taskBuilder.getI32IntegerAttr(regAlloc.first));
+          taskBuilder.create<ttxg::BarrierWaitAllOp>(loc);
 
         }
 
@@ -783,6 +786,7 @@ void SpecializeOuterSpecializedIf(scf::IfOp ifOp, int32_t numAsyncIds, bool hasT
     // Set insertion point before yieldOp.
     auto yieldOp = newIfOp.thenYield();
     taskBuilder.setInsertionPoint(yieldOp);
+    taskBuilder.create<ttxg::BarrierWaitAllOp>(loc);
 
     // copy over the ops inside the region to the new ifop
     IRMapping mapping;
@@ -795,6 +799,7 @@ void SpecializeOuterSpecializedIf(scf::IfOp ifOp, int32_t numAsyncIds, bool hasT
     if (blockVec.size() > 1) {
       auto elseYieldOp = newIfOp.elseYield();
       taskBuilder.setInsertionPoint(elseYieldOp);
+      taskBuilder.create<ttxg::BarrierWaitAllOp>(loc);
       for (Operation &op : blockVec[1]->getOperations()) {
         SmallVector<int32_t> vec{idsVec[1].begin(), idsVec[1].end()};
         SpecializeOp(&op, mapping, taskBuilder, vec, idsVec[1], mode);
@@ -956,9 +961,6 @@ public:
         m->setAttr("ttg.total-num-warps", builder.getI32IntegerAttr(numWarpgroups*4));
     else {
         m->setAttr("ttg.total-num-warps", builder.getI32IntegerAttr(numUniqueWIds));
-        llvm::outs() << "\n total num warps \n";
-        llvm::outs() << numUniqueWIds;
-        llvm::outs() << "\n";
     }
     if (numWarpgroups == 1)
         m->setAttr("ttg.txl-warpgroups-set", builder.getI32IntegerAttr(0));

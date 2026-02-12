@@ -4325,6 +4325,6 @@ def run_test(algo=0, dump_dir=None):
 if __name__ == "__main__":
     #run_test(6, dump_dir='dump/fa1113')
     #run_test(5, dump_dir='dump/1124fa')
-    run_test(3, dump_dir='dump/1220fa')
+    run_test(3, dump_dir='dump/fa0212')
     #run_test(10, dump_dir='dump/1220fa')
     #run_test(2, dump_dir='dump/1216fa2')

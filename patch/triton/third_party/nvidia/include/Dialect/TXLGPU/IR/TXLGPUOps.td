@@ -52,6 +52,10 @@ def TXLGPU_NamedBarrierWaitOp : TXLGPU_Op<"bar_wait", []> {
   let assemblyFormat = "attr-dict";
 }
 
+def TXLGPU_BarrierWaitAllOp : TXLGPU_Op<"bar_wait_all", []> {
+  let assemblyFormat = "attr-dict";
+}
+
 def MBarrier_ArriveTypeAttr : I32EnumAttr<"MBarriveType",
     "mbarrier arrive type, either 'normal', 'expect_tx', 'cp_async'",
     [

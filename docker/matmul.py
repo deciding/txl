@@ -145,8 +145,6 @@ def test_flash_attention():
     #test_matmul("/workspace/dump", "0")
     #test_matmul(None, "1")
     test_matmul("/workspace/dump", "h1")
-    #test_matmul("/workspace/dump", "b3")
-    #test_matmul(None, "b4")
     #test_matmul('/workspace/dump', "b6")
     #test_matmul(None, "b6")
     #import subprocess

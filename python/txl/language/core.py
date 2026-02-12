@@ -132,7 +132,7 @@ def smem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, shar
     return _semantic.smem_alloc(shape, dtype, num_stages, mutable, shared_enc)
 
 @builtin
-def smem_load(smem, layout, cta_id=-1, _semantic=None) -> tl.tensor:
+def smem_load(smem, layout=None, cta_id=-1, _semantic=None) -> tl.tensor:
     layout = _unwrap_if_constexpr(layout)
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.smem_load(smem, layout, cta_id)

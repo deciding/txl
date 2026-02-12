@@ -2065,8 +2065,17 @@ void init_triton_ir(py::module &&m) {
                return self.create<mlir::triton::SmemAllocOp>(tensorType, numStagesAttr, isMutableAttr, sharedEnc);
            })
       .def("create_smem_load",
-           [](TritonOpBuilder &self, Type resultTy, Value smem, Type regType, int ctaId) -> Value {
-             return self.create<tt::SmemLoadOp>(resultTy, smem, regType, ctaId);
+           [](TritonOpBuilder &self, Type resultTy, Value smem, std::optional<Type> regType, int ctaId) -> Value {
+             auto dummyType = RankedTensorType::get(
+               {1, 1}, self.getBuilder().getI32Type());
+             auto regTy = regType.value_or(dummyType);
+             Value load = self.create<tt::SmemLoadOp>(resultTy, smem, regTy, ctaId);
+             auto loadOp = load.getDefiningOp();
+             if (regType.has_value())
+                 loadOp->setAttr("txl.with_reg_type", IntegerAttr::get(self.getBuilder().getI32Type(), 1));
+             else
+                 loadOp->setAttr("txl.with_reg_type", IntegerAttr::get(self.getBuilder().getI32Type(), 0));
+             return load;
            })
       .def("create_smem_store",
            [](TritonOpBuilder &self, Value smem, Value value, int ctaId) {

@@ -44,6 +44,7 @@ ws_cuta_cfg = dict(BLOCK_M=64, BLOCK_N=64, NUM_STAGES=1)  # 可按需调优
     key=["KV_SEQ_LEN","D","PE_DIM"]
 )
 @txl.jit
+#@txl.jit(diff_mode='ttir')
 #@txl.jit(src_file='dump/mla0211txl/4BA5RZ7AZATIGIZSEIBWXKMDZIVPIMPUBYL2BBADRSWWJO3G5R5Q/mla_txl.ptx')
 #@txl.jit(src_file='dump/mla0211/DEKCRKUZ4CESPDBYRLYVOX5JJFONGJALQG4TOBBGR2XCJCNHDZSA/mla_txl.ptx')
 def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为我这边还没有写奇数倍数的逻辑
@@ -258,7 +259,8 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
 
             txl.mbar_wait(cur_mQ, q_phase)
             txl.mbar_wait(cur_mQpe, q_phase)
-            rQpe = txl.smem_load(cur_bQpe, A_op_layout) # bQpe is reused for bP1
+            #rQpe = txl.smem_load(cur_bQpe, A_op_layout) # bQpe is reused for bP1
+            rQpe = txl.smem_load(cur_bQpe) # bQpe is reused for bP1
             #txl.print("rQpe:", rQpe)
 
             cur_bQl = txl.smem_slice(cur_bQ, 0, D//2, 1) # NOTE: currently should only slice on 1 is "slice"
@@ -305,7 +307,8 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
                 txl.bar_wait(14, 256) # BAR 14 Max1 ready
 
                 #m_ij1 = txl.frag_smem_load(cur_Max, [BLOCK_M], max_reg_layout) # load Max1
-                m_ij1 = txl.smem_load(cur_Max, max_reg_layout) # load Max1
+                #m_ij1 = txl.smem_load(cur_Max, max_reg_layout) # load Max1
+                m_ij1 = txl.smem_load(cur_Max) # load Max1
                 alpha1 = tl.math.exp2(m_i - m_ij1)
                 m_i = m_ij1
 
@@ -341,7 +344,8 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
             txl.bar_wait(8, 256) # BAR 8 L1 ready
 
             #L1_reg = txl.frag_smem_load(cur_L1, (64,), max_reg_layout)
-            L1_reg = txl.smem_load(cur_L1, max_reg_layout)
+            #L1_reg = txl.smem_load(cur_L1, max_reg_layout)
+            L1_reg = txl.smem_load(cur_L1)
             l_i = l_i + L1_reg # l0+l1
             m_i += tl.math.log2(l_i)
             accL = accL / l_i[:, None]
@@ -378,7 +382,8 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
 
             txl.mbar_wait(cur_mQ, q_phase)
             txl.mbar_wait(cur_mQpe, q_phase)
-            rQpe = txl.smem_load(cur_bQpe, A_op_layout)
+            #rQpe = txl.smem_load(cur_bQpe, A_op_layout)
+            rQpe = txl.smem_load(cur_bQpe)
             #txl.print("rQpe:", rQpe)
 
             cur_bQl = txl.smem_slice(cur_bQ, 0, D//2, 1)
@@ -405,7 +410,8 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
                 txl.bar_wait(12, 256) # BAR 12 Max0 ready
 
                 #m_ij0 = txl.frag_smem_load(cur_Max, [64], max_reg_layout) # max0 -> wg2
-                m_ij0 = txl.smem_load(cur_Max, max_reg_layout) # max0 -> wg2
+                #m_ij0 = txl.smem_load(cur_Max, max_reg_layout) # max0 -> wg2
+                m_ij0 = txl.smem_load(cur_Max) # max0 -> wg2
 
                 m_ij1 = tl.maximum(m_ij0, tl.max(acc_s, 1) * qk_scale)
                 alpha1 = tl.math.exp2(m_i - m_ij1)
@@ -454,7 +460,8 @@ def mla_txl( # cutedsl 这里要求KV_SEQ_LEN是BLOCK_N*2的整数倍，因为�
             txl.bar_wait(9, 256) # BAR 9 L0 ready
 
             #L0_reg = txl.frag_smem_load(cur_L0, (64,), max_reg_layout)
-            L0_reg = txl.smem_load(cur_L0, max_reg_layout)
+            #L0_reg = txl.smem_load(cur_L0, max_reg_layout)
+            L0_reg = txl.smem_load(cur_L0)
             l_i = l_i + L0_reg # l0+l1
             accR = accR / l_i[:, None]
 

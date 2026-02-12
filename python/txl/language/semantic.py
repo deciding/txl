@@ -138,8 +138,12 @@ class TXLSemantic(TritonSemantic):
     def smem_load(self, mem_desc, layout, cta_id:int=-1):
         # TODO: check cta_id in boundary
         ret_ty = tl.block_type(mem_desc.dtype, mem_desc.shape)
-        reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
-        handle = self.builder.create_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, reg_ty.to_ir(self.builder), cta_id)
+        if layout:
+            reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
+        else:
+            reg_ty = None
+        handle = self.builder.create_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle,
+                                               reg_ty.to_ir(self.builder) if reg_ty else None, cta_id)
         return self.tensor(handle, ret_ty)
 
     def smem_store(self, mem_desc, value, cta_id:int=-1):

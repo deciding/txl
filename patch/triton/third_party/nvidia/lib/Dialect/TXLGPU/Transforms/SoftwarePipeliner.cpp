@@ -767,12 +767,35 @@ void lowerTmemAlloc(tt::TmemAllocOp op){
         
 }
 
+// if no regType, must be used by convert_layout or yield only.
 void lowerSmemLoad(tt::SmemLoadOp& op) {
+    // Infer reg type from users
+    auto withRegTypeAttr = op->getAttrOfType<IntegerAttr>("txl.with_reg_type");
+    auto retType = op.getRegType();
+    int withRegType = 1;
+    if (withRegTypeAttr) {
+        assert(withRegTypeAttr.getType().isInteger(32) && "ttxg.wgid must be 32 bit int\n");
+        withRegType = withRegTypeAttr.getInt();
+        if (withRegType == 0) {
+            for (Operation * user: op->getUsers()){
+                if (isa<scf::YieldOp>(user)) {
+                  mlir::Operation *parent = user->getParentOp();
+                  if (isa<scf::ForOp>(parent)) {
+                      // TODO: get result, and recurse
+                  }
+                }
+                else if (auto cvtOp = dyn_cast<ttg::ConvertLayoutOp>(user)) {
+                    retType = cvtOp.getResult().getType();
+                }
+            }
+        }
+    }
+
     OpBuilder builder(op);
     Value localLoad = builder.create<ttg::LocalLoadOp>(
             op->getLoc(),
             //op.getResult().getType(),
-            op.getRegType(),
+            retType,
             op->getOperand(0) // changed to memdesc
     );
     int ctaIdAttr = op.getCtaId();

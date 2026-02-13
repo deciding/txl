@@ -532,7 +532,7 @@ def mla_test(q, kv, qpe, kpe, sm_scale, algo=0):
 
     return o
 
-def make_mla_runner(q, kv, qpe, kpe, sm_scale, algo=0):
+def make_mla_runner_txl(q, kv, qpe, kpe, sm_scale, algo=0):
     HEAD_DIM_Q = q.shape[-1]
     HEAD_DIM_Z = kv.shape[-1]
     HEAD_DIM_PE = qpe.shape[-1]

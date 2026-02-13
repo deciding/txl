@@ -18,7 +18,8 @@ warpgroup0_sync = tl.constexpr(13)
 warpgroup1_sync = tl.constexpr(14)
 @txl.jit
 #@txl.jit(src_file='dump/smem/SKCNG6F2XUQBA3XUKJ4ASFQM2E6HEJDVNB3J2MBCN23UCKHYIFJQ/txl_mla0.ptx')
-#@txl.jit(diff_mode="llir", log_dir='dump/')
+#@txl.jit(diff_mode="ttgir", log_dir='dump/')
+#@txl.jit(diff_mode="ttgir", log_dir='dump/')
 #@txl.jit(diff_mode="ttgir", diff_select=4, log_dir='dump/smem')
 def txl_mla0(
         q_nope_desc, q_pe_desc,
@@ -46,6 +47,8 @@ def txl_mla0(
     s_q_idx = pid // NUM_HEAD_BLOCKS
     q_h_idx = pid % NUM_HEAD_BLOCKS
     NUM_TOPK_BLOCKS: tl.constexpr = TOPK // B_TOPK
+    #if txl.thread0():
+    #    txl.print('hello')
 
 
     offs_q = pid * B_H
@@ -107,7 +110,6 @@ def txl_mla0(
         txl.mbar_wait(mbar_q_nope, 0)
         txl.mbar_wait(mbar_q_pe, 0)
 
-        rP = tl.zeros([B_H, B_TOPK], dtype=tl.float32)
         rM = tl.zeros([B_H], dtype=tl.float32) - float("inf") # m_i
         rL = tl.zeros([B_H], dtype=tl.float32) # l_i
         rO = tl.zeros([B_H, 256], dtype=tl.float32) # D_V//2
@@ -129,6 +131,7 @@ def txl_mla0(
         sV1r = sKnope1r
 
         for block_idx in range(0, NUM_TOPK_BLOCKS, 2):
+            rP = tl.zeros([B_H, B_TOPK], dtype=tl.float32)
             # iter (-1) rP0 = sQ @ sK0
             if txl.is_warpgroup([0]):
                 if block_idx == 0:
@@ -181,7 +184,7 @@ def txl_mla0(
             else:
                 #reg_is_kv_valid = txl.smem_load(is_kv_valid1, layout_acc) # mind the shape
                 reg_is_kv_valid = txl.smem_load(is_kv_valid1, layout_row) # mind the shape
-            rP = tl.where(reg_is_kv_valid != 0, rP, float('-inf'))
+            rP = tl.where(reg_is_kv_valid, rP, float('-inf'))
 
             if txl.is_warpgroup([1]):
                 txl.bar_wait(wg0_bunch_0_ready, 256) # wait for wg0 to provide half of sM
@@ -452,7 +455,7 @@ def txl_mla0(
 
             cur_bar_wait_phase ^= 1
 
-def txl_mla(
+def nsa_test(
         #q: torch.Tensor,
         #kv: torch.Tensor,
         q_nope: torch.Tensor,
@@ -480,7 +483,7 @@ def txl_mla(
         - max_logits:  [s_q, h_q], float
         - lse: [s_q, h_q], float, 2-based log-sum-exp
     """
-    #dump_dir='dump/smem/'
+    dump_dir='dump/smem/'
     dump_dir = None
 
     from triton import knobs
@@ -491,7 +494,7 @@ def txl_mla(
     #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
     knobs.runtime.override_arch='sm90'
     #knobs.autotuning.print=True
-    #knobs.compilation.always_compile=True
+    knobs.compilation.always_compile=True
 
     if dump_dir:
         knobs.compilation.dump_ir=True
@@ -559,78 +562,3 @@ def txl_mla(
             kv_pe.stride(0),
             num_warps=4, num_warpgroups=3)
     return out, max_logits, lse
-
-def make_txl_mla_runner(
-    q_nope: torch.Tensor,
-    q_pe: torch.Tensor,
-    kv_nope: torch.Tensor,
-    kv_pe: torch.Tensor,
-    indices: torch.Tensor,
-    sm_scale: float,
-    d_v: int = 512,
-    dump_dir=None,
-):
-    
-    from triton import knobs
-
-    knobs.runtime.override_arch = "sm90"
-    # knobs.autotuning.print = True
-    # knobs.compilation.always_compile = True
-
-    if dump_dir is not None:
-        knobs.compilation.dump_ir = True
-        knobs.cache.dump_dir = dump_dir
-
-    B_H = 64
-    B_TOPK = 64
-    D_Q = 576
-    D_K = D_Q
-    D_V = d_v 
-
-    s_q = q_nope.size(0)
-    s_kv = kv_nope.size(0)
-    top_k = indices.size(2)
-    h_q = q_nope.size(1)
-    h_kv = kv_nope.size(1)
-    assert h_kv == 1
-
-    d_qk = D_Q
-    d_v = D_V
-
-    qk_scale = sm_scale * 1.44269504
-
-    out = torch.empty((s_q, h_q, d_v), dtype=q_nope.dtype, device=q_nope.device)
-    max_logits = torch.empty((s_q, h_q), dtype=torch.float32, device=q_nope.device)
-    lse = torch.empty((s_q, h_q), dtype=torch.float32, device=q_nope.device)
-
-    q_nope_desc = TensorDescriptor(q_nope, (s_q * h_q, 512), (512, 1), [B_H, 512])
-    q_pe_desc   = TensorDescriptor(q_pe,   (s_q * h_q, 64),  (64, 1),  [B_H, 64])
-    o_desc      = TensorDescriptor(out,    (s_q * h_q, d_v), (d_v, 1), [B_H, D_V])
-    max_logits_desc = TensorDescriptor(max_logits, (s_q * h_q,), (1,), [B_H])
-    lse_desc        = TensorDescriptor(lse,        (s_q * h_q,), (1,), [B_H])
-
-    NUM_HEAD_BLOCKS = h_q // B_H
-
-    grid = (NUM_HEAD_BLOCKS * s_q,) 
-
-    def runner():
-        txl_mla0[grid](
-            q_nope_desc, q_pe_desc,
-            kv_nope, kv_pe,
-            o_desc,
-            max_logits_desc, lse_desc,
-            indices,
-            qk_scale,
-            s_q, s_kv,
-            B_H, D_Q, D_V,
-            NUM_HEAD_BLOCKS,
-            top_k,
-            B_TOPK,
-            kv_nope.stride(0),
-            kv_pe.stride(0),
-            num_warps=4,
-            num_warpgroups=3,
-        )
-        return out, max_logits, lse
-
-    return runner

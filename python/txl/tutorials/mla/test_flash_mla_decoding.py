@@ -263,7 +263,7 @@ def test_flash_mla(t: TestParam):
             indices=indices_in_kvcache
         )
     
-    runner = flash_mla.make_mla_runner(q_value, k_value, q_pe, k_pe, 1 / math.sqrt(576), algo = 0)
+    runner_txl = flash_mla.make_mla_runner_txl(q_value, k_value, q_pe, k_pe, 1 / math.sqrt(576), algo = 0)
 
     # def txl_mla():
     #     return flash_mla.mla_test(
@@ -276,7 +276,7 @@ def test_flash_mla(t: TestParam):
     #     )
 
     out_ans, lse_ans = run_flash_mla()
-    txl_ans_out = runner().permute(0, 2, 1, 3).contiguous()
+    txl_ans_out = runner_txl().permute(0, 2, 1, 3).contiguous()
     out_ref, lse_ref = reference_torch(cache_seqlens, block_table, q, blocked_k, t.dv, t.is_causal, abs_indices)
     assert check_is_allclose("out", out_ans, out_ref, abs_tol=8e-4, rel_tol=2.01 / 128, cos_diff_tol=5e-6)
     assert check_is_allclose("lse", lse_ans, lse_ref, abs_tol=1e-6, rel_tol=8.01 / 65536)
@@ -305,7 +305,7 @@ def test_flash_mla(t: TestParam):
         achieved_tflops = compute_volume_flop / time_usage / 1e12
         achieved_gBps = memory_volume_B / time_usage / 1e9
         torch.cuda.synchronize()
-        time_usage_txl: float = triton.testing.do_bench(runner) / 1000  # type: ignore
+        time_usage_txl: float = triton.testing.do_bench(runner_txl) / 1000  # type: ignore
         achieved_tflops_txl = compute_volume_flop / time_usage_txl / 1e12
         achieved_gBps_txl = memory_volume_B / time_usage_txl / 1e9
 

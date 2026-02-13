@@ -236,7 +236,11 @@ class CUDABackend(BaseBackend):
             num_warpgroups = metadata['num_warpgroups']
         else:
             num_warpgroups = 1
-        passes.ttir.add_ws_code_partition_txl(pm, num_warpgroups)
+        if 'num_warps' in metadata:
+            num_warps = metadata['num_warps']
+        else:
+            num_warps = 4
+        passes.ttir.add_ws_code_partition_txl(pm, num_warpgroups, num_warps)
         if capability // 10 < 9:
             passes.ttir.add_rewrite_tensor_descriptor_to_pointer(pm)
         passes.common.add_canonicalizer(pm)
@@ -298,12 +302,16 @@ class CUDABackend(BaseBackend):
             passes.common.add_canonicalizer(pm)
             passes.ttir.add_triton_licm(pm)
             passes.ttgpuir.add_optimize_accumulator_init(pm)
-            passes.ttgpuir.add_hoist_tmem_alloc(pm, False)
+            if not use_txl:
+                passes.ttgpuir.add_hoist_tmem_alloc(pm, False)
             nvidia.passes.ttnvgpuir.add_promote_lhs_to_tmem(pm)
             passes.ttgpuir.add_assign_latencies(pm, opt.num_stages)
             passes.ttgpuir.add_schedule_loops(pm)
             passes.ttgpuir.add_warp_specialize(pm, opt.num_stages)
-            passes.ttgpuir.add_pipeline(pm, opt.num_stages, dump_enabled)
+            if use_txl:
+                passes.ttgpuir.add_pipeline_txl(pm, metadata['num_warpgroups'], opt.num_stages, dump_enabled)
+            else:
+                passes.ttgpuir.add_pipeline(pm, opt.num_stages, dump_enabled)
             passes.ttgpuir.add_combine_tensor_select_and_if(pm)
             # hoist again and allow hoisting out of if statements
             passes.ttgpuir.add_hoist_tmem_alloc(pm, True)
@@ -325,7 +333,8 @@ class CUDABackend(BaseBackend):
         if capability // 10 >= 9:
             nvidia.passes.ttnvgpuir.add_tma_lowering(pm)
         nvidia.passes.ttnvgpuir.add_fence_insertion(pm, capability)
-        nvidia.passes.ttnvgpuir.add_lower_mma(pm)
+        if not use_txl:
+            nvidia.passes.ttnvgpuir.add_lower_mma(pm)
         passes.common.add_sccp(pm)
         passes.common.add_cse(pm)
         passes.common.add_canonicalizer(pm)

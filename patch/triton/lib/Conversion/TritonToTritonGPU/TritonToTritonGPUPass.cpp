@@ -272,6 +272,79 @@ struct TritonDotPattern : public OpConversionPattern<triton::DotOp> {
   }
 };
 
+struct TritonDotXPattern : public OpConversionPattern<triton::DotXOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::DotXOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    RankedTensorType origType = op.getType();
+    auto origShape = origType.getShape();
+    auto typeConverter = getTypeConverter<TritonGPUTypeConverter>();
+    int numWarps = typeConverter->getNumWarps();
+    int threadsPerWarp = typeConverter->getThreadsPerWarp();
+    int numCTAs = typeConverter->getNumCTAs();
+    auto rank = origShape.size();
+    SmallVector<unsigned> retSizePerThread(rank, 1);
+    auto numElements = product<int64_t>(origShape);
+    if (numElements / (numWarps * threadsPerWarp) >= 4) {
+      retSizePerThread[rank - 1] = 2;
+      retSizePerThread[rank - 2] = 2;
+    }
+    if (numElements / (numWarps * threadsPerWarp) >= 16) {
+      retSizePerThread[rank - 1] = 4;
+      retSizePerThread[rank - 2] = 4;
+    }
+    retSizePerThread[rank - 1] = std::min(
+        retSizePerThread[rank - 1], static_cast<unsigned>(origShape[rank - 1]));
+    retSizePerThread[rank - 2] = std::min(
+        retSizePerThread[rank - 2], static_cast<unsigned>(origShape[rank - 2]));
+
+    SmallVector<unsigned> retOrder(rank);
+    for (unsigned i = 0; i < rank; ++i)
+      retOrder[i] = rank - 1 - i;
+    Attribute dEncoding = triton::gpu::BlockedEncodingAttr::get(
+        getContext(), origShape, retSizePerThread, retOrder, numWarps,
+        threadsPerWarp, numCTAs);
+    RankedTensorType retType = origType.cloneWithEncoding(dEncoding);
+    // a & b must be of smem layout
+    auto aType = cast<RankedTensorType>(adaptor.getA().getType());
+    auto bType = cast<RankedTensorType>(adaptor.getB().getType());
+    Type aEltType = aType.getElementType();
+    Type bEltType = bType.getElementType();
+    Attribute aEncoding = aType.getEncoding();
+    Attribute bEncoding = bType.getEncoding();
+    if (!aEncoding || !bEncoding)
+      return failure();
+    Value a = adaptor.getA();
+    Value b = adaptor.getB();
+    Value c = adaptor.getC();
+    if (!mlir::isa<triton::gpu::DotOperandEncodingAttr>(aEncoding)) {
+      Attribute encoding = triton::gpu::DotOperandEncodingAttr::get(
+          getContext(), 0, dEncoding, aEltType);
+      auto dstType = aType.cloneWithEncoding(encoding);
+      a = rewriter.create<triton::gpu::ConvertLayoutOp>(a.getLoc(), dstType, a);
+    }
+    if (!mlir::isa<triton::gpu::DotOperandEncodingAttr>(bEncoding)) {
+      Attribute encoding = triton::gpu::DotOperandEncodingAttr::get(
+          getContext(), 1, dEncoding, bEltType);
+      auto dstType = bType.cloneWithEncoding(encoding);
+      b = rewriter.create<triton::gpu::ConvertLayoutOp>(b.getLoc(), dstType, b);
+    }
+    c = rewriter.create<triton::gpu::ConvertLayoutOp>(c.getLoc(), retType, c);
+
+    addNamedAttrs(rewriter.replaceOpWithNewOp<triton::DotXOp>(
+                      op, retType, a, b, c,
+                      op.getUseD(), op.getPred(),
+                      op.getBarriers(), op.getBarrierPreds(),
+                      false, false,
+                      adaptor.getInputPrecision(),
+                      adaptor.getMaxNumImpreciseAcc()),
+                  adaptor.getAttributes());
+    return success();
+  }
+};
+
 struct TritonCatPattern : public OpConversionPattern<triton::CatOp> {
   using OpConversionPattern::OpConversionPattern;
 
@@ -574,6 +647,8 @@ void populateTritonPatterns(TritonGPUTypeConverter &typeConverter,
       TritonExpandDimsPattern,
       TritonTransPattern,
       TritonDotPattern,
+      //txl
+      TritonDotXPattern,
       TritonMapElementwisePattern,
       GatherScatterOpPattern<DescriptorGatherOp>,
       GatherScatterOpPattern<DescriptorScatterOp>,
@@ -586,6 +661,8 @@ void populateTritonPatterns(TritonGPUTypeConverter &typeConverter,
       GenericOpPattern<triton::SmemStoreOp>,
       GenericOpPattern<triton::RemoteSmemLoadOp>,
       GenericOpPattern<triton::RemoteSmemStoreOp>,
+      GenericOpPattern<triton::TmemLoadOp>,
+      GenericOpPattern<triton::TmemStoreOp>,
       GenericOpPattern<triton::FragSmemLoadOp>,
       GenericOpPattern<triton::FragSmemStoreOp>,
       GenericOpPattern<triton::RelayoutOp>,

@@ -185,7 +185,7 @@ bool isLayoutAnchor(Operation *op) {
   // txl
   if (isa<LoadOp, AsyncLoadOp, StoreOp>(op))
     return isExpensiveLoadOrStore(op);
-  if (isa<DotOp, DotScaledOp, nvidia_gpu::WarpGroupDotOp, AtomicRMWOp,
+  if (isa<DotOp, DotXOp, DotScaledOp, nvidia_gpu::WarpGroupDotOp, AtomicRMWOp,
           AtomicCASOp, triton::nvidia_gpu::TMEMLoadOp>(op))
     return true;
   if (auto gatherOp = dyn_cast<GatherOp>(op))
@@ -755,7 +755,7 @@ bool canBeRemat(Operation *op) {
   // txl
   if (isa<LoadOp, AsyncLoadOp, StoreOp>(op))
     return !isExpensiveLoadOrStore(op);
-  if (isa<AtomicRMWOp, AtomicCASOp, DotOp>(op))
+  if (isa<AtomicRMWOp, AtomicCASOp, DotOp, DotXOp>(op))
     return false;
   if (auto gather = dyn_cast<GatherOp>(op))
     return !gather.getEfficientLayout();

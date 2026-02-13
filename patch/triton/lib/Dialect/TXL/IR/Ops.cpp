@@ -4,10 +4,14 @@
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "txl/Dialect/TXL/IR/Dialect.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "txl/Dialect/TXL/IR/OpsEnums.cpp.inc"
+
+//#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
 
 namespace mlir {
 namespace triton {
@@ -24,6 +28,37 @@ void MbarAllocOp::getEffects(
         &effects) {
     effects.emplace_back(MemoryEffects::Write::get(),
                          SideEffects::DefaultResource::get());
+}
+
+void TmemAllocOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+    effects.emplace_back(MemoryEffects::Write::get(),
+                         SideEffects::DefaultResource::get());
+}
+//void DotXOp::getEffects(
+//    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+//        &effects) {
+//    effects.emplace_back(MemoryEffects::Read::get(), &getBMutable(),
+//                         SideEffects::DefaultResource::get());
+//}
+void DotXOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  // The op reads the accumulator if `useD` is not known to be false.
+  APInt useD;
+  if (!matchPattern(getUseD(), m_ConstantInt(&useD)) || !useD.isZero()) {
+    effects.emplace_back(MemoryEffects::Read::get(), &getCMutable(),
+                         SideEffects::DefaultResource::get());
+  }
+  effects.emplace_back(MemoryEffects::Write::get(), &getCMutable(),
+                       SideEffects::DefaultResource::get());
+
+  effects.emplace_back(MemoryEffects::Read::get(), &getAMutable(),
+                       SideEffects::DefaultResource::get());
+
+  effects.emplace_back(MemoryEffects::Read::get(), &getBMutable(),
+                       gpu::SharedMemory::get());
 }
 
 LogicalResult
@@ -98,6 +133,82 @@ struct CanonicalizeMaskedAsyncLoadPattern : public OpRewritePattern<AsyncLoadOp>
 void AsyncLoadOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                          MLIRContext *context) {
   results.add<CanonicalizeMaskedAsyncLoadPattern>(context);
+}
+
+//-- DotXOp --
+LogicalResult
+DotXOp::inferReturnTypes(MLIRContext *context, std::optional<Location> location,
+                        ValueRange operands, DictionaryAttr attributes,
+                        OpaqueProperties properties, RegionRange regions,
+                        SmallVectorImpl<Type> &inferredReturnTypes) {
+  // type is the same as the accumulator
+  auto accTy = cast<RankedTensorType>(operands[2].getType());
+  inferredReturnTypes.push_back(accTy);
+
+  // verify encodings
+  auto aEnc = cast<RankedTensorType>(operands[0].getType()).getEncoding();
+  auto bEnc = cast<RankedTensorType>(operands[1].getType()).getEncoding();
+  auto retEnc = accTy.getEncoding();
+  if (aEnc) {
+    assert(bEnc && retEnc);
+    Dialect &dialect = retEnc.getDialect();
+    auto interface = cast<DialectInferLayoutInterface>(&dialect);
+    if (interface->inferDotOpEncoding(aEnc, 0, retEnc, location).failed())
+      return failure();
+    if (interface->inferDotOpEncoding(bEnc, 1, retEnc, location).failed())
+      return failure();
+  }
+  return success();
+}
+
+LogicalResult DotXOp::verify() {
+  auto aTy = getA().getType();
+  auto bTy = getB().getType();
+  if (aTy.getElementType().getIntOrFloatBitWidth() !=
+      bTy.getElementType().getIntOrFloatBitWidth())
+    return emitError(
+        "element types of operands A and B must have same bit width");
+  auto aEncoding = aTy.getEncoding();
+  auto bEncoding = bTy.getEncoding();
+  if (!aEncoding && !bEncoding)
+    return success();
+  // Verify that the encodings are valid.
+  if (!aEncoding || !bEncoding)
+    return emitError("mismatching encoding between A and B operands");
+  auto accTy = getC().getType();
+  auto retEnc = accTy.getEncoding();
+  if (!retEnc)
+    return emitError("miss encoding of C operand");
+  Dialect &dialect = retEnc.getDialect();
+  auto interface = cast<DialectInferLayoutInterface>(&dialect);
+  return interface->verifyDotOpEncodingCompatibility(getOperation(), aEncoding,
+                                                     bEncoding);
+}
+
+bool DotXOp::verifyDims() {
+  auto aShape = this->getA().getType().getShape();
+  auto bShape = this->getB().getType().getShape();
+
+  return aShape[aShape.size() - 1] == bShape[aShape.size() - 2];
+}
+
+static ParseResult
+parseBarriersAndPreds(OpAsmParser &p,
+                      SmallVectorImpl<OpAsmParser::UnresolvedOperand> &barriers,
+                      SmallVectorImpl<OpAsmParser::UnresolvedOperand> &preds) {
+  while (succeeded(p.parseOptionalComma())) {
+    if (p.parseOperand(barriers.emplace_back()) || p.parseLSquare() ||
+        p.parseOperand(preds.emplace_back()) || p.parseRSquare())
+      return failure();
+  }
+  return success();
+}
+static void printBarriersAndPreds(OpAsmPrinter &p, Operation *op,
+                                  OperandRange barriers, OperandRange preds) {
+  assert(barriers.size() == preds.size());
+  for (auto [barrier, pred] : llvm::zip(barriers, preds)) {
+    p << ", " << barrier << '[' << pred << ']';
+  }
 }
 
 } // namespace triton

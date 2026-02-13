@@ -9,14 +9,35 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/Support/ErrorHandling.h"
+#include <cstdint>
+
+#include "txl/Dialect/TXL/IR/Dialect.h"
 
 namespace mlir::triton{
 
+enum SpecMode {
+    WARP=0,
+    WARPGROUP=1
+};
+
+uint32_t nextPowerOf2(uint32_t n);
+
+bool isFakeMemoryEffects(Operation* op);
+
 IntegerAttr getParentWithWGIDAttr(Operation *op);
+IntegerAttr getParentWithWIDAttr(Operation *op);
 
 void setOpAttrWgId(Operation* op, int32_t wgid);
-
 int getOpAttrWgId(Operation* op);
+
+void setOpAttrWId(Operation* op, int32_t wid);
+int getOpAttrWId(Operation* op);
+
+void setOpAttrWIds(Operation* op, std::vector<int32_t> wids, bool isElse=false);
+SmallVector<int32_t> getOpAttrWIds(Operation* op, bool isElse=false);
+SmallVector<int32_t> getParentWithWIDsAttr(Operation *op);
+
+int getExecutingThreadId(Operation * op);
 
 void setOpAttrWarpReduce(Operation* op);
 
@@ -26,6 +47,7 @@ void setOpRegType(Operation* op, Type type);
 
 Type getOpRegType(Operation* op);
 
+void propagateTypeRecursively(Value &val, Type newType);
 void replaceAndPropagate(Operation *srcOp, Value newValue);
 
 Operation* getModuleFromOp(Operation *op);
@@ -33,5 +55,11 @@ Operation* getModuleFromOp(Operation *op);
 std::string printModuleOp(ModuleOp &mod);
 
 void changeForOpArgType(scf::ForOp forOp, unsigned int opNum, Type newType);
+
+Operation* isFromTmemAlloc(Value v);
+void addCompletionBarrier(DotXOp op, Value barrier, Value pred);
+
+Value traceToMemDesc(Value initialValue);
+Value convertToMemDesc(Value initialValue);
 
 }

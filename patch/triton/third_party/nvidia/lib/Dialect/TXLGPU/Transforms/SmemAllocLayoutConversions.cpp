@@ -68,25 +68,32 @@ struct CvtGetBufferToGetBuffer
       Operation* allocOp = getBufferOp.getSrc().getDefiningOp();
 
       if (isa<SmemAllocOp>(allocOp)){
-          auto smemAllocOp = dyn_cast<SmemAllocOp>(allocOp);
-          rewriter.setInsertionPoint(smemAllocOp);
-          auto isMutableAttr = mlir::BoolAttr::get(allocOp->getContext(), smemAllocOp.getIsMutable());
-          auto numStagesAttr = rewriter.getI32IntegerAttr(smemAllocOp.getNumStages());
-          auto sharedEnc = smemAllocOp.getSharedEnc();
-          if (sharedEnc.has_value())
-              rewriter.replaceOpWithNewOp<SmemAllocOp>(smemAllocOp,
-                      op->getResult(0).getType(),
-                      numStagesAttr,
-                      isMutableAttr,
-                      sharedEnc.value()
-                  );
-          else
-              rewriter.replaceOpWithNewOp<SmemAllocOp>(smemAllocOp,
-                      op->getResult(0).getType(),
-                      numStagesAttr,
-                      isMutableAttr,
-                      nullptr
-                  );
+          auto memAllocOp = dyn_cast<SmemAllocOp>(allocOp);
+          rewriter.setInsertionPoint(memAllocOp);
+          auto isMutableAttr = mlir::BoolAttr::get(allocOp->getContext(), memAllocOp.getIsMutable());
+          auto numStagesAttr = rewriter.getI32IntegerAttr(memAllocOp.getNumStages());
+          auto sharedEnc = memAllocOp.getSharedEncAttr();
+          rewriter.replaceOpWithNewOp<SmemAllocOp>(memAllocOp,
+              op->getResult(0).getType(),
+              numStagesAttr,
+              isMutableAttr,
+              sharedEnc
+          );
+      }
+      else if (isa<TmemAllocOp>(allocOp)){
+          auto memAllocOp = dyn_cast<TmemAllocOp>(allocOp);
+          rewriter.setInsertionPoint(memAllocOp);
+          auto isMutableAttr = mlir::BoolAttr::get(allocOp->getContext(), memAllocOp.getIsMutable());
+          auto numStagesAttr = rewriter.getI32IntegerAttr(memAllocOp.getNumStages());
+          auto sharedEnc = memAllocOp.getSharedEncAttr();
+          auto distributedEnc = memAllocOp.getDistributedEncAttr();
+          rewriter.replaceOpWithNewOp<TmemAllocOp>(memAllocOp,
+              op->getResult(0).getType(),
+              numStagesAttr,
+              isMutableAttr,
+              sharedEnc,
+              distributedEnc
+          );
       }
       else if (isa<MbarAllocOp>(allocOp)){
           auto mbarAllocOp = dyn_cast<MbarAllocOp>(allocOp);
@@ -293,23 +300,30 @@ struct CvtElemWiseFragSmemLoadToFragSmemLoad
 void canonicalizeGetBufferOp(GetBufferOp getBufferOp){
     if (getBufferOp.getSrc().getType() !=  getBufferOp->getResult(0).getType()){
 	    Operation* allocOp = getBufferOp.getSrc().getDefiningOp();
-        assert(isa<SmemAllocOp>(allocOp));
-        SmemAllocOp smemAllocOp = dyn_cast<SmemAllocOp>(allocOp);
+        assert(isa<SmemAllocOp>(allocOp) || isa<TmemAllocOp>(allocOp));
 
-        OpBuilder builder(smemAllocOp);
-
-        auto numStagesAttr = builder.getI32IntegerAttr(smemAllocOp.getNumStages());
-        auto isMutableAttr = mlir::BoolAttr::get(getBufferOp->getContext(), smemAllocOp.getIsMutable());
-        auto sharedEnc = smemAllocOp.getSharedEnc();
-        SmemAllocOp newAllocOp;
-        if (sharedEnc.has_value())
-            newAllocOp = builder.create<SmemAllocOp>(smemAllocOp->getLoc(), getBufferOp->getResult(0).getType(), 
-                    numStagesAttr, isMutableAttr, sharedEnc.value());
-        else
-            newAllocOp = builder.create<SmemAllocOp>(smemAllocOp->getLoc(), getBufferOp->getResult(0).getType(), 
-                    numStagesAttr, isMutableAttr, nullptr);
-        allocOp->replaceAllUsesWith(newAllocOp->getResults());
-        allocOp->erase();
+        OpBuilder builder(allocOp);
+        if (SmemAllocOp memAllocOp = dyn_cast<SmemAllocOp>(allocOp)){
+          auto numStagesAttr = builder.getI32IntegerAttr(memAllocOp.getNumStages());
+          auto isMutableAttr = mlir::BoolAttr::get(getBufferOp->getContext(), memAllocOp.getIsMutable());
+          auto sharedEnc = memAllocOp.getSharedEncAttr();
+          SmemAllocOp newAllocOp;
+          newAllocOp = builder.create<SmemAllocOp>(memAllocOp->getLoc(), getBufferOp->getResult(0).getType(), 
+                  numStagesAttr, isMutableAttr, sharedEnc);
+          allocOp->replaceAllUsesWith(newAllocOp->getResults());
+          allocOp->erase();
+        }
+        else if (TmemAllocOp memAllocOp = dyn_cast<TmemAllocOp>(allocOp)){
+          auto numStagesAttr = builder.getI32IntegerAttr(memAllocOp.getNumStages());
+          auto isMutableAttr = mlir::BoolAttr::get(getBufferOp->getContext(), memAllocOp.getIsMutable());
+          auto sharedEnc = memAllocOp.getSharedEncAttr();
+          auto distributedEnc = memAllocOp.getDistributedEncAttr();
+          TmemAllocOp newAllocOp;
+          newAllocOp = builder.create<TmemAllocOp>(memAllocOp->getLoc(), getBufferOp->getResult(0).getType(), 
+                  numStagesAttr, isMutableAttr, sharedEnc, distributedEnc);
+          allocOp->replaceAllUsesWith(newAllocOp->getResults());
+          allocOp->erase();
+        }
     }
 }
 

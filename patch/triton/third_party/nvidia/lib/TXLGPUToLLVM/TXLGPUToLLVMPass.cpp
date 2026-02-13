@@ -73,6 +73,15 @@ const std::string Lane_Id_Op =
     "mov.u32 $0, %lane_id;          \n"
     "}";
 
+const std::string Warp_Id_Op =
+    "{\n"
+    ".reg .u32 %tid_x;              \n"
+    ".reg .u32 %warp_id;            \n"
+    "mov.u32 %tid_x, %tid.x;        \n"
+    "shr.u32 %warp_id, %tid_x, 5;   \n" // warp_id = tid.x / 32
+    "mov.u32 $0, %warp_id;          \n"
+    "}";
+
 const std::string Cluster_CTA_Rank_Op =
     "{\n"
     ".reg .u32 %ctarank;                  \n"
@@ -85,6 +94,7 @@ const std::string Reg_Dealloc_Op = "setmaxnreg.dec.sync.aligned.u32 #regCount;";
 
 const std::string Named_Barrier_Arrive_Op = "bar.arrive #bar, #numThreads;";
 const std::string Named_Barrier_Wait_Op = "bar.sync #bar, #numThreads;";
+const std::string Barrier_Wait_All_Op = "barrier.sync 0;";
 
 template <typename SourceOp>
 class TXLGPUOpGenericPattern : public OpRewritePattern<SourceOp> {
@@ -412,6 +422,8 @@ public:
         context, Canonical_Warpgroup_Id_Op, Constraints({"=r"}), Constraints());
     patterns.add<TXLGPUOpGenericPattern<ttx::LaneIdOp>>(
         context, Lane_Id_Op, Constraints({"=r"}), Constraints());
+    patterns.add<TXLGPUOpGenericPattern<ttx::WarpIdOp>>(
+        context, Warp_Id_Op, Constraints({"=r"}), Constraints());
     patterns.add<TXLGPUOpGenericPattern<ttx::ClusterCTARankOp>>(
         context, Cluster_CTA_Rank_Op, Constraints({"=r"}), Constraints());
 
@@ -424,6 +436,8 @@ public:
         Constraints());
     patterns.add<TXLGPUOpGenericPattern<ttx::NamedBarrierWaitOp>>(
         context, Named_Barrier_Wait_Op, Constraints(), Constraints());
+    patterns.add<TXLGPUOpGenericPattern<ttx::BarrierWaitAllOp>>(
+        context, Barrier_Wait_All_Op, Constraints(), Constraints());
 
     if (applyPatternsGreedily(mod, std::move(patterns)).failed())
       signalPassFailure();

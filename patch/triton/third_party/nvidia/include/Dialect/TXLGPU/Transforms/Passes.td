@@ -13,7 +13,10 @@ def TXLGPUWSCodePartition : Pass<"txlgpu-ws-code-partition", "mlir::ModuleOp"> {
   let options = [
     Option<"numWarpgroups", "num-warpgroups",
            "int32_t", /*default*/"1",
-           "number of warpgroups">
+           "number of warpgroups">,
+    Option<"numWarps", "num-warps",
+           "int32_t", /*default*/"4",
+           "number of warps">
   ];
 
   let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect",

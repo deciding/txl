@@ -52,5 +52,5 @@ def test_flash_attention():
         return
 
     from test_txl import test_softmax
-    #test_softmax(size=16*1024)
-    test_softmax(M=32*1024, N=32*1024)
+    test_softmax()
+    #test_softmax(M=8*1024, N=2*1024)

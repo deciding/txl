@@ -12,6 +12,7 @@
 #include "nvidia/lib/TritonNVIDIAGPUToLLVM/Utility.h"
 #include "triton/Analysis/TXLUtility.h"
 #include "llvm/Support/ErrorHandling.h"
+#include <cstdint>
 
 using namespace mlir;
 using namespace mlir::triton;
@@ -26,35 +27,73 @@ using ttn::OperandsAndConstraints;
 
 namespace {
 
-void addAttrWgIdToOpTree(Operation *op, int wgid){
+void addAttrAsyncIdToOpTree(Operation *op, SmallVector<int32_t> asyncIds, SpecMode mode){
+
+  if (mode == SpecMode::WARPGROUP) {
+      assert(asyncIds.size() == 1 && "asyncTaskIds for Warpgroup should always has 1 element");
+  }
+  std::vector<int32_t> vec{asyncIds.begin(), asyncIds.end()};
 
   if (op->getNumRegions() == 0) {
-    // case 1: direct assign wgid, base case
-    setOpAttrWgId(op, wgid);
+    // case 1: direct assign asyncId, base case
+    if (mode == SpecMode::WARPGROUP) {
+      setOpAttrWgId(op, asyncIds[0]);
+    }
+    else {
+      setOpAttrWIds(op, vec);
+    }
   } else {
     // case 2: ops with blocks
     if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
-      setOpAttrWgId(ifOp, wgid);
+      SmallVector<int32_t> assignedWids;
+      SmallVector<int32_t> assignedElseWids;
+      if (mode == SpecMode::WARPGROUP) {
+        setOpAttrWgId(ifOp, asyncIds[0]);
+        assignedWids = asyncIds;
+        assignedElseWids = asyncIds;
+      }
+      else {
+        assignedWids = getOpAttrWIds(ifOp);
+        assignedElseWids = getOpAttrWIds(ifOp, true);
+        if (assignedWids.size() == 0) {
+            setOpAttrWIds(ifOp, vec);
+            assignedWids = asyncIds;
+        }
+        if (assignedElseWids.size() == 0) {
+            setOpAttrWIds(ifOp, vec, true);
+            assignedElseWids = asyncIds;
+        }
+      }
       for (Operation &op : ifOp.thenBlock()->getOperations()) {
-          addAttrWgIdToOpTree(&op, wgid);
+          addAttrAsyncIdToOpTree(&op, assignedWids, mode);
       }
       if (ifOp.elseBlock()){
         for (Operation &op : ifOp.elseBlock()->getOperations()) {
-            addAttrWgIdToOpTree(&op, wgid);
+            addAttrAsyncIdToOpTree(&op, assignedElseWids, mode);
         }
       }
     } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-      setOpAttrWgId(forOp, wgid);
+      if (mode == SpecMode::WARPGROUP) {
+        setOpAttrWgId(forOp, asyncIds[0]);
+      }
+      else {
+        setOpAttrWIds(forOp, vec);
+      }
       for (Operation &op : forOp.getBody()->getOperations()) {
-          addAttrWgIdToOpTree(&op, wgid);
+          addAttrAsyncIdToOpTree(&op, asyncIds, mode);
       }
     } else if (auto reduceOp = dyn_cast<ReduceOp>(op)) {
-      setOpAttrWgId(reduceOp, wgid);
+      if (mode == SpecMode::WARPGROUP) {
+        setOpAttrWgId(reduceOp, asyncIds[0]);
+      }
+      else {
+        setOpAttrWIds(reduceOp, vec);
+      }
       reduceOp->walk(
           [&](Operation *childOp) {
               if (isa<ReduceOp>(childOp))
                 return;
-              addAttrWgIdToOpTree(childOp, wgid);
+              addAttrAsyncIdToOpTree(childOp, asyncIds, mode);
           });
     } else {
       llvm_unreachable("Unexpected Op with regions\n");
@@ -63,15 +102,31 @@ void addAttrWgIdToOpTree(Operation *op, int wgid){
 
 }
 
-void addAttrWgIdToIfChildren(scf::IfOp ifOp){
-    int32_t asyncTaskId = getOpAttrWgId(ifOp);
-    if (asyncTaskId != -1) {
+void addAttrAsyncIdToIfChildren(scf::IfOp ifOp, SpecMode mode){
+    SmallVector<int32_t> asyncTaskIds;
+    SmallVector<int32_t> elseAsyncTaskIds;
+    if (mode == SpecMode::WARPGROUP) {
+       auto asyncTaskId = getOpAttrWgId(ifOp);
+       if (asyncTaskId != -1) {
+           asyncTaskIds.push_back(asyncTaskId);
+           elseAsyncTaskIds.push_back(asyncTaskId); // there is no else for isWarpgroup block
+       }
+    }
+    else {
+       auto vec = getOpAttrWIds(ifOp);
+       asyncTaskIds.append(vec);
+       auto elseVec = getOpAttrWIds(ifOp, true);
+       elseAsyncTaskIds.append(elseVec);
+    }
+    if (asyncTaskIds.size() != 0) {
         for (Operation &op : ifOp.thenBlock()->getOperations()) {
-            addAttrWgIdToOpTree(&op, asyncTaskId);
+            addAttrAsyncIdToOpTree(&op, asyncTaskIds, mode);
         }
+    }
+    if (elseAsyncTaskIds.size() != 0) {
         if (ifOp.elseBlock()){
           for (Operation &op : ifOp.elseBlock()->getOperations()) {
-              addAttrWgIdToOpTree(&op, asyncTaskId);
+              addAttrAsyncIdToOpTree(&op, elseAsyncTaskIds, mode);
           }
         }
     }
@@ -87,7 +142,8 @@ public:
     ModuleOp mod = getOperation();
 
     mod->walk([&](scf::IfOp op){
-        addAttrWgIdToIfChildren(op);
+        addAttrAsyncIdToIfChildren(op, SpecMode::WARPGROUP);
+        addAttrAsyncIdToIfChildren(op, SpecMode::WARP);
     });
 
   }

@@ -105,17 +105,10 @@ struct InitBarrierOpConversion
         rewriter);
 
     // txl
-    int wgId = getOpAttrWgId(op);
-    int executingThreadId = 0;
-    if (wgId != -1) {
-      auto mod = op->getParentOfType<ModuleOp>();
-      int numWarps = triton::gpu::lookupNumWarps(op);
-      int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
-      executingThreadId = wgId * numWarps * warpSize;
-    }
+    //int executingThreadId = getExecutingThreadId(op);
 
     auto id = getThreadId(rewriter, loc);
-    auto pred = b.icmp_eq(id, b.i32_val(executingThreadId)); // txl
+    auto pred = b.icmp_eq(id, b.i32_val(0)); // txl
     ::mlir::triton::PTXBuilder ptxBuilder;
     const std::string ptx = "@$0 mbarrier.init.shared::cta.b64 [$1], " +
                             std::to_string(op.getCount()) + ";";
@@ -145,16 +138,10 @@ struct InvalBarrierOpConversion
         rewriter);
 
     // txl
-    int wgId = getOpAttrWgId(op);
-    int executingThreadId = 0;
-    if (wgId != -1) {
-      auto mod = op->getParentOfType<ModuleOp>();
-      int numWarps = triton::gpu::lookupNumWarps(op);
-      int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
-      executingThreadId = wgId * numWarps * warpSize;
-    }
+    //int executingThreadId = getExecutingThreadId(op);
+
     auto id = getThreadId(rewriter, loc);
-    Value pred = b.icmp_eq(id, b.i32_val(executingThreadId)); // txl
+    Value pred = b.icmp_eq(id, b.i32_val(0)); // txl
     ::mlir::triton::PTXBuilder ptxBuilder;
     const std::string ptx = "@$0 mbarrier.inval.shared::cta.b64 [$1];";
     auto &barSyncOp = *ptxBuilder.create<>(ptx);
@@ -183,17 +170,10 @@ struct BarrierExpectConversion
         rewriter);
 
     // txl
-    int wgId = getOpAttrWgId(op);
-    int executingThreadId = 0;
-    if (wgId != -1) {
-      auto mod = op->getParentOfType<ModuleOp>();
-      int numWarps = triton::gpu::lookupNumWarps(op);
-      int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
-      executingThreadId = wgId * numWarps * warpSize;
-    }
+    //int executingThreadId = getExecutingThreadId(op);
 
     auto id = getThreadId(rewriter, loc);
-    Value pred = b.icmp_eq(id, b.i32_val(executingThreadId)); // txl
+    Value pred = b.icmp_eq(id, b.i32_val(0)); // txl
     pred = b.and_(pred, adaptor.getPred());
     ::mlir::triton::PTXBuilder ptxBuilder;
     const std::string ptx =

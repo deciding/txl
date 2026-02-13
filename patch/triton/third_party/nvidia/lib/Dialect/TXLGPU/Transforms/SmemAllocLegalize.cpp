@@ -70,11 +70,8 @@ public:
 
     auto numStagesAttr = rewriter.getI32IntegerAttr(op.getNumStages());
     auto isMutableAttr = mlir::BoolAttr::get(context, op.getIsMutable());
-    auto sharedEnc = op.getSharedEnc();
-    if (sharedEnc.has_value())
-        auto newSmemAlloc = rewriter.replaceOpWithNewOp<SmemAllocOp>(op, tensorType, numStagesAttr, isMutableAttr, sharedEnc.value());
-    else
-        auto newSmemAlloc = rewriter.replaceOpWithNewOp<SmemAllocOp>(op, tensorType, numStagesAttr, isMutableAttr, nullptr);
+    auto sharedEnc = op.getSharedEncAttr();
+    auto newSmemAlloc = rewriter.replaceOpWithNewOp<SmemAllocOp>(op, tensorType, numStagesAttr, isMutableAttr, sharedEnc);
 
     //for (auto user : newSmemAlloc->getUsers()) {
     //  if (isa<GetBufferOp>(user)) {
@@ -125,6 +122,47 @@ public:
   }
 };
 
+class AddEncodingToTmemAlloc
+    : public OpRewritePattern<TmemAllocOp> {
+  //using OpRewritePattern::OpRewritePattern;
+
+  int numWarps;
+  int threadsPerWarp;
+  int numCTAs;
+  std::string target;
+
+public:
+  // constructor with some parameters set explicitly.
+  AddEncodingToTmemAlloc(mlir::MLIRContext *context, const std::string &target, int numWarps,
+                           int threadsPerWarp, int numCTAs)
+  : OpRewritePattern<TmemAllocOp>(context), numWarps(numWarps), threadsPerWarp(threadsPerWarp),
+    numCTAs(numCTAs), target(target) {}
+
+  mlir::LogicalResult
+  matchAndRewrite(TmemAllocOp op,
+                  PatternRewriter &rewriter) const override {
+    auto oldTy = op.getType();
+    if (oldTy.getEncoding())
+        return failure();
+
+    auto context = op->getContext();
+    auto shape = oldTy.getShape();
+    auto eltTy = oldTy.getElementType();
+
+    Attribute encoding = mlir::triton::gpu::getDefaultBlockedEncoding(
+            context, shape, this->numWarps, this->threadsPerWarp, this->numCTAs);
+    auto tensorType = RankedTensorType::get(shape, eltTy, encoding);
+
+    auto numStagesAttr = rewriter.getI32IntegerAttr(op.getNumStages());
+    auto isMutableAttr = mlir::BoolAttr::get(context, op.getIsMutable());
+    auto sharedEnc = op.getSharedEncAttr();
+    auto distributedEnc = op.getDistributedEncAttr();
+    auto newTmemAlloc = rewriter.replaceOpWithNewOp<TmemAllocOp>(op, tensorType, numStagesAttr, isMutableAttr, sharedEnc, distributedEnc);
+
+    return success();
+  }
+};
+
 class AddEncodingToGetBuffer
     : public OpRewritePattern<GetBufferOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -166,6 +204,7 @@ public:
     RewritePatternSet smemAllocPatterns(context);
 
     smemAllocPatterns.add<AddEncodingToSmemAlloc>(context, target, numWarps, threadsPerWarp, numCTAs);
+    smemAllocPatterns.add<AddEncodingToTmemAlloc>(context, target, numWarps, threadsPerWarp, numCTAs);
     smemAllocPatterns.add<AddEncodingToMbarAlloc>(context, target, numWarps, threadsPerWarp, numCTAs);
     smemAllocPatterns.add<AddEncodingToGetBuffer>(context);
 

@@ -198,7 +198,7 @@ struct AllocateWarpGroups
     auto totalNumWarps = mod->getAttrOfType<IntegerAttr>("ttg.total-num-warps");
     auto txlWarpgroupsSet = mod->getAttrOfType<IntegerAttr>("ttg.txl-warpgroups-set");
     // NOTE: txl this might break the WS for hopper
-    if (!totalNumWarps || (txlWarpgroupsSet && txlWarpgroupsSet.getInt() == 0))
+    if (!totalNumWarps && (txlWarpgroupsSet && txlWarpgroupsSet.getInt() == 0))
         mod->setAttr("ttg.total-num-warps",
                      b.getI32IntegerAttr(baseNumWarps + numExtraWarpGroups * 4));
   }

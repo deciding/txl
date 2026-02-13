@@ -620,7 +620,7 @@ bool isExpensiveToRemat(Operation *op, Attribute &targetEncoding) {
   if (isa<triton::CatOp>(op))
     return triton::gpu::isExpensiveCat(cast<triton::CatOp>(op), targetEncoding);
   if (isa<triton::gpu::AsyncCopyGlobalToLocalOp, triton::AtomicRMWOp,
-          triton::AtomicCASOp, triton::DotOp>(op))
+          triton::AtomicCASOp, triton::DotOp, triton::DotXOp>(op))
     return true;
   if (isa<scf::YieldOp, scf::ForOp, scf::IfOp, scf::WhileOp, scf::ConditionOp>(
           op))
@@ -1614,7 +1614,7 @@ bool comesFromLoadOrBlockArg(Value v) {
   // If this is problematic we can totally drop them
   //return isa<BlockArgument>(v) ||
   return       (v.getDefiningOp() &&
-          isa<SmemAllocOp, LoadOp, DescriptorLoadOp, DescriptorGatherOp>(v.getDefiningOp())); // txl
+          isa<SmemAllocOp, TmemAllocOp, LoadOp, DescriptorLoadOp, DescriptorGatherOp>(v.getDefiningOp())); // txl
 }
 
 SmallVector<Value> getTiedArgs(Operation *op, int resultIdx) {

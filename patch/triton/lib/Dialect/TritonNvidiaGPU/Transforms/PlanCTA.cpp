@@ -318,6 +318,49 @@ bool CTAPlanner::processDot(triton::FuncOp &funcOp) {
                 {newDLayout});
   });
 
+  // txl: plain repeat
+  funcOp.walk([&](triton::DotXOp dot) {
+    MLIRContext *ctx = dot.getContext();
+
+    auto aTy = cast<RankedTensorType>(dot.getA().getType());
+    auto bTy = cast<RankedTensorType>(dot.getB().getType());
+    auto dTy = cast<RankedTensorType>(dot.getD().getType());
+
+    assert(isa<ttg::DotOperandEncodingAttr>(aTy.getEncoding()) &&
+           isa<ttg::DotOperandEncodingAttr>(bTy.getEncoding()) &&
+           isa<ttg::BlockedEncodingAttr>(dTy.getEncoding()) &&
+           "PlanCTAPass should follow immediately after CoalescePass");
+
+    auto aLayout = cast<ttg::DotOperandEncodingAttr>(aTy.getEncoding());
+    auto bLayout = cast<ttg::DotOperandEncodingAttr>(bTy.getEncoding());
+    auto dLayout = cast<ttg::BlockedEncodingAttr>(dTy.getEncoding());
+
+    unsigned M = dTy.getShape()[0];
+    unsigned N = dTy.getShape()[1];
+    unsigned K = aTy.getShape()[1];
+
+    unsigned splitM, splitN;
+    std::tie(splitM, splitN) = getCTATiling(M, N, K, ttg::getNumCTAs(dLayout));
+    // FIXME: Should consider IR with more than one DotOps
+    setTiling({splitM, splitN, 1});
+
+    OpBuilder builder(dot);
+    auto numThreads = ttg::lookupThreadsPerWarp(builder);
+    auto numWarps = ttg::lookupNumWarps(dot);
+
+    auto newCTALayout = ttg::CTALayoutAttr::get(ctx, {splitM, splitN},
+                                                {splitM, splitN}, {1, 0});
+    auto newDLayout = ttg::BlockedEncodingAttr::get(
+        ctx, dTy.getShape(), dLayout.getSizePerThread(), dLayout.getOrder(),
+        numWarps, numThreads, newCTALayout);
+    auto newALayout = ttg::DotOperandEncodingAttr::get(ctx, aLayout.getOpIdx(),
+                                                       newDLayout, 0);
+    auto newBLayout = ttg::DotOperandEncodingAttr::get(ctx, bLayout.getOpIdx(),
+                                                       newDLayout, 0);
+
+    insertCasts(dot.getOperation(), {newALayout, newBLayout, newDLayout},
+                {newDLayout});
+  });
   return true;
 }
 
@@ -399,7 +442,7 @@ void CTAPlanner::processStoreLikeOps(triton::FuncOp &funcOp) {
   funcOp.walk([&](Operation *op) {
     if (llvm::isa<triton::StoreOp, triton::AtomicRMWOp, triton::AtomicCASOp,
                   triton::DescriptorStoreLikeOpInterface,
-                  triton::SmemStoreOp, triton::RemoteSmemStoreOp, triton::FragSmemStoreOp, triton::TmaStoreOp>(op))
+                  triton::SmemStoreOp, triton::TmemStoreOp, triton::RemoteSmemStoreOp, triton::FragSmemStoreOp, triton::TmaStoreOp>(op))
       stores.push_back(op);
   });
   assert(stores.size() > 0 && "Cannot find store-like ops");

@@ -1,5 +1,6 @@
 #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "triton/Analysis/Allocation.h"
@@ -17,6 +18,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
+#include "triton/Analysis/TXLUtility.h"
 
 #include <functional>
 #include <optional>
@@ -346,6 +348,63 @@ applyLinearLayout(Location loc, RewriterBase &rewriter,
   return outIndices;
 }
 
+//std::optional<int> getWIDsStartThreadId(Block *block) {
+std::optional<int> getWIDsStartThreadId(Operation* op) {
+  if (!op) {
+      return {};
+  }
+  using namespace triton::gpu;
+
+  //// Look for an enclosing `ttg.warp_specialize` op.
+  //while (block && block->getParentOp() &&
+  //       (!isa<scf::IfOp>(block->getParentOp()) || !(block->getParentOp()->getAttrOfType<IntegerAttr>("ttxg.wids"))))
+  //  block = block->getParentOp()->getBlock();
+  //if (!block || !block->getParentOp())
+  //  return {};
+  //auto widsIfOp = cast<scf::IfOp>(block->getParentOp());
+  //assert(!block->empty() && "expected block to have at least one operation");
+  //mlir::Operation &firstOp = block->front();
+  //Operation *op = &firstOp;
+
+  auto startIds = getParentWithWIDsAttr(op);
+  if (startIds.size() == 0) {
+      return {};
+  }
+  int32_t warpStartId = startIds[0];
+  int threadsPerWarp =
+      TritonGPUDialect::getThreadsPerWarp(op->getParentOfType<ModuleOp>());
+  return warpStartId * threadsPerWarp;
+}
+
+//std::optional<int> getWGIDStartThreadId(Block *block) {
+std::optional<int> getWGIDStartThreadId(Operation* op) {
+  if (!op) {
+      return {};
+  }
+  using namespace triton::gpu;
+
+  //while (block && block->getParentOp() &&
+  //       (!isa<scf::IfOp>(block->getParentOp()) || !(block->getParentOp()->getAttrOfType<IntegerAttr>("ttxg.wgid"))))
+  //  block = block->getParentOp()->getBlock();
+  //if (!block || !block->getParentOp())
+  //  return {};
+
+  //auto wgidIfOp = cast<scf::IfOp>(block->getParentOp());
+  //assert(!block->empty() && "expected block to have at least one operation");
+  //mlir::Operation &firstOp = block->front();
+  auto wgIdAttr = getParentWithWGIDAttr(op);
+  if (wgIdAttr) {
+      int wgId = wgIdAttr.getInt();
+      assert(wgId >= 0 && "cannot get warp group ID before warp group allocation");
+      int threadsPerWarp =
+          TritonGPUDialect::getThreadsPerWarp(op->getParentOfType<ModuleOp>());
+      int numWarps = triton::gpu::lookupNumWarps(op);
+      return wgId * threadsPerWarp * numWarps;
+  }
+  return {};
+}
+
+// triton wgid
 std::optional<int> getWarpGroupStartThreadId(Block *block) {
   using namespace triton::gpu;
 
@@ -379,6 +438,39 @@ Value getThreadId(OpBuilder &rewriter, Location loc) {
     TritonLLVMOpBuilder b(loc, rewriter);
     tid = rewriter.create<arith::SubIOp>(loc, tid, b.i32_val(*startId));
   }
+
+  // txl
+  Operation *lookupPt = &rewriter.getInsertionBlock()->front(); // each block has num warps
+  int numWarps = triton::gpu::lookupNumWarps(lookupPt);
+  int threadsPerWarp = triton::gpu::lookupThreadsPerWarp(rewriter);
+  int upperBound = numWarps * threadsPerWarp;
+  assert(llvm::isPowerOf2_32(upperBound));
+
+  Operation *nextOp = nullptr;
+  auto block = rewriter.getInsertionBlock();
+  auto it = rewriter.getInsertionPoint();
+  if (it != block->end()) {
+    nextOp = &*it;
+  }
+
+  if (std::optional<int> startId =
+          getWIDsStartThreadId(nextOp)) {
+          //getWIDsStartThreadId(block)) {
+    TritonLLVMOpBuilder b(loc, rewriter);
+    tid = rewriter.create<arith::SubIOp>(loc, tid, b.i32_val(*startId));
+
+    // help LLVM's known bits analysis:
+    tid = b.and_(tid, b.i32_val(upperBound - 1));
+  }
+  else if (std::optional<int> startId =
+          getWGIDStartThreadId(nextOp)) {
+    TritonLLVMOpBuilder b(loc, rewriter);
+    tid = rewriter.create<arith::SubIOp>(loc, tid, b.i32_val(*startId));
+
+    // help LLVM's known bits analysis:
+    tid = b.and_(tid, b.i32_val(upperBound - 1));
+  }
+
 
   return tid;
 }

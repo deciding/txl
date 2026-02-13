@@ -8,6 +8,7 @@
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/Support/LLVM.h"
 #include "triton/Analysis/Utility.h"
+#include "triton/Analysis/TXLUtility.h"
 #include "triton/Dialect/Triton/IR/Interfaces.h"
 #include "triton/Dialect/Triton/IR/Utility.h"
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
@@ -3344,6 +3345,14 @@ std::optional<int> triton::gpu::maybeLookupNumWarps(Operation *op) {
                  dyn_cast<WarpSpecializePartitionsOp>(op->getParentOp())) {
     unsigned idx = op->getParentRegion()->getRegionNumber();
     return partitions.getParentOp().getPartitionNumWarps()[idx];
+  }
+  auto wids = getParentWithWIDsAttr(op);
+  if (wids.size()) {
+      return wids.size();
+  }
+  auto wgid = getParentWithWGIDAttr(op);
+  if (wgid) {
+      return 4; // 1WG always have 4 warps
   }
   if (Operation *parent = op->getParentOp())
     return maybeLookupNumWarps(parent);

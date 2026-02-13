@@ -4,6 +4,7 @@ from triton.language import core
 from triton.language.core import builtin, _shape_check_impl, _unwrap_if_constexpr, expand_dims, broadcast_to, _wrap_axis, _insertion_guard, \
         dtype, block_type
 from triton.language.standard import _elementwise_max, _sum_combine, _pick_sum_dtype, _argmax_combine_tie_break_fast, _argmax_combine_tie_break_left
+from triton import knobs
 from typing import Sequence, List
 from ..runtime.jit import jit
 from ._layouts import DistributedLayout
@@ -107,6 +108,10 @@ def is_warpgroup(ids, _semantic=None):
     return _semantic.is_warpgroup(ids)
 
 @builtin
+def is_warp(ids, _semantic=None):
+    return _semantic.is_warp(ids)
+
+@builtin
 def reg_alloc(count, _semantic=None):
     count = _unwrap_if_constexpr(count)
     return _semantic.reg_alloc(count)
@@ -127,7 +132,7 @@ def smem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, shar
     return _semantic.smem_alloc(shape, dtype, num_stages, mutable, shared_enc)
 
 @builtin
-def smem_load(smem, layout, cta_id=-1, _semantic=None) -> tl.tensor:
+def smem_load(smem, layout=None, cta_id=-1, _semantic=None) -> tl.tensor:
     layout = _unwrap_if_constexpr(layout)
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.smem_load(smem, layout, cta_id)
@@ -136,6 +141,24 @@ def smem_load(smem, layout, cta_id=-1, _semantic=None) -> tl.tensor:
 def smem_store(smem, value, cta_id=-1, _semantic=None) -> None:
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.smem_store(smem, value, cta_id)
+
+@builtin
+def tmem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, shared_enc=None, _semantic=None) -> tl.tensor:
+    #shape = _shape_check_impl(shape)
+    dtype = _unwrap_if_constexpr(dtype)
+    num_stages = _unwrap_if_constexpr(num_stages)
+    mutable = _unwrap_if_constexpr(mutable)
+    return _semantic.tmem_alloc(shape, dtype, num_stages, mutable, shared_enc)
+
+@builtin
+def tmem_load(smem, cta_id=-1, _semantic=None) -> tl.tensor:
+    cta_id = _unwrap_if_constexpr(cta_id)
+    return _semantic.tmem_load(smem, cta_id)
+
+@builtin
+def tmem_store(smem, value, cta_id=-1, _semantic=None) -> None:
+    cta_id = _unwrap_if_constexpr(cta_id)
+    return _semantic.tmem_store(smem, value, cta_id)
 
 @builtin
 def frag_smem_load(smem, shape, layout, other=None, pred=None, is_broadcast=False, cta_id=-1, _semantic=None) -> tl.tensor:
@@ -440,6 +463,49 @@ def _warp_reduce_with_indices(input, axis, combine_fn, keep_dims=False, _semanti
     rvalue, rindices = warp_reduce((input, index), axis, combine_fn, keep_dims=keep_dims, _semantic=_semantic,
                               _generator=_generator)
     return rvalue, rindices
+
+@builtin
+def dotx(input, other, acc=None, useD=None, pred=None,
+        mbars=[], mbarPreds=[],
+        input_precision=None, allow_tf32=None, max_num_imprecise_acc=None, out_dtype=core.float32,
+        _semantic=None):
+    """
+    Returns the matrix product of two blocks.
+
+    The two blocks must both be two-dimensional or three-dimensional and have compatible inner dimensions.
+    For three-dimensional blocks, `tl.dot` performs the batched matrix product,
+    where the first dimension of each block represents the batch dimension.
+
+    :param input: The first tensor to be multiplied.
+    :type input: 2D or 3D tensor of scalar-type in {:code:`int8`, :code:`float8_e5m2`, :code:`float16`, :code:`bfloat16`, :code:`float32`}
+    :param other: The second tensor to be multiplied.
+    :type other: 2D or 3D tensor of scalar-type in {:code:`int8`, :code:`float8_e5m2`, :code:`float16`, :code:`bfloat16`, :code:`float32`}
+    :param acc: The accumulator tensor. If not None, the result is added to this tensor.
+    :type acc: 2D or 3D tensor of scalar-type in {:code:`float16`, :code:`float32`, :code:`int32`}
+    :param input_precision: How to exercise the Tensor Cores for f32 x f32. If
+      the device does not have Tensor Cores or the inputs are not of dtype f32,
+      this option is ignored. For devices that do have tensor cores, the
+      default precision is tf32.
+    :type input_precision: string. Available options for nvidia: :code:`"tf32"`, :code:`"tf32x3"`, :code:`"ieee"`. Default: :code:`"tf32"`. Available options for amd: :code:`"ieee"`, (CDNA3 only) :code:`"tf32"`.
+    :param allow_tf32: *Deprecated.* If true, input_precision is set to "tf32".
+      Only one of :code:`input_precision` and :code:`allow_tf32` can be
+      specified (i.e. at least one must be :code:`None`).
+    """
+    assert input_precision is None or allow_tf32 is None, "Only one of input_precision and allow_tf32 can be specified"
+    if input_precision is None:
+        supports_tf32 = "tf32" in _semantic.builder.options.allowed_dot_input_precisions
+        input_precision = knobs.language.fp32_default or ("tf32" if (supports_tf32 and
+                                                                     (allow_tf32 or allow_tf32 is None)) else "ieee")
+
+    input_precision = _unwrap_if_constexpr(input_precision)
+    out_dtype = _unwrap_if_constexpr(out_dtype)
+    max_num_imprecise_acc = _unwrap_if_constexpr(max_num_imprecise_acc)
+    acc = _unwrap_if_constexpr(acc)
+    mbars = [_unwrap_if_constexpr(mbar) for mbar in mbars]
+    mbarPreds = [_unwrap_if_constexpr(mbarPred) for mbarPred in mbarPreds]
+    useD = _unwrap_if_constexpr(useD)
+    pred = _unwrap_if_constexpr(pred)
+    return _semantic.dotx(input, other, acc, useD, pred, mbars, mbarPreds, input_precision, max_num_imprecise_acc, out_dtype)
 
 
 ### from standard

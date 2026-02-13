@@ -1678,6 +1678,25 @@ void init_triton_ir(py::module &&m) {
              return self.create<DotOp>(c.getType(), a, b, c, inputPrecision,
                                        maxNumImpreciseAcc);
            })
+      .def("create_dotx",
+           [](TritonOpBuilder &self, mlir::Value &a, mlir::Value &b,
+              mlir::Value &c,
+              std::optional<Value>& useD, std::optional<Value>& pred,
+              std::vector<Value>& mbars, std::vector<Value>& mbarPreds,
+              InputPrecision inputPrecision,
+              int maxNumImpreciseAcc) -> mlir::Value {
+             Value useDVal = useD.value_or(Value());
+             Value predVal = pred.value_or(Value());
+             auto mma = self.create<DotXOp>(c.getType(), a, b, c,
+                                       useDVal, predVal, ValueRange{}, ValueRange{});
+
+             mma.setInputPrecision(inputPrecision);
+             mma.setMaxNumImpreciseAcc(maxNumImpreciseAcc);
+             for (auto [barrier, pred] : llvm::zip(mbars, mbarPreds)) {
+               addCompletionBarrier(mma, barrier, pred);
+             }
+             return mma;
+           })
       .def("create_dot_scaled",
            [](TritonOpBuilder &self, mlir::Value &lhs,
               std::optional<mlir::Value> &lhs_scale,
@@ -2046,12 +2065,40 @@ void init_triton_ir(py::module &&m) {
                return self.create<mlir::triton::SmemAllocOp>(tensorType, numStagesAttr, isMutableAttr, sharedEnc);
            })
       .def("create_smem_load",
-           [](TritonOpBuilder &self, Type resultTy, Value smem, Type regType, int ctaId) -> Value {
-             return self.create<tt::SmemLoadOp>(resultTy, smem, regType, ctaId);
+           [](TritonOpBuilder &self, Type resultTy, Value smem, std::optional<Type> regType, int ctaId) -> Value {
+             auto dummyType = RankedTensorType::get(
+               {1, 1}, self.getBuilder().getI32Type());
+             auto regTy = regType.value_or(dummyType);
+             Value load = self.create<tt::SmemLoadOp>(resultTy, smem, regTy, ctaId);
+             auto loadOp = load.getDefiningOp();
+             if (regType.has_value())
+                 loadOp->setAttr("txl.with_reg_type", IntegerAttr::get(self.getBuilder().getI32Type(), 1));
+             else
+                 loadOp->setAttr("txl.with_reg_type", IntegerAttr::get(self.getBuilder().getI32Type(), 0));
+             return load;
            })
       .def("create_smem_store",
            [](TritonOpBuilder &self, Value smem, Value value, int ctaId) {
              self.create<tt::SmemStoreOp>(value, smem, ctaId);
+           })
+      .def("create_tmem_alloc",
+           [](TritonOpBuilder &self,
+               std::vector<int64_t> &shape, Type &elementType, int32_t numStages, bool isMutable) -> Value {
+               auto tensorType = RankedTensorType::get(shape, elementType);
+               auto numStagesAttr = self.getBuilder().getI32IntegerAttr(numStages);
+               auto isMutableAttr = mlir::BoolAttr::get(self.getContext(), isMutable);
+               return self.create<mlir::triton::TmemAllocOp>(tensorType, numStagesAttr, isMutableAttr, nullptr, nullptr);
+           })
+      .def("create_tmem_load",
+           [](TritonOpBuilder &self, Type resultTy, Value smem, int ctaId) -> Value {
+             // TODO: no need specific regType actually, do the same for other SmemLoadOp
+             auto dummyType = RankedTensorType::get(
+               {1, 1}, self.getBuilder().getI32Type());
+             return self.create<tt::TmemLoadOp>(resultTy, smem, dummyType, ctaId);
+           })
+      .def("create_tmem_store",
+           [](TritonOpBuilder &self, Value smem, Value value, int ctaId) {
+             self.create<tt::TmemStoreOp>(value, smem, ctaId);
            })
       .def("create_frag_smem_load",
            [](TritonOpBuilder &self, Type resultTy, Value smem,
@@ -2338,6 +2385,10 @@ void init_triton_ir(py::module &&m) {
            [](TritonOpBuilder &self, std::vector<int32_t> &wgids) -> Value {
              return self.create<IsWarpgroupOp>(wgids);
            })
+      .def("create_is_warp",
+           [](TritonOpBuilder &self, std::vector<int32_t> &wids) -> Value {
+             return self.create<IsWarpOp>(wids);
+           })
       .def("create_get_canonical_wrapgroup_id",
            [](TritonOpBuilder& self) -> Value{
                return self.create<mlir::triton::txlgpu::CanonicalWarpgroupIdOp>(self.getBuilder().getI32Type());
@@ -2345,6 +2396,10 @@ void init_triton_ir(py::module &&m) {
       .def("create_get_lane_id",
            [](TritonOpBuilder& self) -> Value{
                return self.create<mlir::triton::txlgpu::LaneIdOp>(self.getBuilder().getI32Type());
+           })
+      .def("create_get_warp_id",
+           [](TritonOpBuilder& self) -> Value{
+               return self.create<mlir::triton::txlgpu::WarpIdOp>(self.getBuilder().getI32Type());
            })
       .def("create_get_cta_rank",
            [](TritonOpBuilder& self) -> Value{

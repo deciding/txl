@@ -5,6 +5,7 @@ add_triton_library(TXLIR
   DEPENDS
   TritonTableGen
   TXLTableGen
+  TXLAttrDefsIncGen
 
   LINK_LIBS PUBLIC
   MLIRIR

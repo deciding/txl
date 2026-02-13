@@ -15,11 +15,18 @@
 using namespace mlir;
 using namespace mlir::triton;
 
+#define GET_ATTRDEF_CLASSES
+#include "txl/Dialect/TXL/IR/TXLAttrDefs.cpp.inc"
+
 //===----------------------------------------------------------------------===//
 // TritonDialect Dialect Interfaces
 //===----------------------------------------------------------------------===//
 
 void TXLDialect::initialize() {
+  addAttributes<
+#define GET_ATTRDEF_LIST
+#include "txl/Dialect/TXL/IR/TXLAttrDefs.cpp.inc"
+      >();
 
   addOperations<
 #define GET_OP_LIST

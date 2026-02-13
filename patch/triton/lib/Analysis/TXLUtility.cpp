@@ -1,9 +1,13 @@
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -15,12 +19,37 @@
 
 #include "triton/Analysis/TXLUtility.h"
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
+#include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
+#include "txl/Dialect/TXL/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/TritonGPUInterfaces.h"
+#include "llvm/Support/Signals.h"
 
 namespace ttg = mlir::triton::gpu;
+namespace ttng = mlir::triton::nvidia_gpu;
 
 namespace mlir::triton{
+
+uint32_t nextPowerOf2(uint32_t n) {
+    if (n <= 1) return 1;
+    // __builtin_clz counts leading zeros
+    return 1 << (32 - __builtin_clz(n - 1));
+}
+
+bool isFakeMemoryEffects(Operation* op){
+    bool fakeInTXL =  isa<
+        triton::MbarExpectOp, triton::MbarWaitOp, triton::MbarArriveOp,
+        triton::NamedBarrierArriveOp, triton::NamedBarrierWaitOp,
+        triton::DotXOp, // this truly affect tmem, but no need mbar
+        triton::WGDotWaitOp,
+        triton::AsyncLoadWaitOp,
+        triton::TmaStoreOp, triton::TmaStoreWaitOp,
+        triton::FenceProxyAsyncOp
+      >(op);
+    bool fakeInTXLGPU = false;
+    return fakeInTXL || fakeInTXLGPU;
+}
+
 
 // txl
 auto getParentWithWGIDAttr(Operation *op) -> IntegerAttr {
@@ -32,6 +61,55 @@ auto getParentWithWGIDAttr(Operation *op) -> IntegerAttr {
   }
   return nullptr; // Return nullptr if no parent has the attribute
 }
+
+// DEPRECATED
+auto getParentWithWIDAttr(Operation *op) -> IntegerAttr {
+  while (op) {
+    auto attr = op->getAttrOfType<IntegerAttr>("ttxg.wid");
+    if (attr)
+      return attr;
+    op = op->getParentOp();
+  }
+  return nullptr; // Return nullptr if no parent has the attribute
+}
+
+auto getParentWithWIDsAttr(Operation *op) -> SmallVector<int32_t> {
+  Operation *current = op;
+
+  while (current) {
+    // Check special handling for scf.if
+    if (auto ifOp = dyn_cast<scf::IfOp>(current)) {
+      // Determine whether the original op is inside the else region
+      bool inElseRegion = false;
+      if (!ifOp.getElseRegion().empty()) {
+        inElseRegion = ifOp.getElseRegion().isAncestor(op->getParentRegion());
+      }
+
+      if (inElseRegion) {
+        auto elseWids = getOpAttrWIds(current, true);
+        if (elseWids.size()) {
+          return elseWids;
+        }
+      } else {
+        auto wids = getOpAttrWIds(current, false);
+        if (wids.size()) {
+          return wids;
+        }
+      }
+    } else {
+      // Non-if op: check ttxg.wids directly
+      auto wids = getOpAttrWIds(current, false);
+      if (wids.size()) {
+        return wids;
+      }
+    }
+
+    current = current->getParentOp();
+  }
+
+  return {};
+}
+
 
 
 void changeForOpArgType(scf::ForOp forOp, unsigned int opNum, Type newType){
@@ -63,6 +141,67 @@ int getOpAttrWgId(Operation* op){
         return  attr.getInt();
     }
     return -1;
+}
+
+void setOpAttrWIds(Operation* op, std::vector<int32_t> wids, bool isElse){
+    OpBuilder builder(op);
+    auto attr = mlir::DenseI32ArrayAttr::get(builder.getContext(), wids);
+    if (!isElse)
+        op->setAttr("ttxg.wids", attr);
+    else
+        op->setAttr("ttxg.else.wids", attr);
+}
+
+SmallVector<int32_t> getOpAttrWIds(Operation* op, bool isElse){
+  llvm::SmallVector<int32_t> result;
+  ArrayRef<int32_t> attr;
+  if (!op->hasAttr("ttxg.wids"))
+      return result;
+  if (!isElse)
+      attr = op->getAttrOfType<mlir::DenseI32ArrayAttr>("ttxg.wids");
+  else
+      attr = op->getAttrOfType<mlir::DenseI32ArrayAttr>("ttxg.else.wids");
+  if (attr.size() == 0)
+    return result;
+
+  result.append(attr.begin(), attr.end());
+  return result;
+}
+
+// DEPRECATED
+void setOpAttrWId(Operation* op, int32_t wid){
+    auto attrTy = IntegerType::get(op->getContext(), 32);
+    op->setAttr("ttxg.wid", IntegerAttr::get(attrTy, wid));
+}
+
+// DEPRECATED
+int getOpAttrWId(Operation* op){
+    auto attr = op->getAttrOfType<IntegerAttr>("ttxg.wid");
+    if (attr) {
+        assert(attr.getType().isInteger(32) && "ttxg.wid must be 32 bit int\n");
+        return  attr.getInt();
+    }
+    return -1;
+}
+
+int getExecutingThreadId(Operation * op) {
+    // txl
+    int wgId = getOpAttrWgId(op);
+    int executingThreadId = 0;
+    if (wgId != -1) {
+      auto mod = op->getParentOfType<ModuleOp>();
+      int numWarps = triton::gpu::lookupNumWarps(op);
+      int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
+      executingThreadId = wgId * numWarps * warpSize;
+    }
+    auto wIds = getParentWithWIDsAttr(op);
+    if (wIds.size()) {
+      int wId = wIds[0]; // TODO: now just get the first, assume it is sorted
+      auto mod = op->getParentOfType<ModuleOp>();
+      int warpSize = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
+      executingThreadId = wId * warpSize;
+    }
+    return executingThreadId;
 }
 
 void setOpAttrWarpReduce(Operation* op){
@@ -107,18 +246,41 @@ void propagateTypeRecursively(Value &val, Type newType) {
     Operation* user = use.getOwner();
     unsigned opNum = use.getOperandNumber();
     // For loop yield, backpropagate to input, and it must be a const
+    if (isa<scf::ForOp>(user)){
+        // propagate to forop
+        //llvm::outs() << "\n case forop\n";
+        auto forOp = dyn_cast<scf::ForOp>(user);
+        Value suspiciousInput = forOp->getOperand(opNum);
+        Type oldType = suspiciousInput.getType();
+        changeForOpArgType(forOp, opNum, newType);
+        Value userResult = forOp->getResult(opNum-3);
+        userResult.setType(newType);
+        //llvm::outs() << "\n done forop\n";
+        auto iterArgNum = opNum - 3; // TODO only 1 induction?
+        auto bbArg = forOp.getRegionIterArgs()[iterArgNum];
+        propagateTypeRecursively(bbArg, newType);
+        propagateTypeRecursively(userResult, newType);
+        continue;
+    }
     if (isa<scf::YieldOp>(user)){
+        //llvm::outs() << "\n case yieldop\n";
         auto yieldOp = dyn_cast<scf::YieldOp>(user);
-        auto forOp = yieldOp->getParentOfType<scf::ForOp>();
+        Region *region = yieldOp->getParentRegion();
+        Operation *parentOp = region->getParentOp();
+        auto forOp = dyn_cast<scf::ForOp>(parentOp);
+        //auto forOp = yieldOp->getParentOfType<scf::ForOp>();
         if (forOp){
+            //llvm::outs() << "\n case yieldop forop\n";
+            // propagate to forop
             Value suspiciousInput = forOp->getOperand(opNum+3);
             Type oldType = suspiciousInput.getType();
             changeForOpArgType(forOp, opNum+3, newType);
             Value userResult = forOp->getResult(opNum);
             userResult.setType(newType);
+            //llvm::outs() << "\n done yieldop forop\n";
             propagateTypeRecursively(userResult, newType);
 
-            // backpropagate to const
+            // backpropagate to const forop init arg
             auto constOp = suspiciousInput.getDefiningOp<arith::ConstantOp>();
             if (constOp){
                 auto attr = dyn_cast<DenseElementsAttr>(constOp.getValue());
@@ -134,8 +296,18 @@ void propagateTypeRecursively(Value &val, Type newType) {
                 }
             }
             else {
-                user->emitError("Type backpropagate failed: ForOp input is not const");
+                //user->emitError("Type backpropagate failed: ForOp input is not const");
             }
+            continue;
+        }
+        auto ifOp = dyn_cast<scf::IfOp>(parentOp);
+        //auto ifOp = yieldOp->getParentOfType<scf::IfOp>();
+        if (ifOp){
+            //llvm::outs() << "\n case yieldop ifop\n";
+            Value userResult = ifOp->getResult(opNum);
+            userResult.setType(newType);
+            //llvm::outs() << "\n done yieldop ifop\n";
+            propagateTypeRecursively(userResult, newType);
             continue;
         }
     }
@@ -155,6 +327,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
                 auto newRankedType = dyn_cast<RankedTensorType>(newType);
                 auto userRankedType = dyn_cast<RankedTensorType>(oldType);
                 if (attr) {
+                    //llvm::outs() << "\n case elemwiseop with const\n";
                     OpBuilder builder(constOp);
                     auto scalarValue = attr.getSplatValue<Attribute>();
                     auto splatValue = SplatElementsAttr::get(newRankedType, scalarValue);
@@ -168,6 +341,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
                             userRankedType.getElementType(),
                             newRankedType.getEncoding());
                     userResult.setType(userBasedTensorTy);
+                    //llvm::outs() << "\n done elemwiseop with const\n";
                     propagateTypeRecursively(userResult, userBasedTensorTy);
                     continue;
                 }
@@ -175,6 +349,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
             // Priority 1.2: if the other is splat, should create a new splat, and op is not addptr
             auto splatOp = otherOperand.getDefiningOp<triton::SplatOp>();
             if (splatOp && !isa<AddPtrOp>(user)){
+                //llvm::outs() << "\n case elemwiseop with splatop (not addptr)\n";
                 auto newRankedType = dyn_cast<RankedTensorType>(newType);
                 auto userRankedType = dyn_cast<RankedTensorType>(oldType);
                 OpBuilder builder(splatOp);
@@ -188,6 +363,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
                         userRankedType.getElementType(),
                         newRankedType.getEncoding());
                 userResult.setType(userBasedTensorTy);
+                //llvm::outs() << "\n done elemwiseop with splatop (not addptr)\n";
                 propagateTypeRecursively(userResult, userBasedTensorTy);
                 continue;
             }
@@ -196,13 +372,17 @@ void propagateTypeRecursively(Value &val, Type newType) {
 
         // Priority 2: if same shape givein to new Type
         if (oldType != newType && sameShapeAndElementType(oldType, newType)) {
+          //llvm::outs() << "\n case same shape same elemtype\n";
           userResult.setType(newType);
           // Recurse on this user's result
+          //llvm::outs() << "\n done same shape same elemtype\n";
           propagateTypeRecursively(userResult, newType);
           continue;
         }
 
+        // Misc: other specific ops
         if (auto reduceOp = dyn_cast<ReduceOp>(user)){
+            //llvm::outs() << "\n case reduceop\n";
             auto userRankedType = dyn_cast<RankedTensorType>(oldType);
             auto newRankedType = dyn_cast<RankedTensorType>(newType);
             if (isa<IntegerType>(oldType) || isa<FloatType>(oldType)) {
@@ -225,21 +405,72 @@ void propagateTypeRecursively(Value &val, Type newType) {
             auto newSliceTy = RankedTensorType::get(sliceShape, newRankedType.getElementType(), newSliceEnc);
             userResult.setType(newSliceTy);
             // Recurse on this user's result
+            //llvm::outs() << "\n done reduceop\n";
             propagateTypeRecursively(userResult, newSliceTy);
             continue;
         }
+
+        if (auto expandDimsOp = dyn_cast<ExpandDimsOp>(user)) {
+            //llvm::outs() << "\n case expandDimsOp\n";
+            //expandDimsOp->setAttr("TXL", StringAttr::get(expandDimsOp.getContext(), "X"));
+            //auto mod = dyn_cast<ModuleOp>(getModuleFromOp(expandDimsOp));
+            //llvm::outs() << printModuleOp(mod);
+            SmallVector<Type> returnTypes;
+            if (failed(expandDimsOp.inferReturnTypes(
+                            expandDimsOp.getContext(),
+                            expandDimsOp.getLoc(),
+                            expandDimsOp->getOperands(),
+                            expandDimsOp->getAttrDictionary(),
+                            expandDimsOp->getPropertiesStorage(),
+                            expandDimsOp->getRegions(),
+                            returnTypes))) {
+                // handle failure
+                user->emitError("Propagation: ExpandDimsOp not able to infer the result type");
+            }
+            assert(returnTypes.size() && "ExpandDimsOp return type must have been inferred");
+            auto resType = dyn_cast<RankedTensorType>(returnTypes[0]);
+            assert(resType && "ExpandDimsOp return type must be RankedTensorType");
+            auto userResult = expandDimsOp.getResult();
+            userResult.setType(resType);
+            //llvm::outs() << "\n done expandDimsOp\n";
+            propagateTypeRecursively(userResult, resType);
+            continue;
+        }
+        if (auto broadcastOp = dyn_cast<BroadcastOp>(user)) {
+            //llvm::outs() << "\n case BroadcastOp\n";
+            auto newRankedType = dyn_cast<RankedTensorType>(newType);
+            auto userRankedType = dyn_cast<RankedTensorType>(oldType);
+            auto userBasedTensorTy = RankedTensorType::get(
+                    userRankedType.getShape(),
+                    userRankedType.getElementType(),
+                    newRankedType.getEncoding());
+            userResult.setType(userBasedTensorTy);
+            //llvm::outs() << "\n done BroadcastOp\n";
+            propagateTypeRecursively(userResult, userBasedTensorTy);
+            continue;
+        }
+        if (auto selectOp = dyn_cast<arith::SelectOp>(user)) {
+            //llvm::outs() << "\n case SelectOp\n";
+            userResult.setType(newType); // Assume true/false values are/will be the same
+            //llvm::outs() << "\n done SelectOp\n";
+            propagateTypeRecursively(userResult, newType);
+            continue;
+        }
+
         // TODO: should we givein to Elementwise?
         if (user->hasTrait<mlir::OpTrait::Elementwise>()){
           // Priority 3: as add_ptr offsets, should propagate also back to ptr type
           if (auto addPtr = dyn_cast<AddPtrOp>(user)){
               auto ptr = addPtr.getPtr();
               if (auto splatPtr = ptr.getDefiningOp<SplatOp>()){
+                //llvm::outs() << "\n case elemwiseop with addptrop\n";
                 auto splatResult = splatPtr->getResult(0);
                 auto splatResultType = dyn_cast<RankedTensorType>(splatResult.getType());
                 auto ty = cast<RankedTensorType>(newType);
                 auto ptrType = RankedTensorType::get(ty.getShape(), splatResultType.getElementType(), ty.getEncoding());
                 splatResult.setType(ptrType);
                 userResult.setType(ptrType);
+                //llvm::outs() << "\n done elemwiseop with addptrop\n";
                 // Recurse on this user's result
                 propagateTypeRecursively(userResult, ptrType);
                 //OpBuilder builder(splatPtr);
@@ -260,6 +491,7 @@ void propagateTypeRecursively(Value &val, Type newType) {
           auto userTensorTy = dyn_cast<RankedTensorType>(oldType);
           auto newTensorTy = dyn_cast<RankedTensorType>(newType);
           if (userTensorTy && newTensorTy && userTensorTy.getElementType() != newTensorTy.getElementType()){
+            //llvm::outs() << "\n case cast maybe\n";
             auto userBasedTensorTy = RankedTensorType::get(
                     userTensorTy.getShape(),
                     userTensorTy.getElementType(),
@@ -269,17 +501,19 @@ void propagateTypeRecursively(Value &val, Type newType) {
                     );
             //val.setType(userBasedTensorTy);
             userResult.setType(userBasedTensorTy);
+            //llvm::outs() << "\n done cast maybe\n";
             propagateTypeRecursively(userResult, userBasedTensorTy);
             //llvm::outs() << "\n op givein to type\n";
             //llvm::outs() << userBasedTensorTy;
             continue;
           }
 
+          //llvm::outs() << "\n case fallback\n";
           // if using resultType, no need to propagate
           // TODO: if changed the val type, should also change other users?
           // Priority 5, fallback, should not change val type, instead, add convert_layout
           val.setType(oldType);
-          //llvm::outs() << "\n op givein to type\n";
+          //llvm::outs() << "\n done fallback\n";
           //llvm::outs() << oldType;
           return;
         }
@@ -323,5 +557,176 @@ std::string printModuleOp(ModuleOp &mod) {
  return str;
 }
 
+Operation* isFromTmemAlloc(Value v) {
+  // Follow the chain backward until we reach a non-bypassable source.
+  while (true) {
+    // Block argument → cannot come from TmemAllocOp.
+    if (isa<BlockArgument>(v)) {
+      auto blockArg = dyn_cast<BlockArgument>(v);
+      auto *parentBlock = blockArg.getOwner();
+      auto parentOp = parentBlock->getParentOp();
+
+      if (auto forOp = dyn_cast<scf::ForOp>(parentOp)) {
+          unsigned idx = blockArg.getArgNumber();
+          // Only iter_args produce block args (skip induction var at position 0)
+          if (idx > 0) {
+              v = forOp.getInitArgs()[idx - 1];
+          }
+      }
+    }
+
+    Operation *op = v.getDefiningOp();
+    if (!op)
+      return nullptr;
+
+    if (isa<scf::ForOp>(op)) {
+      auto forOp = dyn_cast<scf::ForOp>(op);
+      auto result = dyn_cast<OpResult>(v);
+      assert(result && "ForOp result should be retrievable");
+      unsigned resIdx = result.getResultNumber();
+
+      v = forOp.getInitArgs()[resIdx];
+      continue;
+    }
+
+    // Direct allocation source.
+    if (isa<TmemAllocOp>(op) || isa<ttng::TMEMAllocOp>(op)) {
+      return op;
+    }
+
+    // DotOp haven't been converted to TCGen05, thus acc not have passed through
+    if (isa<DotOp>(op) || isa<DotXOp>(op)) {
+      v = op->getOperand(2);
+      continue;
+    }
+
+    // Bypassable ops: follow their source operand.
+    if (auto getBuf = dyn_cast<GetBufferOp>(op)) {
+      v = getBuf.getSrc();
+      continue;
+    }
+
+    if (auto idx = dyn_cast<SmemIndexOp>(op)) {
+      v = idx.getSrc();
+      continue;
+    }
+
+    if (auto subslice = dyn_cast<SmemSubsliceOp>(op)) {
+      v = subslice.getSrc();
+      continue;
+    }
+
+    if (auto trans = dyn_cast<SmemTransOp>(op)) {
+      v = trans.getSrc();
+      continue;
+    }
+
+    if (auto reshape = dyn_cast<SmemReshapeOp>(op)) {
+      v = reshape.getSrc();
+      continue;
+    }
+
+    if (auto idx = dyn_cast<ttg::MemDescIndexOp>(op)) {
+      v = idx.getSrc();
+      continue;
+    }
+
+    if (auto subslice = dyn_cast<ttg::MemDescSubsliceOp>(op)) {
+      v = subslice.getSrc();
+      continue;
+    }
+
+    if (auto trans = dyn_cast<ttg::MemDescTransOp>(op)) {
+      v = trans.getSrc();
+      continue;
+    }
+
+    if (auto reshape = dyn_cast<ttg::MemDescReshapeOp>(op)) {
+      v = reshape.getSrc();
+      continue;
+    }
+
+    if (auto convert = dyn_cast<ttg::ConvertLayoutOp>(op)) {
+      v = convert.getSrc();
+      continue;
+    }
+
+    if (auto localLoad = dyn_cast<ttg::LocalLoadOp>(op)) {
+      v = localLoad.getSrc();
+      continue;
+    }
+
+    // Any other op: chain breaks.
+    return nullptr;
+  }
+}
+
+void addCompletionBarrier(DotXOp op, Value barrier, Value pred) {
+  op.getBarrierPredsMutable().append(pred);
+  op.getBarriersMutable().append(barrier);
+}
+
+// Helper function to trace back to a MemDescType
+mlir::Value traceToMemDesc(mlir::Value initialValue) {
+    mlir::Value currentValue = initialValue;
+
+    while (currentValue) {
+        // 1. Check if the current value matches the desired type
+        if (auto memDescType = llvm::dyn_cast<ttg::MemDescType>(currentValue.getType())) {
+            return currentValue;
+        }
+
+        // 2. If not, try to find the defining operation
+        mlir::Operation *defOp = currentValue.getDefiningOp();
+        
+        // 3. If there is no defining op (it's a block argument) 
+        // or the op has no operands, we can't trace further.
+        if (!defOp || defOp->getNumOperands() == 0) {
+            break;
+        }
+
+        // 4. Move to the first operand of the defining op and continue tracing
+        currentValue = defOp->getOperand(0);
+    }
+
+    return nullptr; // Return null if no MemDescType is found in the chain
+}
+
+mlir::Value convertToMemDesc(mlir::Value initialValue) {
+    mlir::Value currentValue = initialValue;
+    while (currentValue) {
+        // 1. Check if the current value matches the desired type
+        if (auto memDescType = llvm::dyn_cast<ttg::MemDescType>(currentValue.getType())) {
+            return currentValue;
+        }
+
+        // 2. If not, try to find the defining operation
+        mlir::Operation *defOp = currentValue.getDefiningOp();
+        
+        // 3. If there is no defining op (it's a block argument) 
+        // or the op has no operands, we can't trace further.
+        if (!defOp || defOp->getNumOperands() == 0) {
+            break;
+        }
+        if (auto transOp = dyn_cast<triton::TransOp>(defOp)) {
+            Value transSrc = transOp.getSrc();
+            Operation* transSrcOp = transSrc.getDefiningOp();
+            if (auto localLoadOp = dyn_cast<triton::gpu::LocalLoadOp>(transSrcOp)){ 
+                OpBuilder builder(transOp);
+                Value memDescTrans = builder.create<triton::gpu::MemDescTransOp>(
+                        transOp.getLoc(),
+                        localLoadOp.getSrc(),
+                        ArrayRef<int32_t>({1, 0})
+                );
+                return memDescTrans;
+
+            }
+        }
+
+        // 4. Move to the first operand of the defining op and continue tracing
+        currentValue = defOp->getOperand(0);
+    }
+    return nullptr;
+}
 
 }

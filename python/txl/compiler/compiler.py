@@ -290,7 +290,7 @@ def make_nv_dbg_ttir(mod, metadata, opt, capability, diff_select=None, log_dir=N
     pm2.enable_debug()
 
     def add_ws_code_partition_txl(i):
-        passes.ttir.add_ws_code_partition_txl(i, metadata['num_warpgroups'])
+        passes.ttir.add_ws_code_partition_txl(i, metadata['num_warpgroups'], metadata['num_warps'])
 
     pass_funcs = [
         passes.common.add_inliner,
@@ -464,7 +464,7 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, diff_select=None, log_dir=
             #passes.common.add_licm, # 3.3.x
             passes.ttir.add_triton_licm, # 3.4.x
             passes.ttgpuir.add_optimize_accumulator_init,
-            add_hoist_tmem_alloc_false, # 3.4.x, 0817
+            #add_hoist_tmem_alloc_false, # 3.4.x, 0817, no txl
             nvidia.passes.ttnvgpuir.add_promote_lhs_to_tmem, # 3.4.x
             add_assign_latencies, # 3.4.x
             passes.ttgpuir.add_schedule_loops, # 3.4.x
@@ -507,7 +507,12 @@ def make_nv_dbg_ttgir(mod, metadata, opt, capability, diff_select=None, log_dir=
         ]
     pass_funcs += [
         add_fence_insertion, # 0817
-        nvidia.passes.ttnvgpuir.add_lower_mma, # 0817
+    ]
+    if not use_txl:
+        pass_funcs += [
+            nvidia.passes.ttnvgpuir.add_lower_mma, # 0817
+        ]
+    pass_funcs += [
         passes.common.add_sccp, # 3.4.x
         passes.common.add_cse, # 0817
         passes.common.add_canonicalizer,

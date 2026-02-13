@@ -8,7 +8,8 @@ include "triton/Dialect/TritonGPU/IR/TritonGPUTypeInterfaces.td"
 include "txl/Dialect/TXL/IR/TXLAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonAttrDefs.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
-include "/triton/Dialect/TritonGPU/IR/TritonGPUAttrDefs.td"
+include "triton/Dialect/TritonGPU/IR/TritonGPUAttrDefs.td"
+include "triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUAttrDefs.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td" // SymbolUserOpInterface
 include "mlir/IR/OpAsmInterface.td" // OpAsmOpInterface
@@ -153,6 +154,78 @@ def TXL_FragSmemStoreOp : TXL_Op<"frag_smem_store", [AttrSizedOperandSegments]> 
   let assemblyFormat = [{
     $src `,` $dst (`mbar` $mbar^)? (`pred` $pred^)? attr-dict `:`
     type($src) `(` $regType `)` `,` type($dst) (`,` type($mbar)^)? (`,` type($pred)^)?
+  }];
+}
+
+def TXL_TmemAllocOp : TXL_Op<"tmem_allocx", [
+                            DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+                            ]> {
+  let summary = "allocate tensor memory";
+  let description = [{
+    This operation allocates buffer in tensor memory and return a descriptor
+    containing the address and a view of the buffer.
+    This is similar to ttg.local_alloc except the buffer is allocated in tensor memory.
+
+    Explicitly deallocating a buffer is optional; see local_dealloc.
+  }];
+
+  let arguments = (ins
+    I32Attr:$numStages,
+    BoolAttr:$isMutable,
+    OptionalAttr<TTG_TensorMemoryEncodingAttr>:$sharedEnc,
+    OptionalAttr<DistributedEncodingTrait>:$distributedEnc
+  );
+
+  let results = (outs
+    TTG_TensorOrMemDesc:$result
+  );
+
+  let assemblyFormat = [{
+    attr-dict `:` functional-type(operands, results)
+  }];
+
+}
+
+def TXL_TmemLoadOp : TXL_Op<"tmem_loadx"> {
+  let summary = "Load a buffer from tensor memory into a distributed tensor";
+
+  let description = [{
+    This is similar to ttg.local_load except the result layout is restricted to only few possibility.
+    Therefore we cannot combine this op with any convert layout like local_load.
+
+    This operation takes and produces an optional token to indicate TMEM read
+    on its source operand. When the tokens are present, they can
+    be used to check aliasing and modref on the TMEM buffer.
+  }];
+  let arguments = (ins
+    Arg<TTG_TensorOrMemDesc, "", [MemRead]>:$src,
+    TypeAttr: $regType,
+    DefaultValuedAttr<I32Attr, "-1">: $ctaId
+  );
+  let results = (outs TT_Tensor:$result);
+
+  let assemblyFormat = [{$src attr-dict `:` type($src) `->` type($result) `(` $regType `)` }];
+
+}
+
+def TXL_TmemStoreOp : TXL_Op<"tmem_storex"> {
+  let summary = "Store a distributed tensor into a buffer in tensor memory";
+
+  let description = [{
+    This is similar to ttg.local_store except the source layout is restricted to only few possibility.
+
+    This operation takes and produces an optional token to indicate TMEM write
+    on its source operand. When the tokens are present, they can
+    be used to check aliasing and modref on the TMEM buffer.
+  }];
+  let arguments = (ins
+    TT_Tensor:$src,
+    Arg<TTG_TensorOrMemDesc, "", [MemWrite]>:$dst,
+    DefaultValuedAttr<I32Attr, "-1">: $ctaId
+  );
+
+  let assemblyFormat = [{
+    $src `,` $dst attr-dict `:` type($src) `,` type($dst)
   }];
 }
 
@@ -374,6 +447,19 @@ def TXL_IsWarpgroupOp : TXL_Op<"is_warpgroup", []> {
   let assemblyFormat = "attr-dict `:` type($result)";
 }
 
+def TXL_IsWarpOp : TXL_Op<"is_warp", []> {
+  let summary = "Check if is warp id";
+  let description = [{
+    check whether the warp id is as specified
+  }];
+  let arguments = (ins
+    DenseI32ArrayAttr:$ids
+  );
+  let results = (outs I1:$result);
+
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
 def TXL_AsyncLoadOp : TXL_Op<"async_load", [
   AttrSizedOperandSegments,
   MemoryEffects<[MemWrite]>,
@@ -574,6 +660,54 @@ def TXL_SmemReshapeOp : TXL_Op<"smem_reshape", [Pure,
   let results = (outs TT_Tensor:$result);
 
   let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
+}
+
+def TXL_DotXOp : TXL_Op<"dotx", [AttrSizedOperandSegments,
+                             //MemoryEffects<[MemWrite]>,
+                             DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+                             DeclareOpInterfaceMethods<InferTypeOpInterface>,
+                             DeclareOpInterfaceMethods<DotOpInterface>,
+                             TypesMatchWith<"result's type matches accumulator's type",
+                                            "d", "c", "$_self">]> {
+    let summary = "dot";
+
+    let description = [{
+        $d = matrix_multiply($a, $b) + $c. $inputPrecision describes how to exercise the TC
+        when the inputs are f32. It can be one of: tf32, tf32x3, ieee.
+        tf32: use TC with tf32 ops.
+        tf32x3: implement the 3xTF32 trick. For more info see the pass in F32DotTC.cpp
+        ieee: don't use TC, implement dot in software.
+        If the GPU does not have Tensor cores or the inputs are not f32, this flag is ignored.
+    }];
+
+    let arguments = (
+      ins
+      TT_FpIntTensor:$a,
+      TT_FpIntTensor:$b,
+      TT_FpIntTensor:$c,
+      //TTG_TensorOrMemDesc:$mbar,
+      Optional<I1>:$useD,
+      Optional<I1>:$pred,
+      Variadic<TTG_TensorOrMemDesc>:$barriers,
+      Variadic<I1>:$barrier_preds,
+      UnitAttr:$is_async,
+      UnitAttr:$two_ctas,
+      DefaultValuedAttr<TT_InputPrecisionAttr, "::mlir::triton::InputPrecision::IEEE">:$inputPrecision,
+      DefaultValuedAttr<I32Attr, "0">:$maxNumImpreciseAcc
+    );
+
+    let results = (outs TT_FpIntTensor:$d);
+
+    // attr-dict prints enums as integers.  To get inputPrecision printed as a
+    // string, we need to specify it explicitly.
+    let assemblyFormat = [{
+      $a`,` $b`,` $c (`useD` $useD^)? (`pred` $pred^)?
+      custom<BarriersAndPreds>($barriers, $barrier_preds)
+      (`,` `inputPrecision` `=` $inputPrecision^)? attr-dict `:`
+      type($a) `*` type($b) type($barriers) `->` type($d) (`useD` type($useD)^)? (`pred` type($pred)^)?
+    }];
+
+    let hasVerifier = 1;
 }
 
 #endif // TXL_OPS

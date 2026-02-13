@@ -11,6 +11,9 @@ cp ${FROM_DIR}/include/triton/Analysis/Allocation.h ${TO_DIR}/include/triton/Ana
 
 cp ${FROM_DIR}/include/triton/Analysis/TXLUtility.h ${TO_DIR}/include/triton/Analysis/
 
+cp ${FROM_DIR}/include/triton/Analysis/Utility.h ${TO_DIR}/include/triton/Analysis/
+
+cp ${FROM_DIR}/include/triton/Conversion/TritonGPUToLLVM/FMADotUtility.h ${TO_DIR}/include/triton/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/include/triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h ${TO_DIR}/include/triton/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/include/triton/Conversion/TritonGPUToLLVM/Utility.h ${TO_DIR}/include/triton/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/include/triton/Conversion/TritonToTritonGPU/Passes.td ${TO_DIR}/include/triton/Conversion/TritonToTritonGPU/
@@ -22,9 +25,11 @@ cp ${FROM_DIR}/lib/Analysis/AxisInfo.cpp ${TO_DIR}/lib/Analysis/
 cp ${FROM_DIR}/lib/Analysis/CMakeLists.txt ${TO_DIR}/lib/Analysis/
 cp ${FROM_DIR}/lib/Analysis/Membar.cpp ${TO_DIR}/lib/Analysis/
 cp ${FROM_DIR}/lib/Analysis/TXLUtility.cpp ${TO_DIR}/lib/Analysis/
+cp ${FROM_DIR}/lib/Analysis/Utility.cpp ${TO_DIR}/lib/Analysis/
 
 cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/AllocateWarpGroups.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/ConvertLayoutOpToLLVM.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/
+cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/DotOpToLLVM/FMADotUtility.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/DotOpToLLVM/
 cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/MemoryOpToLLVM.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/ReduceOpToLLVM.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/
 cp ${FROM_DIR}/lib/Conversion/TritonGPUToLLVM/Utility.cpp ${TO_DIR}/lib/Conversion/TritonGPUToLLVM/
@@ -40,6 +45,8 @@ cp ${FROM_DIR}/lib/Dialect/TritonGPU/IR/Dialect.cpp ${TO_DIR}/lib/Dialect/Triton
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/IR/Ops.cpp ${TO_DIR}/lib/Dialect/TritonGPU/IR
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/AccelerateMatmul.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/Coalesce.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
+cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/F32DotTC.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
+cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/OptimizeDotOperands.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/OptimizeThreadLocality.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/RemoveLayoutConversions.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
 cp ${FROM_DIR}/lib/Dialect/TritonGPU/Transforms/ReorderInstructions.cpp ${TO_DIR}/lib/Dialect/TritonGPU/Transforms/
@@ -53,7 +60,7 @@ cp ${FROM_DIR}/python/src/ir.cc ${TO_DIR}/python/src/
 cp ${FROM_DIR}/python/src/passes.cc ${TO_DIR}/python/src/
 
 # Temp for 3.4.x compatibility
-cp ${FROM_DIR}/python/triton/compiler/compiler.py ${TO_DIR}/python/triton/compiler/
+#cp ${FROM_DIR}/python/triton/compiler/compiler.py ${TO_DIR}/python/triton/compiler/
 
 cp ${FROM_DIR}/third_party/nvidia/backend/compiler.py ${TO_DIR}/third_party/nvidia/backend/
 
@@ -72,6 +79,7 @@ cp ${FROM_DIR}/third_party/nvidia/lib/Dialect/CMakeLists.txt ${TO_DIR}/third_par
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/BarrierOpToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/CMakeLists.txt ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ConvertLayoutOpToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
+cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/DotOpToLLVM/MMAv5.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/DotOpToLLVM
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/LoadStoreOpToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/MemoryOpToLLVM.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
 cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.cpp ${TO_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/
@@ -81,6 +89,7 @@ cp ${FROM_DIR}/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TritonGPUToLLVM.cpp 
 cp ${FROM_DIR}/third_party/nvidia/triton_nvidia.cc ${TO_DIR}/third_party/nvidia/
 
 cp ${FROM_DIR}/third_party/proton/Dialect/lib/ProtonToProtonGPU/ProtonToProtonGPUPass.cpp ${TO_DIR}/third_party/proton/Dialect/lib/ProtonToProtonGPU/
+cp ${FROM_DIR}/third_party/proton/proton/hooks/instrumentation.py ${TO_DIR}/third_party/proton/proton/hooks
 cp ${FROM_DIR}/third_party/proton/proton/language.py ${TO_DIR}/third_party/proton/proton/
 
 # make sure folder no exist

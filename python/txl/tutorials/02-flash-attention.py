@@ -33,11 +33,12 @@ try:
     from txl.language.semantic import TXLSemantic
 
     pl.enable_semantic("triton")
-    pl.enable_semantic_obj(TXLSemantic)
+    #pl.enable_semantic_obj(TXLSemantic)
 
 
     print("TXL")
-except:
+except Exception as e:
+    print(e)
     class txl:
         class Config:
             def __init__ (

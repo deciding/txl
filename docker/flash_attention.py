@@ -6,11 +6,11 @@ requirements_file = root_dir / "requirements.txt"
 txl_wheel_file = local_dir / "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
 
 test_file = root_dir / "python" / "txl" / "tutorials" / "02-flash-attention.py"
-ptx_file = root_dir / "docker" / "_attn_fwd_ws_tma_txl_tawa.ptx"
-signature_file = root_dir / "docker" / "_attn_fwd_ws_tma_txl_tawa_signature.json"
-json_file = root_dir / "docker" / "_attn_fwd_ws_tma_txl_tawa.json"
+#ptx_file = root_dir / "docker" / "_attn_fwd_ws_tma_txl_tawa.ptx"
+#signature_file = root_dir / "docker" / "_attn_fwd_ws_tma_txl_tawa_signature.json"
+#json_file = root_dir / "docker" / "_attn_fwd_ws_tma_txl_tawa.json"
 
-app = App(name="txl")  # Note: this is optional since Modal 0.57
+app = App(name="txl-mac")  # Note: this is optional since Modal 0.57
 volume = Volume.from_name("txl-dump", create_if_missing=True) # create a cloud volume to store compiled dump files
 
 txl_image = (
@@ -24,9 +24,9 @@ txl_image = (
         "pip install /workspace/txl-3.5.1-cp312-cp312-linux_x86_64.whl",
     )
     .add_local_file(test_file, remote_path="/workspace/test_txl.py", copy=False) # copy after image build, no need rebuild
-    .add_local_file(ptx_file, remote_path="/workspace/_attn_fwd_ws_tma_txl_tawa.ptx", copy=False) # copy after image build, no need rebuild
-    .add_local_file(signature_file, remote_path="/workspace/_attn_fwd_ws_tma_txl_tawa_signature.json", copy=False) # copy after image build, no need rebuild
-    .add_local_file(json_file, remote_path="/workspace/_attn_fwd_ws_tma_txl_tawa.json", copy=False) # copy after image build, no need rebuild
+    #.add_local_file(ptx_file, remote_path="/workspace/_attn_fwd_ws_tma_txl_tawa.ptx", copy=False) # copy after image build, no need rebuild
+    #.add_local_file(signature_file, remote_path="/workspace/_attn_fwd_ws_tma_txl_tawa_signature.json", copy=False) # copy after image build, no need rebuild
+    #.add_local_file(json_file, remote_path="/workspace/_attn_fwd_ws_tma_txl_tawa.json", copy=False) # copy after image build, no need rebuild
 )
 
 # Example function that uses the image

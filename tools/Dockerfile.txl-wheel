@@ -1,0 +1,53 @@
+# Dockerfile for building TXL (Triton Xtra Language) wheel for Linux
+# Based on quay.io/condaforge/linux-anvil-x86_64:alma9 with CUDA support
+# This produces a manylinux-compatible wheel that can be used on Linux systems
+
+FROM quay.io/condaforge/linux-anvil-x86_64:alma9
+
+# Install system dependencies
+RUN dnf install -y \
+    git \
+    wget \
+    which \
+    zlib-devel \
+    xz \
+    clang \
+    lld \
+    && dnf clean all
+
+# Set up conda environment
+# The base image has conda in /opt/miniconda3
+RUN bash -l -c "conda create -n txl python=3.12 -y && conda clean -afy"
+
+# Install build tools and dependencies in conda environment
+# Note: CUDA toolkit versions are specified in cmake/nvidia-toolchain-version.json
+# The build process downloads pre-built CUDA tools (ptxas, cuobjdump, etc.) automatically
+RUN bash -l -c "conda run -n txl pip install --upgrade pip && \
+    conda run -n txl pip install \
+        cmake>=3.20,\<4.0 \
+        ninja>=1.11.1 \
+        pybind11>=2.13.1 \
+        setuptools>=40.8.0 \
+        wheel \
+        lit \
+        auditwheel \
+        && conda clean -afy"
+
+# Install GCC 12 (required for GLIBCXX_3.4.30 compatibility)
+RUN bash -l -c "conda install -n txl -c conda-forge gcc_impl_linux-64=12.1.0 gxx_impl_linux-64=12.1.0 -y && conda clean -afy"
+
+# Set compiler environment variables
+ENV CC=/opt/conda/envs/txl/bin/gcc
+ENV CXX=/opt/conda/envs/txl/bin/g++
+ENV LD_LIBRARY_PATH=/opt/conda/envs/txl/lib:/usr/lib64:/usr/lib:${LD_LIBRARY_PATH:-}
+ENV PATH=/opt/conda/envs/txl/bin:$PATH
+
+# Create working directory
+WORKDIR /build
+
+# Copy build script
+COPY tools/build-wheel.sh /build/build-wheel.sh
+RUN chmod +x /build/build-wheel.sh
+
+# Default command
+CMD ["/build/build-wheel.sh"]

@@ -151,6 +151,7 @@ if [ "$REBUILD" == "true" ]; then
             export CC=x86_64-conda-linux-gnu-gcc
             export CXX=x86_64-conda-linux-gnu-g++
             export LD_LIBRARY_PATH=/opt/conda/envs/txl/lib:/usr/lib64:/usr/lib:$LD_LIBRARY_PATH
+            export PATH=/usr/bin:/opt/conda/bin:/opt/conda/envs/txl/bin:$PATH
             export TRITON_BUILD_WITH_CLANG_LLD=1
             export TRITON_BUILD_WITH_CCACHE=OFF
             
@@ -178,6 +179,7 @@ if [ "$REBUILD" == "true" ]; then
             export CC=x86_64-conda-linux-gnu-gcc
             export CXX=x86_64-conda-linux-gnu-g++
             export LD_LIBRARY_PATH=/opt/conda/envs/txl/lib:/usr/lib64:/usr/lib:$LD_LIBRARY_PATH
+            export PATH=/usr/bin:/opt/conda/bin:/opt/conda/envs/txl/bin:$PATH
             export TRITON_BUILD_WITH_CLANG_LLD=1
             export TRITON_BUILD_WITH_CCACHE=OFF
             

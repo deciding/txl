@@ -12,7 +12,7 @@ conda activate txl
 # Set compiler paths (use conda compiler names, not full paths)
 export CC=x86_64-conda-linux-gnu-gcc
 export CXX=x86_64-conda-linux-gnu-g++
-export PATH=/opt/conda/envs/txl/bin:$PATH
+export PATH=/usr/bin:/opt/conda/bin:/opt/conda/envs/txl/bin:$PATH
 export LD_LIBRARY_PATH=/opt/conda/envs/txl/lib:/usr/lib64:/usr/lib:$LD_LIBRARY_PATH
 
 # Set MAX_JOBS for parallel compilation (default 8, override with MAX_JOBS env var)

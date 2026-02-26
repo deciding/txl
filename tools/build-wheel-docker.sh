@@ -132,11 +132,16 @@ if [ "$REBUILD" == "true" ]; then
         docker exec txl-wheel-build bash -c '
             cd /txl/thirdparty/triton
             rm -rf build dist
+            # Also clean python build cache and any CMake test compile dirs
+            rm -rf python/txl/*.so python/txl/*.egg-info
+            # Clean CMake cache in home directory
+            rm -rf ~/CMakeCache.txt ~/CMakeFiles ~/cmake-build-cache
             echo "Clean completed."
         '
         # After clean, do a full build (reconfigure)
         docker exec -e MAX_JOBS=$MAX_JOBS -e TRITON_BUILD_WITH_O1=$TRITON_BUILD_WITH_O1 \
             -e TRITON_BUILD_WITH_CLANG_LLD=$TRITON_BUILD_WITH_CLANG_LLD \
+            -e TRITON_BUILD_WITH_CCACHE=OFF \
             txl-wheel-build bash -c '
             set -e
             source /opt/miniconda3/etc/profile.d/conda.sh 2>/dev/null || \
@@ -163,6 +168,7 @@ if [ "$REBUILD" == "true" ]; then
         # Incremental build (no clean)
         docker exec -e MAX_JOBS=$MAX_JOBS -e TRITON_BUILD_WITH_O1=$TRITON_BUILD_WITH_O1 \
             -e TRITON_BUILD_WITH_CLANG_LLD=$TRITON_BUILD_WITH_CLANG_LLD \
+            -e TRITON_BUILD_WITH_CCACHE=OFF \
             txl-wheel-build bash -c '
             set -e
             source /opt/miniconda3/etc/profile.d/conda.sh 2>/dev/null || \

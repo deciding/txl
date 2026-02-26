@@ -20,6 +20,7 @@ TRITON_BUILD_WITH_O1=1
 TRITON_BUILD_PROTON=1
 TRITON_BUILD_WITH_CLANG_LLD=1
 REBUILD=false
+CLEAN_BUILD=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --no-cache)
@@ -39,6 +40,10 @@ while [[ $# -gt 0 ]]; do
             REBUILD=true
             shift
             ;;
+        -c|--clean)
+            CLEAN_BUILD=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -46,17 +51,18 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-cache       Rebuild Docker image without cache"
             echo "  -j, --jobs N     Number of parallel build jobs (default: 8)"
             echo "  -r, --rebuild   Rebuild using existing container (fast, incremental)"
-            echo "  --clang          Use clang + lld instead of gcc (less memory)"
+            echo "  -c, --clean     Clean build directory before rebuild"
+            echo "  -r -c           Clean and rebuild (use with -r)"
             echo "  --help, -h       Show this help message"
             echo ""
             echo "Output:"
             echo "  Wheel file will be placed in: $OUTPUT_DIR"
             echo ""
             echo "Examples:"
-            echo "  $0                    # Full build with 8 jobs, O1, no proton"
+            echo "  $0                    # Full build with 8 jobs, O1, proton"
             echo "  $0 -j 4               # Build with 4 jobs (less memory)"
-            echo "  $0 --clang            # Use clang (less memory)"
             echo "  $0 -r                 # Fast rebuild using existing container"
+            echo "  $0 -r -c              # Clean and rebuild (full rebuild)"
             exit 0
             ;;
         *)
@@ -119,39 +125,73 @@ if [ "$REBUILD" == "true" ]; then
     
     # Run incremental build
     echo "Running incremental build..."
-    docker exec -e MAX_JOBS=$MAX_JOBS -e TRITON_BUILD_WITH_O1=$TRITON_BUILD_WITH_O1 \
-        txl-wheel-build bash -c '
-        set -e
-        source /opt/miniconda3/etc/profile.d/conda.sh 2>/dev/null || \
-            source /opt/conda/etc/profile.d/conda.sh 2>/dev/null || true
-        conda activate txl
-        
-        export CC=x86_64-conda-linux-gnu-gcc
-        export CXX=x86_64-conda-linux-gnu-g++
-        export LD_LIBRARY_PATH=/opt/conda/envs/txl/lib:/usr/lib64:/usr/lib:$LD_LIBRARY_PATH
-        
-        cd /txl/thirdparty/triton
-        
-        # Check if build directory exists
-        if [ ! -d "build" ]; then
-            echo "Error: build directory not found. Run full build first."
-            exit 1
-        fi
-        
-        # Run incremental build using ninja (only rebuilds changed files)
-        echo "Running incremental build with MAX_JOBS=$MAX_JOBS..."
-        cd build/cmake.linux-x86_64-cpython-312
-        ninja -j $MAX_JOBS
-        
-        # Create wheel
-        cd /txl/thirdparty/triton
-        python setup.py bdist_wheel --skip-build
-        
-        # Copy to output
-        cp dist/*.whl /output/
-        
-        echo "Rebuild complete!"
+    [ "$CLEAN_BUILD" == "true" ] && echo "  (with clean)"
+    
+    if [ "$CLEAN_BUILD" == "true" ]; then
+        echo "Cleaning build directory first..."
+        docker exec txl-wheel-build bash -c '
+            cd /txl/thirdparty/triton
+            rm -rf build dist
+            echo "Clean completed."
         '
+        # After clean, do a full build (reconfigure)
+        docker exec -e MAX_JOBS=$MAX_JOBS -e TRITON_BUILD_WITH_O1=$TRITON_BUILD_WITH_O1 \
+            -e TRITON_BUILD_WITH_CLANG_LLD=$TRITON_BUILD_WITH_CLANG_LLD \
+            txl-wheel-build bash -c '
+            set -e
+            source /opt/miniconda3/etc/profile.d/conda.sh 2>/dev/null || \
+                source /opt/conda/etc/profile.d/conda.sh 2>/dev/null || true
+            conda activate txl
+            
+            export CC=x86_64-conda-linux-gnu-gcc
+            export CXX=x86_64-conda-linux-gnu-g++
+            export LD_LIBRARY_PATH=/opt/conda/envs/txl/lib:/usr/lib64:/usr/lib:$LD_LIBRARY_PATH
+            export TRITON_BUILD_WITH_CLANG_LLD=1
+            
+            cd /txl/thirdparty/triton
+            rm -rf build dist
+            mkdir -p build dist
+            
+            echo "Building with MAX_JOBS=$MAX_JOBS..."
+            python setup.py bdist_wheel
+            
+            cp dist/*.whl /output/
+            echo "Rebuild complete!"
+        '
+    else
+        # Incremental build (no clean)
+        docker exec -e MAX_JOBS=$MAX_JOBS -e TRITON_BUILD_WITH_O1=$TRITON_BUILD_WITH_O1 \
+            -e TRITON_BUILD_WITH_CLANG_LLD=$TRITON_BUILD_WITH_CLANG_LLD \
+            txl-wheel-build bash -c '
+            set -e
+            source /opt/miniconda3/etc/profile.d/conda.sh 2>/dev/null || \
+                source /opt/conda/etc/profile.d/conda.sh 2>/dev/null || true
+            conda activate txl
+            
+            export CC=x86_64-conda-linux-gnu-gcc
+            export CXX=x86_64-conda-linux-gnu-g++
+            export LD_LIBRARY_PATH=/opt/conda/envs/txl/lib:/usr/lib64:/usr/lib:$LD_LIBRARY_PATH
+            export TRITON_BUILD_WITH_CLANG_LLD=1
+            
+            cd /txl/thirdparty/triton
+            
+            if [ ! -d "build" ]; then
+                echo "Error: build directory not found. Run full build first or use -c to clean."
+                exit 1
+            fi
+            
+            echo "Running incremental build with MAX_JOBS=$MAX_JOBS..."
+            cd build/cmake.linux-x86_64-cpython-312
+            ninja -j $MAX_JOBS
+            
+            cd /txl/thirdparty/triton
+            python setup.py bdist_wheel --skip-build
+            
+            cp dist/*.whl /output/
+            echo "Rebuild complete!"
+        '
+    fi
+
     
     echo ""
     echo "=== Rebuild complete ==="

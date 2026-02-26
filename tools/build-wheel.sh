@@ -4,6 +4,20 @@
 
 set -e  # Exit on any error
 
+# Parse arguments
+CLEAN_BUILD=false
+NEW_COPY=false
+while getopts "cn" opt; do
+    case $opt in
+        c) CLEAN_BUILD=true ;;
+        n) NEW_COPY=true ;;
+        \?) echo "Usage: $0 [-c] [-n]" >&2
+            echo "  -c  Clean build directories before build" >&2
+            echo "  -n  Run cp_to_triton.sh (apply TXL patches)" >&2
+            exit 1 ;;
+    esac
+done
+
 # Initialize conda
 source /opt/miniconda3/etc/profile.d/conda.sh 2>/dev/null || \
     source /opt/conda/etc/profile.d/conda.sh 2>/dev/null || true
@@ -86,9 +100,13 @@ pip install -r requirements.txt 2>/dev/null || {
     echo "Continuing..."
 }
 
-# Step 3: Apply TXL patches to Triton
-echo "=== Step 3: Applying TXL patches to Triton ==="
-bash tools/cp_to_triton.sh
+# Step 3: Apply TXL patches to Triton (only with -n flag)
+if [ "$NEW_COPY" == "true" ]; then
+    echo "=== Step 3: Applying TXL patches to Triton ==="
+    bash tools/cp_to_triton.sh
+else
+    echo "=== Step 3: Skipping TXL patches (use -n to apply) ==="
+fi
 
 # Step 4: Install Triton build dependencies
 echo "=== Step 4: Installing Triton build dependencies ==="
@@ -98,9 +116,12 @@ pip install -r thirdparty/triton/python/requirements.txt
 echo "=== Step 5: Building wheel ==="
 cd thirdparty/triton
 
-# Ensure build directory exists and is clean
-rm -rf build dist
-mkdir -p build dist
+# Clean build directory if -c flag is set
+if [ "$CLEAN_BUILD" == "true" ]; then
+    echo "Cleaning build directories..."
+    rm -rf build dist
+    mkdir -p build dist
+fi
 
 # Build the wheel with explicit compiler settings
 echo "Building with CC=$CC CXX=$CXX"

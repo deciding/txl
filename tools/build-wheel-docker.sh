@@ -20,6 +20,8 @@ TRITON_BUILD_WITH_O1=1
 TRITON_BUILD_PROTON=1
 TRITON_BUILD_WITH_CLANG_LLD=1
 REBUILD=false
+CLEAN_BUILD=false
+NEW_COPY=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --no-cache)
@@ -39,6 +41,14 @@ while [[ $# -gt 0 ]]; do
             REBUILD=true
             shift
             ;;
+        -c|--clean)
+            CLEAN_BUILD=true
+            shift
+            ;;
+        -n|--new-copy)
+            NEW_COPY=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -46,6 +56,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-cache       Rebuild Docker image without cache"
             echo "  -j, --jobs N     Number of parallel build jobs (default: 8)"
             echo "  -r, --rebuild   Rebuild using existing container (fast, incremental)"
+            echo "  -c, --clean     Clean build directories before build"
+            echo "  -n, --new-copy Run cp_to_triton.sh (apply TXL patches)"
             echo "  --clang          Use clang + lld instead of gcc (less memory)"
             echo "  --help, -h       Show this help message"
             echo ""
@@ -53,8 +65,9 @@ while [[ $# -gt 0 ]]; do
             echo "  Wheel file will be placed in: $OUTPUT_DIR"
             echo ""
             echo "Examples:"
-            echo "  $0                    # Full build with 8 jobs, O1, no proton"
-            echo "  $0 -j 4               # Build with 4 jobs (less memory)"
+            echo "  $0                    # Full build with 8 jobs, O1, proton"
+            echo "  $0 -n                 # Full build with TXL patches applied"
+            echo "  $0 -r                 # Fast rebuild (incremental, no clean)"
             echo "  $0 --clang            # Use clang (less memory)"
             echo "  $0 -r                 # Fast rebuild using existing container"
             exit 0
@@ -132,6 +145,7 @@ if [ "$REBUILD" == "true" ]; then
         -v "$PROJECT_ROOT:/txl" \
         -v "$OUTPUT_DIR:/output" \
         -v "$CONDA_HOME_DIR:/opt/conda" \
+        -v "$SCRIPT_DIR/build-wheel.sh:/build/build-wheel.sh:ro" \
         -e CONDA_PREFIX=/opt/conda/envs/txl"
     
     # Add LLVM mount if exists
@@ -151,7 +165,9 @@ if [ "$REBUILD" == "true" ]; then
     -e MAX_JOBS=$MAX_JOBS \
     -e TRITON_BUILD_WITH_O1=$TRITON_BUILD_WITH_O1 \
     -e TRITON_BUILD_PROTON=$TRITON_BUILD_PROTON \
-    -e TRITON_BUILD_WITH_CLANG_LLD=$TRITON_BUILD_WITH_CLANG_LLD"
+    -e TRITON_BUILD_WITH_CLANG_LLD=$TRITON_BUILD_WITH_CLANG_LLD \
+    -e CLEAN_BUILD=$CLEAN_BUILD \
+    -e NEW_COPY=$NEW_COPY"
     
     echo "Running build with persisted conda..."
     eval $DOCKER_RUN_CMD txl-wheel-builder
@@ -187,7 +203,8 @@ echo "Building wheel (this may take 10-30 minutes)..."
 DOCKER_RUN_CMD="docker run \
     --name txl-wheel-build \
     -v "$PROJECT_ROOT:/txl" \
-    -v "$OUTPUT_DIR:/output""
+    -v "$OUTPUT_DIR:/output" \
+    -v "$SCRIPT_DIR/build-wheel.sh:/build/build-wheel.sh:ro""
 
 # Only mount conda if it has content (after first build)
 if [ -d "$CONDA_HOME_DIR/envs/txl" ]; then
@@ -219,9 +236,11 @@ DOCKER_RUN_CMD="$DOCKER_RUN_CMD \
 DOCKER_RUN_CMD="$DOCKER_RUN_CMD \
 -e TRITON_BUILD_WITH_O1=$TRITON_BUILD_WITH_O1 \
 -e TRITON_BUILD_PROTON=$TRITON_BUILD_PROTON \
--e TRITON_BUILD_WITH_CLANG_LLD=$TRITON_BUILD_WITH_CLANG_LLD"
+-e TRITON_BUILD_WITH_CLANG_LLD=$TRITON_BUILD_WITH_CLANG_LLD \
+-e CLEAN_BUILD=$CLEAN_BUILD \
+-e NEW_COPY=$NEW_COPY"
 
-echo "Building with MAX_JOBS=$MAX_JOBS, TRITON_BUILD_WITH_O1=$TRITON_BUILD_WITH_O1, TRITON_BUILD_PROTON=$TRITON_BUILD_PROTON, TRITON_BUILD_WITH_CLANG_LLD=$TRITON_BUILD_WITH_CLANG_LLD (clang enabled by default)"
+echo "Building with MAX_JOBS=$MAX_JOBS, CLEAN_BUILD=$CLEAN_BUILD, NEW_COPY=$NEW_COPY"
 
 # Run the container
 eval $DOCKER_RUN_CMD txl-wheel-builder

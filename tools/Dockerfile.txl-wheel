@@ -45,9 +45,8 @@ ENV PATH=/opt/conda/envs/txl/bin:$PATH
 # Create working directory
 WORKDIR /build
 
-# Copy build script
-COPY tools/build-wheel.sh /build/build-wheel.sh
-RUN chmod +x /build/build-wheel.sh
+# Build script will be mounted at runtime, create placeholder
+RUN echo '#!/bin/bash\necho "Use build-wheel-docker.sh to run"' > /build/build-wheel.sh && chmod +x /build/build-wheel.sh
 
 # Default command
 CMD ["/build/build-wheel.sh"]

@@ -70,6 +70,7 @@ done
 echo "=== TXL Docker Wheel Builder ==="
 echo "Project root: $PROJECT_ROOT"
 echo "Output directory: $OUTPUT_DIR"
+echo "Conda home: $CONDA_HOME_DIR (persists across container rebuilds)"
 echo ""
 
 # Check if Docker is available
@@ -101,57 +102,63 @@ if [ -d "$LLVM_DIR" ]; then
     echo "Using pre-downloaded LLVM from: $LLVM_DIR"
 fi
 
+# Conda home directory (persist across container rebuilds)
+CONDA_HOME_DIR="$PROJECT_ROOT/txl-conda"
+
+# Create conda home directory if it doesn't exist
+if [ ! -d "$CONDA_HOME_DIR" ]; then
+    echo "Creating conda home directory at: $CONDA_HOME_DIR"
+    mkdir -p "$CONDA_HOME_DIR"
+fi
+
 # Check if existing container should be used for rebuild
 if [ "$REBUILD" == "true" ]; then
     echo ""
     echo "=== Rebuild Mode ==="
     
-    # Check if container exists
-    if ! docker ps -a --format '{{.Names}}' | grep -q "^txl-wheel-build$"; then
-        echo "Error: Container txl-wheel-build not found"
-        echo "Run without -r flag to create a new build"
+    # Check if persisted conda exists
+    if [ ! -d "$CONDA_HOME_DIR/envs/txl" ]; then
+        echo "Error: No persisted conda found in $CONDA_HOME_DIR"
+        echo "Run a full build first (without -r) to create the conda environment"
         exit 1
     fi
     
-    # Start the container
-    echo "Starting existing container..."
-    docker start txl-wheel-build
+    echo "Found persisted conda in $CONDA_HOME_DIR"
+    echo "Starting new container with persisted conda..."
     
-    # Run incremental build
-    echo "Running incremental build..."
-    docker exec -e MAX_JOBS=$MAX_JOBS -e TRITON_BUILD_WITH_O1=$TRITON_BUILD_WITH_O1 \
-        txl-wheel-build bash -c '
-        set -e
-        source /opt/miniconda3/etc/profile.d/conda.sh 2>/dev/null || \
-            source /opt/conda/etc/profile.d/conda.sh 2>/dev/null || true
-        conda activate txl
-        
-        export CC=x86_64-conda-linux-gnu-gcc
-        export CXX=x86_64-conda-linux-gnu-g++
-        export LD_LIBRARY_PATH=/opt/conda/envs/txl/lib:/usr/lib64:/usr/lib:$LD_LIBRARY_PATH
-        
-        cd /txl/thirdparty/triton
-        
-        # Check if build directory exists
-        if [ ! -d "build" ]; then
-            echo "Error: build directory not found. Run full build first."
-            exit 1
-        fi
-        
-        # Run incremental build using ninja (only rebuilds changed files)
-        echo "Running incremental build with MAX_JOBS=$MAX_JOBS..."
-        cd build/cmake.linux-x86_64-cpython-312
-        ninja -j $MAX_JOBS
-        
-        # Create wheel
-        cd /txl/thirdparty/triton
-        python setup.py bdist_wheel --skip-build
-        
-        # Copy to output
-        cp dist/*.whl /output/
-        
-        echo "Rebuild complete!"
-        '
+    # Build docker run command with persisted conda
+    DOCKER_RUN_CMD="docker run \
+        --name txl-wheel-build \
+        -v "$PROJECT_ROOT:/txl" \
+        -v "$OUTPUT_DIR:/output" \
+        -v "$CONDA_HOME_DIR:/opt/conda" \
+        -e CONDA_PREFIX=/opt/conda/envs/txl"
+    
+    # Add LLVM mount if exists
+    if [ -d "$LLVM_DIR" ]; then
+        DOCKER_RUN_CMD="$DOCKER_RUN_CMD \
+        -v "$LLVM_DIR:/llvm:ro""
+    fi
+    
+    # Add LLVM environment variable
+    if [ -d "$LLVM_DIR" ]; then
+        DOCKER_RUN_CMD="$DOCKER_RUN_CMD \
+        -e LLVM_SYSPATH=/llvm"
+    fi
+    
+    # Add build flags
+    DOCKER_RUN_CMD="$DOCKER_RUN_CMD \
+    -e MAX_JOBS=$MAX_JOBS \
+    -e TRITON_BUILD_WITH_O1=$TRITON_BUILD_WITH_O1 \
+    -e TRITON_BUILD_PROTON=$TRITON_BUILD_PROTON \
+    -e TRITON_BUILD_WITH_CLANG_LLD=$TRITON_BUILD_WITH_CLANG_LLD"
+    
+    echo "Running build with persisted conda..."
+    eval $DOCKER_RUN_CMD txl-wheel-builder
+    
+    # Remove container after build to free resources
+    echo "Removing container to free resources..."
+    docker rm txl-wheel-build
     
     echo ""
     echo "=== Rebuild complete ==="
@@ -176,10 +183,21 @@ echo "Building wheel (this may take 10-30 minutes)..."
 # Note: GPU is not needed for building the wheel, only for runtime
 # Don't use --rm so the container persists for cache
 # Mount LLVM directory and set LLVM_SYSPATH to use pre-downloaded LLVM
+# Mount conda home to persist across container rebuilds (only if it exists and has content)
 DOCKER_RUN_CMD="docker run \
     --name txl-wheel-build \
     -v "$PROJECT_ROOT:/txl" \
     -v "$OUTPUT_DIR:/output""
+
+# Only mount conda if it has content (after first build)
+if [ -d "$CONDA_HOME_DIR/envs/txl" ]; then
+    echo "Mounting persisted conda from $CONDA_HOME_DIR"
+    DOCKER_RUN_CMD="$DOCKER_RUN_CMD \
+    -v "$CONDA_HOME_DIR:/opt/conda" \
+    -e CONDA_PREFIX=/opt/conda/envs/txl"
+else
+    echo "No persisted conda found, will install fresh conda in container"
+fi
 
 # Add LLVM mount if pre-downloaded LLVM exists
 if [ -d "$LLVM_DIR" ]; then
@@ -207,6 +225,20 @@ echo "Building with MAX_JOBS=$MAX_JOBS, TRITON_BUILD_WITH_O1=$TRITON_BUILD_WITH_
 
 # Run the container
 eval $DOCKER_RUN_CMD txl-wheel-builder
+
+# After successful build, save conda to persisted directory for future rebuilds
+if [ ! -d "$CONDA_HOME_DIR/envs/txl" ]; then
+    echo ""
+    echo "=== Saving conda environment for future rebuilds ==="
+    docker cp txl-wheel-build:/opt/conda/. "$CONDA_HOME_DIR/"
+    echo "Conda saved to $CONDA_HOME_DIR"
+fi
+
+# Remove container after build to free resources
+echo "Removing container to free resources..."
+docker rm txl-wheel-build
+
+echo ""
 
 echo ""
 echo "=== Build complete ==="

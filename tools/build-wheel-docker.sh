@@ -147,6 +147,7 @@ if [ "$REBUILD" == "true" ]; then
             export CXX=x86_64-conda-linux-gnu-g++
             export LD_LIBRARY_PATH=/opt/conda/envs/txl/lib:/usr/lib64:/usr/lib:$LD_LIBRARY_PATH
             export TRITON_BUILD_WITH_CLANG_LLD=1
+            export TRITON_BUILD_WITH_CCACHE=OFF
             
             cd /txl/thirdparty/triton
             rm -rf build dist
@@ -172,6 +173,7 @@ if [ "$REBUILD" == "true" ]; then
             export CXX=x86_64-conda-linux-gnu-g++
             export LD_LIBRARY_PATH=/opt/conda/envs/txl/lib:/usr/lib64:/usr/lib:$LD_LIBRARY_PATH
             export TRITON_BUILD_WITH_CLANG_LLD=1
+            export TRITON_BUILD_WITH_CCACHE=OFF
             
             cd /txl/thirdparty/triton
             

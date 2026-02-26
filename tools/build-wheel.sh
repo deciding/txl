@@ -28,6 +28,9 @@ export TRITON_BUILD_WITH_CLANG_LLD=${TRITON_BUILD_WITH_CLANG_LLD:-0}
 # Disable proton to save build time and memory (optional)
 export TRITON_BUILD_PROTON=${TRITON_BUILD_PROTON:-1}
 
+# Disable ccache to avoid warning
+export TRITON_BUILD_WITH_CCACHE=OFF
+
 echo "=== TXL Wheel Build Script ==="
 echo "Date: $(date)"
 echo "Working directory: $(pwd)"

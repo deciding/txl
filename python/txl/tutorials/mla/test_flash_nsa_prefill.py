@@ -9,10 +9,12 @@ import triton
 
 import os
 import sys
+
 sys.path.insert(0, os.getcwd())
 import flash_mla
 
 from lib import check_is_allclose
+
 
 @dataclasses.dataclass
 class TestParam:
@@ -28,12 +30,14 @@ class TestParam:
     check_correctness: bool = True
     benchmark: bool = True
 
+
 @dataclasses.dataclass
 class Testcase:
     t: TestParam
     q: torch.Tensor
     kv: torch.Tensor
     indices: torch.Tensor
+
 
 def generate_testcase(t: TestParam) -> Testcase:
     torch.manual_seed(t.seed)
@@ -51,29 +55,32 @@ def generate_testcase(t: TestParam) -> Testcase:
             for h in range(t.h_kv):
                 # NOTE We use the following method to generate indices so that most indices lies within [s_kv-20000, s_kv), which is more realistic for sparse attention
                 near_mask = torch.randint(0, 32, (min(t.topk, t.s_kv),)) < 31
-                cur_indices = torch.randperm(t.s_kv)[:t.topk]
-                cur_indices[near_mask] = torch.randint(max(0, t.s_kv - 20000), t.s_kv - 1, (near_mask.sum().item(),))
+                cur_indices = torch.randperm(t.s_kv)[: t.topk]
+                cur_indices[near_mask] = torch.randint(
+                    max(0, t.s_kv - 20000), t.s_kv - 1, (near_mask.sum().item(),)
+                )
                 if len(cur_indices) < t.topk:
-                    cur_indices = torch.cat([cur_indices, torch.full((t.topk - len(cur_indices),), 2147480000)])
+                    cur_indices = torch.cat(
+                        [
+                            cur_indices,
+                            torch.full((t.topk - len(cur_indices),), 2147480000),
+                        ]
+                    )
                 cur_indices = cur_indices[torch.randperm(t.topk)]
                 indices[b, s, h] = cur_indices
     indices = indices.to(q.device)
 
-    return Testcase(
-        t=t,
-        q=q,
-        kv=kv,
-        indices=indices
-    )
+    return Testcase(t=t, q=q, kv=kv, indices=indices)
+
 
 def get_flop(p: TestParam) -> float:
-    flop = 2 * sum([
-        p.h_q * p.d_qk * p.topk,
-        p.h_q * p.d_v * p.topk
-    ]) * p.b * p.s_q
+    flop = 2 * sum([p.h_q * p.d_qk * p.topk, p.h_q * p.d_v * p.topk]) * p.b * p.s_q
     return flop
 
-def reference_torch(p: TestParam, t: Testcase, sm_scale: float) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+def reference_torch(
+    p: TestParam, t: Testcase, sm_scale: float
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     def log2sumexp2(a: torch.Tensor, dim: int) -> torch.Tensor:
         return torch.logsumexp(a * math.log(2), dim=dim) * math.log2(math.e)
 
@@ -83,15 +90,18 @@ def reference_torch(p: TestParam, t: Testcase, sm_scale: float) -> Tuple[torch.T
     qs = t.q[0, :, :, :].float()  # [s_q, h_q, d_qk]
     kvs = t.kv[0, :, 0, :].float()  # [s_kv, d_qk]
 
-    kvs = torch.index_select(kvs, 0, indices.masked_fill(invalid_indices_mask, 0).flatten()).view(p.s_q, p.topk, p.d_qk)  # [s_q, topk, d_qk]
-    attn_score = qs @ kvs.transpose(1, 2)    # [s_q, h_q, topk]
-    attn_score.masked_fill_(invalid_indices_mask.unsqueeze(1), float('-inf'))
+    kvs = torch.index_select(
+        kvs, 0, indices.masked_fill(invalid_indices_mask, 0).flatten()
+    ).view(p.s_q, p.topk, p.d_qk)  # [s_q, topk, d_qk]
+    attn_score = qs @ kvs.transpose(1, 2)  # [s_q, h_q, topk]
+    attn_score.masked_fill_(invalid_indices_mask.unsqueeze(1), float("-inf"))
     attn_score *= sm_scale * math.log2(math.e)
-    max_logits = torch.max(attn_score, dim=-1)[0]   # [s_q, h_q]
-    lse = log2sumexp2(attn_score, dim=-1)   # [s_q, h_q]
-    attn_score = torch.exp2(attn_score - lse.unsqueeze(-1))   # [s_q, h_q, topk]
-    result = attn_score @ kvs[:, :, :p.d_v]
+    max_logits = torch.max(attn_score, dim=-1)[0]  # [s_q, h_q]
+    lse = log2sumexp2(attn_score, dim=-1)  # [s_q, h_q]
+    attn_score = torch.exp2(attn_score - lse.unsqueeze(-1))  # [s_q, h_q, topk]
+    result = attn_score @ kvs[:, :, : p.d_v]
     return (max_logits, lse, result)
+
 
 @torch.inference_mode()
 def run_test(p: TestParam) -> bool:
@@ -132,40 +142,80 @@ def run_test(p: TestParam) -> bool:
 
     if p.benchmark:
         flop = get_flop(p)
-        prefill_ans_time: float = triton.testing.do_bench(run_ans, warmup=10, rep=20) / 1000  # type: ignore
+        prefill_ans_time: float = (
+            triton.testing.do_bench(run_ans, warmup=10, rep=20) / 1000
+        )  # type: ignore
         prefill_flops = flop / prefill_ans_time / 1e12
-        prefill_ans_time_txl: float = triton.testing.do_bench(run_ans_txl, warmup=10, rep=20) / 1000  # type: ignore
+        prefill_ans_time_txl: float = (
+            triton.testing.do_bench(run_ans_txl, warmup=10, rep=20) / 1000
+        )  # type: ignore
         prefill_flops_txl = flop / prefill_ans_time_txl / 1e12
-        print(f"Prefill FlashNSA:  {prefill_ans_time * 1e6:4.0f} us, {prefill_flops:.3f} TFlops")
-        print(f"Prefill TXLNSA:  {prefill_ans_time_txl * 1e6:4.0f} us, {prefill_flops_txl:.3f} TFlops")
+        print(
+            f"Prefill FlashNSA:  {prefill_ans_time * 1e6:4.0f} us, {prefill_flops:.3f} TFlops"
+        )
+        print(
+            f"Prefill TXLNSA:  {prefill_ans_time_txl * 1e6:4.0f} us, {prefill_flops_txl:.3f} TFlops"
+        )
 
     if p.check_correctness:
         torch.cuda.synchronize()
         ref_max_logits, ref_lse, ref_out = reference_torch(p, t, sm_scale)
         torch.cuda.synchronize()
-        res = (ans_out-ref_out)
-        res_txl = (ans_out_txl-ref_out)
+        res = ans_out - ref_out
+        res_txl = ans_out_txl - ref_out
 
         is_correct = True
-        is_correct &= check_is_allclose("out", ans_out, ref_out, abs_tol=8e-4, rel_tol=2.01 / 128, cos_diff_tol=7e-6)
-        is_correct &= check_is_allclose("max_logits", ans_max_logits, ref_max_logits, abs_tol=1e-6, rel_tol=2.01 / 65536)
-        is_correct &= check_is_allclose("lse", ans_lse, ref_lse, abs_tol=1e-6, rel_tol=2.01 / 65536)
+        is_correct &= check_is_allclose(
+            "out", ans_out, ref_out, abs_tol=8e-4, rel_tol=2.01 / 128, cos_diff_tol=7e-6
+        )
+        is_correct &= check_is_allclose(
+            "max_logits",
+            ans_max_logits,
+            ref_max_logits,
+            abs_tol=1e-6,
+            rel_tol=2.01 / 65536,
+        )
+        is_correct &= check_is_allclose(
+            "lse", ans_lse, ref_lse, abs_tol=1e-6, rel_tol=2.01 / 65536
+        )
 
         is_correct_txl = True
-        is_correct_txl &= check_is_allclose("out_txl", ans_out_txl, ref_out, abs_tol=8e-4, rel_tol=2.01 / 128, cos_diff_tol=7e-6)
-        is_correct_txl &= check_is_allclose("max_logits_txl", ans_max_logits_txl, ref_max_logits, abs_tol=1e-6, rel_tol=2.01 / 65536)
-        is_correct_txl &= check_is_allclose("lse_txl", ans_lse_txl, ref_lse, abs_tol=1e-6, rel_tol=2.01 / 65536)
+        is_correct_txl &= check_is_allclose(
+            "out_txl",
+            ans_out_txl,
+            ref_out,
+            abs_tol=8e-4,
+            rel_tol=2.01 / 128,
+            cos_diff_tol=7e-6,
+        )
+        is_correct_txl &= check_is_allclose(
+            "max_logits_txl",
+            ans_max_logits_txl,
+            ref_max_logits,
+            abs_tol=1e-6,
+            rel_tol=2.01 / 65536,
+        )
+        is_correct_txl &= check_is_allclose(
+            "lse_txl", ans_lse_txl, ref_lse, abs_tol=1e-6, rel_tol=2.01 / 65536
+        )
 
         return is_correct & is_correct_txl
     else:
         return True
 
-def main():
+
+def main(dump_dir=None):
     device = torch.device("cuda:0")
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device(device)
     torch.cuda.set_device(device)
-    torch.set_float32_matmul_precision('high')
+    torch.set_float32_matmul_precision("high")
+
+    if dump_dir:
+        from triton import knobs
+
+        knobs.compilation.dump_ir = True
+        knobs.cache.dump_dir = dump_dir
 
     correctness_cases = [
         # Regular shapes
@@ -175,54 +225,60 @@ def main():
             (128, 128),
             (256, 256),
             (512, 512),
-
             # Irregular shapes
             (592, 128),
             (1840, 256),
             (1592, 384),
             (1521, 512),
-
             # Irregular shapes with OOB TopK
             (95, 128),
             (153, 256),
             (114, 384),
         ]
-        for s_q in [
-            1, 62
-        ]
+        for s_q in [1, 62]
     ]
 
     corner_cases = [
         # In these cases, some blocks may not have any valid topk indices
         TestParam(1, s_q, s_kv, topk, h_q=128, benchmark=False)
-        for s_kv, topk in [
-            (32, 2048),
-            (64, 8192)
-        ]
+        for s_kv, topk in [(32, 2048), (64, 8192)]
         for s_q in [1, 1024]
     ]
 
     performance_cases = [
         TestParam(1, s_q, s_kv, topk, h_q=128)
         for s_q in [4096]
-        for s_kv in [4096, 8192, 16384, 32768, 49152, 65536, 81920, 98304, 114688, 131072]
+        for s_kv in [
+            4096,
+            8192,
+            16384,
+            32768,
+            49152,
+            65536,
+            81920,
+            98304,
+            114688,
+            131072,
+        ]
         for topk in [2048]
     ]
 
     testcases = correctness_cases + corner_cases + performance_cases
     # cases for small topk
     testcases = [
-            TestParam(1, 64, 128, 128, h_q=128, benchmark=True, check_correctness=True)
+        TestParam(1, 64, 128, 128, h_q=128, benchmark=True, check_correctness=True)
     ]
     testcases = [
-            TestParam(1, 4096, 4096, 128, h_q=128, benchmark=True, check_correctness=True),
-            TestParam(1, 8192, 8192, 128, h_q=128, benchmark=True, check_correctness=True),
-            TestParam(1, 16384, 16384, 128, h_q=128, benchmark=True, check_correctness=True),
+        TestParam(1, 4096, 4096, 128, h_q=128, benchmark=True, check_correctness=True),
+        TestParam(1, 8192, 8192, 128, h_q=128, benchmark=True, check_correctness=True),
+        TestParam(
+            1, 16384, 16384, 128, h_q=128, benchmark=True, check_correctness=True
+        ),
     ]
     ## cases for large topk
-    #testcases = [
+    # testcases = [
     #        TestParam(1, 4096, 16384, 2048, h_q=128, benchmark=True, check_correctness=True)
-    #]
+    # ]
 
     failed_cases = []
     for test in testcases:
@@ -233,11 +289,14 @@ def main():
             failed_cases.append(test)
 
     if len(failed_cases) > 0:
-        print(f"\033[31m\033[1m{len(failed_cases)} / {len(testcases)} cases failed:\033[0m")
+        print(
+            f"\033[31m\033[1m{len(failed_cases)} / {len(testcases)} cases failed:\033[0m"
+        )
         for case in failed_cases:
             print(f"    {case}")
     else:
         print(f"\033[32m\033[1mAll {len(testcases)} cases passed!\033[0m")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

@@ -9,17 +9,22 @@ DOCKER_DIR="$PROJECT_ROOT/docker"
 
 # Check if script name is provided
 if [ -z "$1" ]; then
-    echo "Usage: $0 <modal_script.py> [test_name]"
+    echo "Usage: $0 <modal_script.py> [test_name] [volume_name]"
     echo ""
     echo "Arguments:"
     echo "  modal_script.py  Name of Modal test script in docker/ directory"
     echo "  test_name       Optional custom test name for dump directory"
+    echo "  volume_name     Optional Modal volume name (default: txl-dump)"
     echo ""
     echo "Examples:"
     echo "  $0 flash_attention.py"
-    echo "  $0 matmul.py my-custom-test"
+    echo "  $0 mla_decoding.py my-test"
+    echo "  $0 flash_attention.py my-test txl-dump"
     exit 1
 fi
+
+# Default volume name
+VOLUME_NAME="${3:-txl-dump}"
 
 MODAL_SCRIPT="$DOCKER_DIR/$1"
 
@@ -63,11 +68,12 @@ echo "=== Downloading dump files from Modal volume ==="
 
 # Download only the specific dump folder from Modal volume
 # Download to parent directory to avoid nested structure
-echo "Downloading: txl-dump/$DUMP_DIR_NAME -> $DUMPS_ROOT/"
-modal volume get txl-dump "$DUMP_DIR_NAME" "$DUMPS_ROOT/" 2>/dev/null || {
+# Use --force to overwrite if local directory already exists
+echo "Downloading: $VOLUME_NAME/$DUMP_DIR_NAME -> $DUMPS_ROOT/"
+modal volume get "$VOLUME_NAME" "$DUMP_DIR_NAME" "$DUMPS_ROOT/" --force 2>/dev/null || {
     echo "Warning: Could not download dump files from volume"
     echo "Volume contents:"
-    modal volume ls txl-dump 2>/dev/null || echo "Volume not found"
+    modal volume ls "$VOLUME_NAME" 2>/dev/null || echo "Volume not found"
 }
 
 echo ""

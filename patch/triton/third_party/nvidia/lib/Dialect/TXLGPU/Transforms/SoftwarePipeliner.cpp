@@ -864,11 +864,20 @@ void lowerFragSmemStore(tt::FragSmemStoreOp& op) {
     //    src = cvt->getResult(0);
     //}
 
+    // When pred is given but mbar not given, getOperand(2) will be pred not mbar
+    auto mbar = op->getNumOperands() > 2 ? op->getOperand(2) : Value();
+    if (mbar) {
+        auto mbarIsMemDesc = isa<ttg::MemDescType>(mbar.getType());
+        if (!mbarIsMemDesc) {
+            mbar = Value();
+        }
+    }
+
     ttx::FragLocalStoreOp frag_local_store = builder.create<ttx::FragLocalStoreOp>(
             loc,
             src,
             op->getOperand(1), // changed to memdesc
-            op->getNumOperands() > 2 ? op->getOperand(2) : Value(),
+            mbar,
             op.getPred(),
             regType
     );

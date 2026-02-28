@@ -180,6 +180,7 @@ class TXLSemantic(TritonSemantic):
             partial_load = False
         if partial_load:
             assert other is not None, f"param `other` must be provided to fill the full load"
+        pred = pred.handle if isinstance(pred, tl.tensor) else pred
         ret_ty = tl.block_type(mem_desc.dtype, shape)
         reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout) # loading reg should keep smem shape
         handle = self.builder.create_frag_smem_load(
@@ -197,6 +198,7 @@ class TXLSemantic(TritonSemantic):
         reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
         #assert value.shape == mem_desc.shape, f"source shape {value.shape} and destination shape {mem_desc.shape} must match"
         assert value.dtype == mem_desc.dtype, f"source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match"
+        pred = pred.handle if isinstance(pred, tl.tensor) else pred
         self.builder.create_frag_smem_store(
                 mem_desc.handle,
                 value.handle,

@@ -21,6 +21,7 @@
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/TritonGPUConversion.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
+#include "triton/Analysis/TXLUtility.h"
 #include <deque>
 
 namespace mlir::triton::gpu {
@@ -1600,14 +1601,15 @@ void backwardRematerialization(ModuleOp module) {
 
 void hoistConvert(ModuleOp module) {
   SmallVector<ConvertLayoutOp> convertOps;
-  module.walk([](FuncOp funcOp) {
+  module.walk([&](FuncOp funcOp) {
     LayoutRematerialization layoutRemat(funcOp);
     layoutRemat.hoistConvertOnTopOfExtOrBroadcast();
     layoutRemat.cleanup();
 
-    layoutRemat = LayoutRematerialization(funcOp);
-    layoutRemat.hoistConvertIntoConditionals();
-    layoutRemat.cleanup();
+    // txl: remove conditional hoist to avoid replicated if outputs
+    //layoutRemat = LayoutRematerialization(funcOp);
+    //layoutRemat.hoistConvertIntoConditionals();
+    //layoutRemat.cleanup();
 
     layoutRemat = LayoutRematerialization(funcOp);
     layoutRemat.hoistConvertDotOperand();
@@ -1632,7 +1634,8 @@ public:
 
     LLVM_DEBUG({
       DBGS() << "Module after canonicalizing:\n";
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
     });
   }
 
@@ -1651,7 +1654,8 @@ public:
 
     LLVM_DEBUG({
       DBGS() << "Module after propagating layouts forward:\n";
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
     });
 
     cleanupConvertOps();
@@ -1661,7 +1665,8 @@ public:
     backwardRematerialization(m);
     LLVM_DEBUG({
       DBGS() << "Module after backward remat:\n";
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
     });
 
     // Cleanup dummy converts created during backward remat.
@@ -1672,7 +1677,8 @@ public:
     hoistConvert(m);
     LLVM_DEBUG({
       DBGS() << "Module after hoisting converts:\n";
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
     });
 
     // 4. Apply clean up patterns to remove remove dead convert and dead code
@@ -1687,7 +1693,8 @@ public:
     }
     LLVM_DEBUG({
       DBGS() << "Module after final cleanups:\n";
-      m.dump();
+      //m.dump();
+      LDBG(printModuleOp(m));
     });
   }
 };

@@ -47,8 +47,16 @@ echo "Log file: $LOG_FILE"
 echo ""
 
 # Run Modal with DUMP_DIR env var and output redirected to log file
+# Stream first 200 lines for progress, then show last 200 lines for results
 cd "$DOCKER_DIR"
-DUMP_DIR="$DUMP_DIR_NAME" modal run "$1" 2>&1 | tee "$LOG_FILE"
+DUMP_DIR="$DUMP_DIR_NAME" modal run "$1" 2>&1 | tee "$LOG_FILE" | head -200
+
+echo ""
+echo "... [streaming truncated - full log in $LOG_FILE]"
+echo ""
+
+# Show last 200 lines (results/errors) after completion
+tail -200 "$LOG_FILE"
 
 echo ""
 echo "=== Downloading dump files from Modal volume ==="

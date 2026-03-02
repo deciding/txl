@@ -99,12 +99,12 @@ rm -rf ${TO_DIR}/third_party/nvidia/include/Dialect/TXLGPU/
 rm -rf ${TO_DIR}/third_party/nvidia/include/TXLGPUToLLVM/
 rm -rf ${TO_DIR}/third_party/nvidia/lib/Dialect/TXLGPU/
 rm -rf ${TO_DIR}/third_party/nvidia/lib/TXLGPUToLLVM/
-cp -r ${FROM_DIR}/include/txl/ ${TO_DIR}/include/
-cp -r ${FROM_DIR}/lib/Dialect/TXL/ ${TO_DIR}/lib/Dialect/
-cp -r ${FROM_DIR}/third_party/nvidia/include/Dialect/TXLGPU/ ${TO_DIR}/third_party/nvidia/include/Dialect/
-cp -r ${FROM_DIR}/third_party/nvidia/include/TXLGPUToLLVM/ ${TO_DIR}/third_party/nvidia/include/
-cp -r ${FROM_DIR}/third_party/nvidia/lib/Dialect/TXLGPU/ ${TO_DIR}/third_party/nvidia/lib/Dialect/
-cp -r ${FROM_DIR}/third_party/nvidia/lib/TXLGPUToLLVM/ ${TO_DIR}/third_party/nvidia/lib/
+cp -r ${FROM_DIR}/include/txl ${TO_DIR}/include/
+cp -r ${FROM_DIR}/lib/Dialect/TXL ${TO_DIR}/lib/Dialect/
+cp -r ${FROM_DIR}/third_party/nvidia/include/Dialect/TXLGPU ${TO_DIR}/third_party/nvidia/include/Dialect/
+cp -r ${FROM_DIR}/third_party/nvidia/include/TXLGPUToLLVM ${TO_DIR}/third_party/nvidia/include/
+cp -r ${FROM_DIR}/third_party/nvidia/lib/Dialect/TXLGPU ${TO_DIR}/third_party/nvidia/lib/Dialect/
+cp -r ${FROM_DIR}/third_party/nvidia/lib/TXLGPUToLLVM ${TO_DIR}/third_party/nvidia/lib/
 
 cp -r ${FROM_DIR}/python/txl/language python/txl/
 cp -r ${FROM_DIR}/python/txl/compiler python/txl/

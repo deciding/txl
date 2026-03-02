@@ -1,5 +1,7 @@
 # TXL (Triton Xtra Language) - Project Workflow
 
+**Important**: Do NOT commit or push changes without explicit user permission.
+
 ## Initial Build
 
 First time building TXL wheel for Linux:
@@ -110,3 +112,61 @@ conda install -c conda-forge gcc=12.1.0
 - Use `./tools/build-wheel-docker.sh -r -c` for clean rebuilds when build issues occur
 - The `-n` flag should only be used once when setting up the project for the first time
 - LLVM and conda directories are excluded from git (too large)
+
+## Code Development
+
+### Patch Files vs Submodule
+
+This repo has two copies of Triton code:
+- `thirdparty/triton/` - Git submodule (main Triton codebase)
+- `patch/triton/` - TXL patches applied to Triton
+
+### Workflow: Making Changes
+
+1. **Edit in submodule first** (for easier testing/development):
+   ```bash
+   cd thirdparty/triton
+   # Make changes to code
+   ```
+
+2. **Stage changes in submodule**:
+   ```bash
+   cd thirdparty/triton
+   git add <files>
+   ```
+
+3. **Copy to patch/triton** (sync changes):
+   ```bash
+   bash tools/cp_from_triton.sh
+   ```
+
+4. **Build wheel**:
+   ```bash
+   ./tools/build-wheel-docker.sh -r
+   ```
+
+### Scripts
+
+- `tools/cp_to_triton.sh` - Copy patch/triton → thirdparty/triton
+- `tools/cp_from_triton.sh` - Copy thirdparty/triton → patch/triton
+- `tools/diff_triton.py` - Compare patch/triton vs thirdparty/triton
+
+### Git Tips
+
+- Remove trailing slashes from `cp -r` commands to avoid issues
+- Submodule changes are tracked separately from main repo
+- Use `.gitignore` patterns like `llvm-*`, `txl-conda/` for large build artifacts
+
+## Debug Helpers
+
+TXL provides debug utilities in `TXLUtility.h`:
+
+```cpp
+#include "triton/Analysis/TXLUtility.h"
+
+txlDebugMsg("message", operation);
+txlDebugMsg("message", value);
+txlDebugMsg("message", type);
+txlDebugMsg("message", SmallVector<Value>{...});
+txlDebugMsg("message", SmallVector<Operation*>{...});
+```

@@ -729,4 +729,59 @@ mlir::Value convertToMemDesc(mlir::Value initialValue) {
     return nullptr;
 }
 
+void txlDebugMsg(const char* msg, Operation* op) {
+    llvm::outs() << "[TXL DEBUG] " << msg << ":\n";
+    if (op) {
+        op->dump();
+    }
+    llvm::outs() << "\n";
+    llvm::outs().flush();
+}
+
+void txlDebugMsg(const char* msg, Value value) {
+    llvm::outs() << "[TXL DEBUG] " << msg << ": ";
+    if (value) {
+        value.print(llvm::outs());
+    }
+    llvm::outs() << "\n";
+    llvm::outs().flush();
+}
+
+void txlDebugMsg(const char* msg, Type type) {
+    llvm::outs() << "[TXL DEBUG] " << msg << ": ";
+    if (type) {
+        type.print(llvm::outs());
+    }
+    llvm::outs() << "\n";
+    llvm::outs().flush();
+}
+
+void txlDebugMsg(const char* msg, const SmallVector<Value>& values) {
+    llvm::outs() << "[TXL DEBUG] " << msg << ": [";
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) llvm::outs() << ", ";
+        if (values[i]) {
+            values[i].print(llvm::outs());
+        } else {
+            llvm::outs() << "null";
+        }
+    }
+    llvm::outs() << "]\n";
+    llvm::outs().flush();
+}
+
+void txlDebugMsg(const char* msg, const SmallVector<Operation*>& ops) {
+    llvm::outs() << "[TXL DEBUG] " << msg << ": [";
+    for (size_t i = 0; i < ops.size(); ++i) {
+        if (i > 0) llvm::outs() << ", ";
+        if (ops[i]) {
+            ops[i]->dump();
+        } else {
+            llvm::outs() << "null";
+        }
+    }
+    llvm::outs() << "]\n";
+    llvm::outs().flush();
+}
+
 }

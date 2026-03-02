@@ -62,4 +62,10 @@ void addCompletionBarrier(DotXOp op, Value barrier, Value pred);
 Value traceToMemDesc(Value initialValue);
 Value convertToMemDesc(Value initialValue);
 
+void txlDebugMsg(const char* msg, Operation* op);
+void txlDebugMsg(const char* msg, Value value);
+void txlDebugMsg(const char* msg, Type type);
+void txlDebugMsg(const char* msg, const SmallVector<Value>& values);
+void txlDebugMsg(const char* msg, const SmallVector<Operation*>& ops);
+
 }

@@ -194,3 +194,9 @@ triton3.4.x-proton
 *.ptx
 *.whl
 *.tex
+
+# TXL specific
+.handclaw/
+docker/dumps/
+llvm-*
+txl-conda/

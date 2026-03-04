@@ -66,7 +66,18 @@ Test TXL wheel on Modal's cloud H100 GPUs:
 Available Modal test scripts:
 - `docker/flash_attention.py` - Flash attention benchmark
 - `docker/mla_decoding.py` - MLA decoding benchmark
-- `docker/nsa_prefill.py` - NSA prefill benchmark (30s timeout)
+- `docker/nsa_prefill.py` - NSA prefill benchmark (1800s timeout)
+
+### Debug Environment Variables
+
+Pass debug environment variable to Modal container:
+
+```bash
+# Run with TXLGPU pipeliner debug
+TRITON_LLVM_DEBUG_ONLY=txlgpu-pipeliner ./tools/modal_tests.sh nsa_prefill.py debug-test txl-dump
+```
+
+The debug output will be in `docker/dumps/{test_name}_{timestamp}.log`.
 
 Notes:
 - All tests save dump files to Modal volume `txl-dump`
@@ -115,35 +126,43 @@ conda install -c conda-forge gcc=12.1.0
 
 ## Code Development
 
-### Patch Files vs Submodule
+### Important: Never modify patch/triton directly
 
 This repo has two copies of Triton code:
-- `thirdparty/triton/` - Git submodule (main Triton codebase)
-- `patch/triton/` - TXL patches applied to Triton
+- `thirdparty/triton/` - Git submodule (main Triton codebase) - **MODIFY HERE**
+- `patch/triton/` - TXL patches applied to Triton - **DO NOT MODIFY**
+
+**Correct workflow**:
+1. Edit code in `thirdparty/triton/` (the submodule)
+2. Build and test with `./tools/build-wheel-docker.sh -r`
+3. Repeat steps 1-2 until fix is verified
+4. Only when explicitly requested by user, copy changes to `patch/triton`:
+   ```bash
+   bash tools/cp_from_triton.sh
+   ```
+5. Commit the patch changes
 
 ### Workflow: Making Changes
 
-1. **Edit in submodule first** (for easier testing/development):
+1. **Edit in submodule** (thirdparty/triton):
    ```bash
-   cd thirdparty/triton
-   # Make changes to code
+   # Make changes to code in thirdparty/triton/
    ```
 
-2. **Stage changes in submodule**:
+2. **Build and test**:
    ```bash
-   cd thirdparty/triton
-   git add <files>
+   ./tools/build-wheel-docker.sh -r
+   # Run tests
    ```
 
-3. **Copy to patch/triton** (sync changes):
+3. **Repeat** until fix is verified
+
+4. **Copy to patch/triton** (only when user requests):
    ```bash
    bash tools/cp_from_triton.sh
    ```
 
-4. **Build wheel**:
-   ```bash
-   ./tools/build-wheel-docker.sh -r
-   ```
+5. **Commit** (only when user requests)
 
 ### Scripts
 
@@ -156,6 +175,114 @@ This repo has two copies of Triton code:
 - Remove trailing slashes from `cp -r` commands to avoid issues
 - Submodule changes are tracked separately from main repo
 - Use `.gitignore` patterns like `llvm-*`, `txl-conda/` for large build artifacts
+- **Never modify patch/triton directly** - only copy from thirdparty/triton
+
+## Debugging Pass Failures
+
+When encountering `RuntimeError: PassManager::run failed`, follow this workflow:
+
+### Step 1: Identify the Failing Pass
+
+Run test with TXLGPU pipeliner debug flag to see which stage fails:
+
+```bash
+# Set the debug env var BEFORE running the test script
+TRITON_LLVM_DEBUG_ONLY=txlgpu-pipeliner ./tools/modal_tests.sh nsa_prefill.py debug-test txl-dump
+```
+
+The log will show stages like:
+```
+[txlgpu-pipeliner]: SoftwarePipeliner After SmemAllocs
+[txlgpu-pipeliner]: DONE
+[txlgpu-pipeliner]: SoftwarePipeliner After TmemAllocs
+[txlgpu-pipeliner]: DONE
+...
+[txlgpu-pipeliner]: SoftwarePipeliner After lowerLoads
+[txlgpu-pipeliner]: DONE
+
+python: ...Assertion failed...
+```
+
+The crash happens AFTER the last `DONE` printed.
+
+### Step 2: Find the Failing Stage
+
+TXLGPU SoftwarePipeliner.cpp stages (in order):
+1. After SmemAllocs
+2. After TmemAllocs
+3. After Removing RedundantTMEMAllocs
+4. After Mbars
+5. After lowerLoads ← Crash happens after this
+6. After lowerSmemLoadStores
+7. After MemDesc
+8. After lowerDotXOps
+9. After wgmma
+
+The bug is in the pass between the last printed stage and the next stage.
+
+### Step 3: Add Debug Prints
+
+Edit the failing pass in `thirdparty/triton/third_party/nvidia/lib/Dialect/TXLGPU/Transforms/SoftwarePipeliner.cpp`:
+
+```cpp
+void lowerSmemLoadStores(ModuleOp moduleOp) {
+  LDBG("[DEBUG] lowerSmemLoadStores: Processing SmemLoadOps\n");
+  moduleOp->walk([&](tt::SmemLoadOp op) {
+      lowerSmemLoad(op);
+  });
+  LDBG("[DEBUG] lowerSmemLoadStores: Processing SmemStoreOps\n");
+  // ... add more debug prints
+}
+```
+
+Then rebuild:
+```bash
+./tools/build-wheel-docker.sh -r
+```
+
+### Step 4: Check the Log
+
+The log file will be at `docker/dumps/{test_name}_{timestamp}.log`. Look for:
+- `[txlgpu-pipeliner]:` - pipeliner stages
+- `[DEBUG] lowerSmemLoadStores:` - our custom debug prints
+- `python: ...Assertion failed` - the actual error
+
+### Step 5: Extract MLIR at Failing Stage
+
+To analyze the IR that causes the crash:
+
+1. Find line numbers in the log:
+```bash
+grep -n "SoftwarePipeliner After lowerLoads\|DONE" docker/dumps/{test_name}.log
+```
+
+2. Extract the MLIR between stages:
+```bash
+# Extract lines between "After lowerLoads" and "DONE"
+sed -n '5737,6843p' docker/dumps/{test_name}.log > docker/dumps/lowerLoads.mlir
+```
+
+3. Upload to gist for analysis:
+```bash
+gh gist create docker/dumps/lowerLoads.mlir --public -d "MLIR after lowerLoads"
+```
+
+### Step 6: Analyze Type Mismatch
+
+Common issue: `DenseElementsAttr` type mismatch - when MLIR tries to create a constant with float attribute type that doesn't match tensor element type.
+
+Look for:
+- Operations with operands of mixed types (bf16 vs f32)
+- Constants where the value type doesn't match the tensor element type
+- e.g., `dense<0xFF800000>` with type `tensor<64xf32>` - the hex value is negative infinity in f32 bit pattern
+
+### Real Example: NSA topk=2048 Bug
+
+In practice:
+1. Crash happened after `SoftwarePipeliner After lowerLoads` → `DONE`
+2. This means bug is in `lowerSmemLoadStores` function
+3. Error: `floatAttr.getType() == eltType` assertion failed
+4. The issue was in how `getRegType()` determines types for SmemLoadOp - wrong type caused DenseElementsAttr creation to fail
 
 ## Debug Helpers
 

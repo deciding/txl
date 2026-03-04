@@ -9,22 +9,27 @@ DOCKER_DIR="$PROJECT_ROOT/docker"
 
 # Check if script name is provided
 if [ -z "$1" ]; then
-    echo "Usage: $0 <modal_script.py> [test_name] [volume_name]"
+    echo "Usage: $0 <modal_script.py> [test_name] [volume_name] [debug_env]"
     echo ""
     echo "Arguments:"
     echo "  modal_script.py  Name of Modal test script in docker/ directory"
     echo "  test_name       Optional custom test name for dump directory"
     echo "  volume_name     Optional Modal volume name (default: txl-dump)"
+    echo "  debug_env       Optional debug env var (e.g., TXLGPU_DEBUG=txlgpu-pipeline)"
     echo ""
     echo "Examples:"
     echo "  $0 flash_attention.py"
     echo "  $0 mla_decoding.py my-test"
     echo "  $0 flash_attention.py my-test txl-dump"
+    echo "  $0 nsa_prefill.py my-test txl-dump TXLGPU_DEBUG=txlgpu-pipeline"
     exit 1
 fi
 
 # Default volume name
 VOLUME_NAME="${3:-txl-dump}"
+
+# Debug environment variable (4th argument)
+DEBUG_ENV="${4:-}"
 
 MODAL_SCRIPT="$DOCKER_DIR/$1"
 
@@ -52,12 +57,17 @@ echo "Log file: $LOG_FILE"
 echo ""
 
 # Run Modal with DUMP_DIR env var and output redirected to log file
-# Stream first 200 lines for progress, then show last 200 lines for results
 cd "$DOCKER_DIR"
-DUMP_DIR="$DUMP_DIR_NAME" modal run "$1" 2>&1 | tee "$LOG_FILE" | head -200
+
+# Set debug env var if provided
+if [ -n "$DEBUG_ENV" ]; then
+    export $DEBUG_ENV
+fi
+
+DUMP_DIR="$DUMP_DIR_NAME" modal run "$1" > "$LOG_FILE" 2>&1
 
 echo ""
-echo "... [streaming truncated - full log in $LOG_FILE]"
+echo "... [full log in $LOG_FILE]"
 echo ""
 
 # Show last 200 lines (results/errors) after completion

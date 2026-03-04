@@ -9,28 +9,25 @@ requirements_file = root_dir / "requirements.txt"
 # Get dump directory name from environment (passed by modal_tests.sh)
 DUMP_DIR = os.environ.get("DUMP_DIR", "default")
 
-# Get wheel filename from environment or find in output directory
+# Get wheel filename from environment or find in dist directory
 # This runs on HOST when modal run is executed
 txl_wheel_name = os.environ.get("TXL_WHEEL_NAME")
 if not txl_wheel_name:
-    output_dir = root_dir / "output"
-    wheel_files = list(output_dir.glob("txl-*.whl"))
+    dist_dir = root_dir / "thirdparty" / "triton" / "dist"
+    wheel_files = list(dist_dir.glob("txl-*.whl"))
     if wheel_files:
-        # Prefer manylinux wheel
+        # Prefer linux_x86_64 wheel
         txl_wheel = next(
-            (f for f in wheel_files if "manylinux" in f.name), wheel_files[0]
+            (f for f in wheel_files if "linux_x86_64" in f.name), wheel_files[0]
         )
         txl_wheel_name = txl_wheel.name
         print(f"Using wheel: {txl_wheel_name}")
     else:
-        txl_wheel_name = "txl-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl"  # fallback
+        txl_wheel_name = "txl-3.5.1-cp312-cp312-linux_x86_64.whl"  # fallback
 
 print(f"Dump directory: {DUMP_DIR}")
 
 test_file = root_dir / "python" / "txl" / "tutorials" / "02-flash-attention.py"
-# ptx_file = root_dir / "docker" / "_attn_fwd_ws_tma_txl_tawa.ptx"
-# signature_file = root_dir / "docker" / "_attn_fwd_ws_tma_txl_tawa_signature.json"
-# json_file = root_dir / "docker" / "_attn_fwd_ws_tma_txl_tawa.json"
 
 app = App(name="txl-mac")  # Note: this is optional since Modal 0.57
 volume = Volume.from_name(
@@ -38,7 +35,7 @@ volume = Volume.from_name(
 )  # create a cloud volume to store compiled dump files
 
 # Find wheel file path on host
-txl_wheel_file = root_dir / "output" / txl_wheel_name
+txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
 
 txl_image = (
     Image.debian_slim(python_version="3.12")

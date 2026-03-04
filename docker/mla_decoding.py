@@ -10,16 +10,16 @@ DUMP_DIR = os.environ.get("DUMP_DIR", "default")
 
 txl_wheel_name = os.environ.get("TXL_WHEEL_NAME")
 if not txl_wheel_name:
-    output_dir = root_dir / "output"
-    wheel_files = list(output_dir.glob("txl-*.whl"))
+    dist_dir = root_dir / "thirdparty" / "triton" / "dist"
+    wheel_files = list(dist_dir.glob("txl-*.whl"))
     if wheel_files:
         txl_wheel = next(
-            (f for f in wheel_files if "manylinux" in f.name), wheel_files[0]
+            (f for f in wheel_files if "linux_x86_64" in f.name), wheel_files[0]
         )
         txl_wheel_name = txl_wheel.name
         print(f"Using wheel: {txl_wheel_name}")
     else:
-        txl_wheel_name = "txl-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl"
+        txl_wheel_name = "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
 
 print(f"Dump directory: {DUMP_DIR}")
 
@@ -32,7 +32,7 @@ bins_dir = local_dir / "bins"
 app = App(name="txl-mla-decoding")
 volume = Volume.from_name("txl-dump", create_if_missing=True)
 
-txl_wheel_file = root_dir / "output" / txl_wheel_name
+txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
 
 txl_image = (
     Image.debian_slim(python_version="3.12")

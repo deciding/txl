@@ -297,3 +297,73 @@ txlDebugMsg("message", type);
 txlDebugMsg("message", SmallVector<Value>{...});
 txlDebugMsg("message", SmallVector<Operation*>{...});
 ```
+
+## Debugging smem_load vs frag_smem_load
+
+### Problem Summary
+
+When replacing `frag_smem_load` with `smem_load` in NSA kernel, the compilation fails with encoding mismatch errors.
+
+### Root Cause
+
+1. **Python API difference**:
+   - `smem_load(mem_desc, layout=None)` - layout is optional, can be None
+   - `frag_smem_load(mem_desc, shape, layout)` - layout is required
+
+2. **C++ backend behavior**:
+   - When `layout` is None: Python creates a dummy `regType` (tensor<1x1xi32>) and sets `txl.with_reg_type = 0`
+   - When `layout` is provided: Python creates real regType and sets `txl.with_reg_type = 1`
+
+3. **RemoveLayoutConversions pass**:
+   - `FragSmemLoadOp` has canonicalization in Ops.cpp: `cvt(frag_smem_load) -> frag_smem_load`
+   - `SmemLoadOp` did NOT have this canonicalization
+   - This causes redundant layout conversion paths to be created
+
+4. **TXLGPUPipeline crash**:
+   - When `with_reg_type = 0`, `lowerSmemLoad` uses dummy regType which has NO encoding
+   - This causes `llvm::dyn_cast<DistributedEncodingTrait>` assertion failure
+
+### Solution (Two Parts)
+
+1. **Add canonicalization in Ops.cpp** (fold ConvertLayout into SmemLoad):
+   ```cpp
+   // In lib/Dialect/TritonGPU/IR/Ops.cpp
+   // cvt(smem_load) -> smem_load.
+   if (auto smemLoad = dyn_cast<SmemLoadOp>(arg)) {
+     rewriter.setInsertionPoint(arg);
+     auto newOp = rewriter.replaceOpWithNewOp<SmemLoadOp>(op, op->getResult(0).getType(),
+                                                          smemLoad.getSrc(),
+                                                          smemLoad.getRegType(),
+                                                          smemLoad.getCtaId());
+     if (auto attr = smemLoad->getAttrOfType<IntegerAttr>("txl.with_reg_type")) {
+       newOp->setAttr("txl.with_reg_type", attr);
+     }
+     return success();
+   }
+   ```
+
+2. **Fix lowerSmemLoad in SoftwarePipeliner.cpp**:
+   ```cpp
+   // When with_reg_type = 0, use result type instead of dummy regType
+   if (withRegType == 0) {
+       retType = op.getResult().getType();  // Has actual encoding
+   }
+   ```
+
+### Using diff_select to Find Bug Origin
+
+Use `diff_mode='ttgir'` and `diff_select=N` in txl.jit to see IR at each pass:
+
+```python
+@txl.jit(diff_mode="ttgir", diff_select=10, log_dir="/workspace/dump/smem/")
+def txl_mla0(...):
+```
+
+- `diff_select=10` shows pass 10's diff
+- SoftwarePipeliner is pass 22
+- Binary search between passes to find which introduces the bug
+
+### Key Files Modified
+
+- `thirdparty/triton/lib/Dialect/TritonGPU/IR/Ops.cpp` - Add SmemLoadOp canonicalization
+- `thirdparty/triton/third_party/nvidia/lib/Dialect/TXLGPU/Transforms/SoftwarePipeliner.cpp` - Fix lowerSmemLoad

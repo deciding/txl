@@ -777,17 +777,9 @@ void lowerSmemLoad(tt::SmemLoadOp& op) {
         assert(withRegTypeAttr.getType().isInteger(32) && "ttxg.wgid must be 32 bit int\n");
         withRegType = withRegTypeAttr.getInt();
         if (withRegType == 0) {
-            for (Operation * user: op->getUsers()){
-                if (isa<scf::YieldOp>(user)) {
-                  mlir::Operation *parent = user->getParentOp();
-                  if (isa<scf::ForOp>(parent)) {
-                      // TODO: get result, and recurse
-                  }
-                }
-                else if (auto cvtOp = dyn_cast<ttg::ConvertLayoutOp>(user)) {
-                    retType = cvtOp.getResult().getType();
-                }
-            }
+            // When regType is dummy (no explicit layout passed), use the result type
+            // which has the actual encoding from the computation
+            retType = op.getResult().getType();
         }
     }
 
@@ -798,6 +790,7 @@ void lowerSmemLoad(tt::SmemLoadOp& op) {
             retType,
             op->getOperand(0) // changed to memdesc
     );
+    
     int ctaIdAttr = op.getCtaId();
     if (ctaIdAttr != -1)
         localLoad.getDefiningOp()->setAttr("ttxg.ctaid",

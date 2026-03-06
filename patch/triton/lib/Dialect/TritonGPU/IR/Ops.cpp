@@ -361,6 +361,22 @@ struct CanonicalizeConvertFromConvert
       return success();
     }
 
+    // cvt(smem_load) -> smem_load.
+    if (auto smemLoad = dyn_cast<SmemLoadOp>(arg)) {
+      // smem_load can load to any layout so we can always fold convert into
+      // it.
+      rewriter.setInsertionPoint(arg);
+      auto newOp = rewriter.replaceOpWithNewOp<SmemLoadOp>(op, op->getResult(0).getType(),
+                                                           smemLoad.getSrc(),
+                                                           smemLoad.getRegType(),
+                                                           smemLoad.getCtaId());
+      // Copy the with_reg_type attribute to the new op
+      if (auto attr = smemLoad->getAttrOfType<IntegerAttr>("txl.with_reg_type")) {
+        newOp->setAttr("txl.with_reg_type", attr);
+      }
+      return success();
+    }
+
     // cvt(cat) -> cat
     if (auto cat = dyn_cast<CatOp>(arg)) {
       if (isExpensiveCat(cat, op.getType().getEncoding()))

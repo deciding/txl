@@ -51,7 +51,7 @@ txl_image = (
 
 
 @app.function(
-    gpu="H100", image=txl_image, timeout=60 * 5, volumes={"/workspace/dump": volume}
+    gpu="H100", image=txl_image, timeout=60, volumes={"/workspace/dump": volume}
 )
 def test_nsa_prefill(dump_dir: str = "default", triton_debug: str = ""):
     # Set debug env var if provided

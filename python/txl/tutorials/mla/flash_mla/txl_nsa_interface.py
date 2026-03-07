@@ -529,12 +529,25 @@ def txl_mla0(
             if tid % 8 == 0:
                 is_token_valid0 = is_token_valid_arr[0]
                 is_token_valid1 = is_token_valid_arr[1]
-                # smem and layout are same shape
+                # Take first column (element from each row) and store to smem
+                # Use frag_smem_store with predStr="slice:1" to extract first column
                 txl.frag_smem_store(
-                    is_kv_valid0, is_token_valid0.to(tl.int8), is_kv_valid_layout
-                )  # frag: only the first for each thread
+                    is_kv_valid0,
+                    is_token_valid0.to(tl.int8),
+                    is_kv_valid_layout,
+                    None,
+                    -1,
+                    None,
+                    predStr="slice:1",
+                )
                 txl.frag_smem_store(
-                    is_kv_valid1, is_token_valid1.to(tl.int8), is_kv_valid_layout
+                    is_kv_valid1,
+                    is_token_valid1.to(tl.int8),
+                    is_kv_valid_layout,
+                    None,
+                    -1,
+                    None,
+                    predStr="slice:1",
                 )
                 txl.mbar_arrive(mbar_is_kv_valid_ready)
 

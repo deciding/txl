@@ -257,6 +257,11 @@ fi
 echo "Removing container to free resources..."
 docker rm txl-wheel-build
 
+# Stop Docker to prevent resource issues
+echo "Stopping Docker..."
+killall "Docker Desktop" 2>/dev/null || true
+killall docker-sandbox 2>/dev/null || true
+
 echo ""
 
 echo ""

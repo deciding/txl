@@ -271,6 +271,46 @@ LogicalResult lowerFragLocalStore(Location loc, MLIRContext *ctx, Operation* op,
   LinearLayout cvt = LinearLayout::empty();
   SmallVector<Value> newInVals;
 
+  // Get predStr attribute if present
+  StringRef predStr;
+  auto predStrAttr = op->getAttrOfType<StringAttr>("txl.predStr");
+  if (predStrAttr) {
+    predStr = predStrAttr.getValue();
+  }
+
+  // If predStr is set, infer regLayout from predStr using SliceEncodingAttr
+  if (!predStr.empty() && predStr.starts_with("slice:")) {
+    // Parse dimension from "slice:1" -> dim = 1
+    StringRef dimStr = predStr.drop_front(6); // Remove "slice:"
+    int sliceDim = 0;
+    if (dimStr.consumeInteger(10, sliceDim)) {
+      op->emitError("Invalid slice dimension in predStr: ") << predStr;
+      return failure();
+    }
+    
+    // Get the encoding from fullRegTy (source tensor)
+    auto fullRegEncoding = fullRegTy.getEncoding();
+    auto distributedEncoding = dyn_cast<triton::gpu::DistributedEncodingTrait>(fullRegEncoding);
+    if (!distributedEncoding) {
+      op->emitError("Full tensor encoding must be distributed encoding for predStr slice");
+      return failure();
+    }
+    
+    // Create SliceEncodingAttr from the full tensor encoding
+    auto sliceEncoding = triton::gpu::SliceEncodingAttr::get(
+        op->getContext(), sliceDim, distributedEncoding);
+    
+    // Create new tensor type with slice encoding
+    // Result should be 1D (squeezed dimension)
+    auto resultShape = llvm::to_vector(fullRegTy.getShape());
+    resultShape.erase(resultShape.begin() + sliceDim);
+    auto inferredRegTy = RankedTensorType::get(
+        resultShape, fullRegTy.getElementType(), sliceEncoding);
+    
+    // Convert to LinearLayout - this is our inferred regLayout
+    regLayout = toLinearLayout(inferredRegTy);
+  }
+
   if (regLayout.getNumOutDims() != fullRegLayout.getNumOutDims()){
       assert(regLayout.getNumOutDims() == 1 && " currently only support 2d->1d frag smem store");
       assert(fullRegLayout.getNumOutDims() == 2 && " currently only support 2d->1d frag smem store");

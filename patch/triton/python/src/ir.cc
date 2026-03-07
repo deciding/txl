@@ -2109,15 +2109,18 @@ void init_triton_ir(py::module &&m) {
              auto res = self.create<tt::FragSmemLoadOp>(resultTy, smem, otherVal, predVal, regType, fullLayout, ctaId);
              return res;
            })
-      .def("create_frag_smem_store",
-           [](TritonOpBuilder &self, Value smem, Value value,
-               std::optional<Value>& mbar,
-               std::optional<Value>& pred, Type regType,
-               int ctaId) {
-             Value mbarVal = mbar.value_or(Value());
-             Value predVal = pred.value_or(Value());
-             self.create<tt::FragSmemStoreOp>(value, smem, mbarVal, predVal, regType, ctaId);
-           })
+        .def("create_frag_smem_store",
+             [](TritonOpBuilder &self, Value smem, Value value,
+                 std::optional<Value>& mbar,
+                 std::optional<Value>& pred, Type regType,
+                 std::string predStr, int ctaId) {
+               Value mbarVal = mbar.value_or(Value());
+               Value predVal = pred.value_or(Value());
+               auto op = self.create<tt::FragSmemStoreOp>(value, smem, mbarVal, predVal, regType, ctaId);
+               if (!predStr.empty()) {
+                 op->setAttr("txl.predStr", self.getBuilder().getStringAttr(predStr));
+               }
+             })
       .def("create_fence_proxy_async",
            [](TritonOpBuilder &self) -> void {
              self.create<tt::FenceProxyAsyncOp>();

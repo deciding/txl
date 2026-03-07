@@ -1,16 +1,31 @@
 import triton.language as tl
 from triton._C.libtriton import ir
 from triton.language import core
-from triton.language.core import builtin, _shape_check_impl, _unwrap_if_constexpr, expand_dims, broadcast_to, _wrap_axis, _insertion_guard, \
-        dtype, block_type
-from triton.language.standard import _elementwise_max, _sum_combine, _pick_sum_dtype, _argmax_combine_tie_break_fast, _argmax_combine_tie_break_left
+from triton.language.core import (
+    builtin,
+    _shape_check_impl,
+    _unwrap_if_constexpr,
+    expand_dims,
+    broadcast_to,
+    _wrap_axis,
+    _insertion_guard,
+    dtype,
+    block_type,
+)
+from triton.language.standard import (
+    _elementwise_max,
+    _sum_combine,
+    _pick_sum_dtype,
+    _argmax_combine_tie_break_fast,
+    _argmax_combine_tie_break_left,
+)
 from triton import knobs
 from typing import Sequence, List
 from ..runtime.jit import jit
 from ._layouts import DistributedLayout
 
-class distributed_type(block_type):
 
+class distributed_type(block_type):
     def __init__(self, element_ty: dtype, shape: List[int], layout):
         super().__init__(element_ty, shape)
         self.layout = layout
@@ -37,20 +52,24 @@ def tid(axis, _semantic=None):
     axis = _unwrap_if_constexpr(axis)
     return _semantic.threadIdx(axis)
 
+
 @builtin
 def tdim(axis, _semantic=None):
     axis = _unwrap_if_constexpr(axis)
     return _semantic.blockDim(axis)
+
 
 @builtin
 def bid(axis, _semantic=None):
     axis = _unwrap_if_constexpr(axis)
     return _semantic.blockIdx(axis)
 
+
 @builtin
 def bdim(axis, _semantic=None):
     axis = _unwrap_if_constexpr(axis)
     return _semantic.gridDim(axis)
+
 
 @builtin
 def thread0(_semantic=None):
@@ -67,6 +86,7 @@ def thread0(_semantic=None):
     is_thread0 = is_thread0.__and__(is_bidx_z0, _semantic=_semantic)
     is_thread0 = is_thread0.__and__(is_tidx_x0, _semantic=_semantic)
     return is_thread0
+
 
 @builtin
 def wg_thread0(wgid, _semantic=None):
@@ -87,43 +107,54 @@ def wg_thread0(wgid, _semantic=None):
     is_thread0 = is_thread0.__and__(is_tidx_x0, _semantic=_semantic)
     return is_thread0
 
+
 @builtin
 def warp_id(_semantic=None):
     return _semantic.warp_id()
+
 
 @builtin
 def warpgroup_id(_semantic=None):
     return _semantic.warpgroup_id()
 
+
 @builtin
 def lane_id(_semantic=None):
     return _semantic.lane_id()
+
 
 @builtin
 def cta_rank(_semantic=None):
     return _semantic.cta_rank()
 
+
 @builtin
 def is_warpgroup(ids, _semantic=None):
     return _semantic.is_warpgroup(ids)
 
+
 @builtin
 def is_warp(ids, _semantic=None):
     return _semantic.is_warp(ids)
+
 
 @builtin
 def reg_alloc(count, _semantic=None):
     count = _unwrap_if_constexpr(count)
     return _semantic.reg_alloc(count)
 
+
 @builtin
 def reg_dealloc(count, _semantic=None):
     count = _unwrap_if_constexpr(count)
     return _semantic.reg_dealloc(count)
 
+
 @builtin
-def smem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, shared_enc=None, _semantic=None) -> tl.tensor:
-    #shape = _shape_check_impl(shape)
+def smem_alloc(
+    shape, dtype: tl.dtype, num_stages: int = 1, mutable: bool = True, shared_enc=None, _semantic=None
+) -> tl.tensor:
+    # shape = _shape_check_impl(shape)
     dtype = _unwrap_if_constexpr(dtype)
     num_stages = _unwrap_if_constexpr(num_stages)
     mutable = _unwrap_if_constexpr(mutable)
@@ -131,37 +162,47 @@ def smem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, shar
         shared_enc = _unwrap_if_constexpr(shared_enc)
     return _semantic.smem_alloc(shape, dtype, num_stages, mutable, shared_enc)
 
+
 @builtin
 def smem_load(smem, layout=None, cta_id=-1, _semantic=None) -> tl.tensor:
     layout = _unwrap_if_constexpr(layout)
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.smem_load(smem, layout, cta_id)
 
+
 @builtin
 def smem_store(smem, value, cta_id=-1, _semantic=None) -> None:
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.smem_store(smem, value, cta_id)
 
+
 @builtin
-def tmem_alloc(shape, dtype: tl.dtype, num_stages:int=1, mutable:bool=True, shared_enc=None, _semantic=None) -> tl.tensor:
-    #shape = _shape_check_impl(shape)
+def tmem_alloc(
+    shape, dtype: tl.dtype, num_stages: int = 1, mutable: bool = True, shared_enc=None, _semantic=None
+) -> tl.tensor:
+    # shape = _shape_check_impl(shape)
     dtype = _unwrap_if_constexpr(dtype)
     num_stages = _unwrap_if_constexpr(num_stages)
     mutable = _unwrap_if_constexpr(mutable)
     return _semantic.tmem_alloc(shape, dtype, num_stages, mutable, shared_enc)
+
 
 @builtin
 def tmem_load(smem, cta_id=-1, _semantic=None) -> tl.tensor:
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.tmem_load(smem, cta_id)
 
+
 @builtin
 def tmem_store(smem, value, cta_id=-1, _semantic=None) -> None:
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.tmem_store(smem, value, cta_id)
 
+
 @builtin
-def frag_smem_load(smem, shape, layout, other=None, pred=None, is_broadcast=False, cta_id=-1, _semantic=None) -> tl.tensor:
+def frag_smem_load(
+    smem, shape, layout, other=None, pred=None, is_broadcast=False, cta_id=-1, _semantic=None
+) -> tl.tensor:
     """
     load a fragment of the whole smem. can fill the others for full layout of distributed tensor.
     support:
@@ -179,25 +220,30 @@ def frag_smem_load(smem, shape, layout, other=None, pred=None, is_broadcast=Fals
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.frag_smem_load(smem, shape, layout, other, pred, is_broadcast, cta_id)
 
+
 @builtin
-def frag_smem_store(smem, value, layout, pred=None, cta_id=-1, mbar=None, _semantic=None) -> None:
+def frag_smem_store(smem, value, layout, pred=None, cta_id=-1, mbar=None, predStr: str = "", _semantic=None) -> None:
     """
     support:
     1. support 2d -> squeezed 1d reg based frag store.
     2. TODO: check whether support lane and warp selection.
     For other cases, please use smem_store
     It just allows the fractional store from the whole tensor.
+    If predStr is provided (e.g., "slice:1"), it will derive the subRegLayout automatically
     """
     if not isinstance(value.type, block_type):
         value = core.full((1,), value, value.type, _semantic=_semantic)
     layout = _unwrap_if_constexpr(layout)
     cta_id = _unwrap_if_constexpr(cta_id)
     pred = _unwrap_if_constexpr(pred)
-    return _semantic.frag_smem_store(smem, value, layout, pred, cta_id, mbar)
+    predStr = _unwrap_if_constexpr(predStr)
+    return _semantic.frag_smem_store(smem, value, layout, pred, cta_id, mbar, predStr)
+
 
 @builtin
 def fence_proxy_async(_semantic=None):
     _semantic.fence_proxy_async()
+
 
 @builtin
 def relayout(value, shape, layout, _semantic=None) -> tl.tensor:
@@ -210,6 +256,7 @@ def relayout(value, shape, layout, _semantic=None) -> tl.tensor:
     shape = _shape_check_impl(shape)
     return _semantic.relayout(value, shape, layout)
 
+
 @builtin
 def print_layout(shape, dtype, layout, save_loc=None, _semantic=None):
     shape = _shape_check_impl(shape)
@@ -217,16 +264,19 @@ def print_layout(shape, dtype, layout, save_loc=None, _semantic=None):
     dtype = _unwrap_if_constexpr(dtype)
     return _semantic.to_linear_layout(shape, dtype, layout, save_loc)
 
+
 @builtin
-def mbar_alloc(arr_count: int, num_stages:int=1, _semantic=None) -> tl.tensor:
+def mbar_alloc(arr_count: int, num_stages: int = 1, _semantic=None) -> tl.tensor:
     arr_count = _unwrap_if_constexpr(arr_count)
     num_stages = _unwrap_if_constexpr(num_stages)
     return _semantic.mbar_alloc(arr_count, num_stages)
 
+
 @builtin
-def tma_load(value: tl.tensor, desc, offsets, mbar:tl.tensor, contiguity:int=-1, _semantic=None) -> tl.tensor:
+def tma_load(value: tl.tensor, desc, offsets, mbar: tl.tensor, contiguity: int = -1, _semantic=None) -> tl.tensor:
     contiguity = _unwrap_if_constexpr(contiguity)
     return _semantic.tma_load(value, desc, offsets, mbar, "", "", contiguity)
+
 
 @builtin
 def tma_gather(value: tl.tensor, desc, mbar: tl.tensor, *args, _semantic=None) -> tl.tensor:
@@ -236,33 +286,39 @@ def tma_gather(value: tl.tensor, desc, mbar: tl.tensor, *args, _semantic=None) -
     y_offset = args[1]
     return _semantic.tma_gather(value, desc, x_offsets, y_offset, mbar, "", "")
 
-@builtin
-def tma_store(value: tl.tensor, desc,  offsets, _semantic=None) -> tl.tensor:
-    return _semantic.tma_store(value, desc, offsets)
 
 @builtin
-def tma_store_wait(pendings:int, _semantic=None) -> tl.tensor:
+def tma_store(value: tl.tensor, desc, offsets, _semantic=None) -> tl.tensor:
+    return _semantic.tma_store(value, desc, offsets)
+
+
+@builtin
+def tma_store_wait(pendings: int, _semantic=None) -> tl.tensor:
     return _semantic.tma_store_wait(pendings)
+
 
 @builtin
 def get_buffer(src: tl.tensor, index, _semantic=None) -> tl.tensor:
     return _semantic.get_buffer(src, index)
 
+
 @builtin
-def mbar_expect(mbar: tl.tensor, size_in_bytes: int, pred: tl.tensor=None, _semantic=None) -> tl.tensor:
+def mbar_expect(mbar: tl.tensor, size_in_bytes: int, pred: tl.tensor = None, _semantic=None) -> tl.tensor:
     size_in_bytes = _unwrap_if_constexpr(size_in_bytes)
     if pred is None:
         pred = tl.full((), True, dtype=tl.int1, _semantic=_semantic)
     return _semantic.mbar_expect(mbar, size_in_bytes, pred)
 
+
 @builtin
 def mbar_wait(mbar: tl.tensor, phase, _semantic=None) -> tl.tensor:
     return _semantic.mbar_wait(mbar, phase)
 
+
 @builtin
-def mbar_arrive(mbar: tl.tensor, pred: tl.tensor=None,
-                track_async_op:bool=False, tx_cnt:int =0,
-                _semantic=None) -> tl.tensor:
+def mbar_arrive(
+    mbar: tl.tensor, pred: tl.tensor = None, track_async_op: bool = False, tx_cnt: int = 0, _semantic=None
+) -> tl.tensor:
     track_async_op = _unwrap_if_constexpr(track_async_op)
     tx_cnt = _unwrap_if_constexpr(tx_cnt)
     # pred is Value not const expr
@@ -270,10 +326,12 @@ def mbar_arrive(mbar: tl.tensor, pred: tl.tensor=None,
         pred = tl.full((), True, dtype=tl.int1, _semantic=_semantic)
     return _semantic.mbar_arrive(mbar, pred, track_async_op, tx_cnt)
 
+
 @builtin
 def dot_wait(pendings: int, _semantic=None) -> tl.tensor:
     pendings = _unwrap_if_constexpr(pendings)
     return _semantic.dot_wait(pendings)
+
 
 @builtin
 def bar_arrive(bar: int, num_threads: int, _semantic=None) -> tl.tensor:
@@ -281,15 +339,18 @@ def bar_arrive(bar: int, num_threads: int, _semantic=None) -> tl.tensor:
     num_threads = _unwrap_if_constexpr(num_threads)
     return _semantic.bar_arrive(bar, num_threads)
 
+
 @builtin
 def bar_wait(bar: int, num_threads: int, _semantic=None) -> tl.tensor:
     bar = _unwrap_if_constexpr(bar)
     num_threads = _unwrap_if_constexpr(num_threads)
     return _semantic.bar_wait(bar, num_threads)
 
+
 @builtin
 def print(prefix_or_data, data=None, _semantic=None):
     import string
+
     prefix_or_data = _unwrap_if_constexpr(prefix_or_data)
     if isinstance(prefix_or_data, str):
         prefix = prefix_or_data
@@ -308,9 +369,21 @@ def print(prefix_or_data, data=None, _semantic=None):
         data = 0
     return _semantic.device_print(prefix, [_semantic.to_tensor(data)], False)
 
+
 @builtin
-def async_load(mem, pointer, mask=None, other=None, boundary_check=(), padding_option="", cache_modifier="", eviction_policy="",
-         volatile=False, contiguity=-1, _semantic=None):
+def async_load(
+    mem,
+    pointer,
+    mask=None,
+    other=None,
+    boundary_check=(),
+    padding_option="",
+    cache_modifier="",
+    eviction_policy="",
+    volatile=False,
+    contiguity=-1,
+    _semantic=None,
+):
     """
     Return a tensor of data whose values are loaded from memory at location defined by `pointer`:
 
@@ -365,18 +438,22 @@ def async_load(mem, pointer, mask=None, other=None, boundary_check=(), padding_o
     eviction_policy = _unwrap_if_constexpr(eviction_policy)
     volatile = _unwrap_if_constexpr(volatile)
     contiguity = _unwrap_if_constexpr(contiguity)
-    return _semantic.async_load(mem, pointer, mask, other, boundary_check, padding_option, cache_modifier, eviction_policy,
-                         volatile, contiguity)
+    return _semantic.async_load(
+        mem, pointer, mask, other, boundary_check, padding_option, cache_modifier, eviction_policy, volatile, contiguity
+    )
+
 
 @builtin
 def async_load_wait(pendings: int, _semantic=None) -> tl.tensor:
     pendings = _unwrap_if_constexpr(pendings)
     return _semantic.async_load_wait(pendings)
 
+
 @builtin
 def smem_index(input, index: int, _semantic=None) -> tl.tensor:
     index = _unwrap_if_constexpr(index)
     return _semantic.smem_index(input, index)
+
 
 @builtin
 def smem_slice(input, start, length, dim, _semantic=None) -> tl.tensor:
@@ -385,10 +462,12 @@ def smem_slice(input, start, length, dim, _semantic=None) -> tl.tensor:
     dim = _unwrap_if_constexpr(dim)
     return _semantic.smem_slice(input, start, length, dim)
 
+
 @builtin
 def smem_trans(input, order, _semantic=None) -> tl.tensor:
     order = _shape_check_impl(order)
     return _semantic.smem_trans(input, order)
+
 
 @builtin
 def smem_reshape(self, input, shape, _semantic=None) -> tl.tensor:
@@ -397,6 +476,7 @@ def smem_reshape(self, input, shape, _semantic=None) -> tl.tensor:
 
 
 from triton.language import tensor
+
 
 @builtin
 def warp_reduce(input, axis, combine_fn, keep_dims=False, _semantic=None, _generator=None):
@@ -413,7 +493,9 @@ def warp_reduce(input, axis, combine_fn, keep_dims=False, _semantic=None, _gener
 
     """
     if isinstance(input, tensor):
-        return warp_reduce((input, ), axis, combine_fn, keep_dims=keep_dims, _semantic=_semantic, _generator=_generator)[0]
+        return warp_reduce((input,), axis, combine_fn, keep_dims=keep_dims, _semantic=_semantic, _generator=_generator)[
+            0
+        ]
 
     def make_combine_region(reduce_op):
         param_types = [t.type.scalar for t in input] * 2
@@ -447,6 +529,7 @@ def warp_reduce(input, axis, combine_fn, keep_dims=False, _semantic=None, _gener
             ret = tuple(expand_ndims(t, len(input[0].shape)) for t in ret)
     return ret
 
+
 @builtin
 def _warp_reduce_with_indices(input, axis, combine_fn, keep_dims=False, _semantic=None, _generator=None):
     axis = _unwrap_if_constexpr(axis)
@@ -460,15 +543,27 @@ def _warp_reduce_with_indices(input, axis, combine_fn, keep_dims=False, _semanti
         index = expand_dims(index, axes_to_expand, _semantic=_semantic)
         index = broadcast_to(index, input.shape, _semantic=_semantic)
 
-    rvalue, rindices = warp_reduce((input, index), axis, combine_fn, keep_dims=keep_dims, _semantic=_semantic,
-                              _generator=_generator)
+    rvalue, rindices = warp_reduce(
+        (input, index), axis, combine_fn, keep_dims=keep_dims, _semantic=_semantic, _generator=_generator
+    )
     return rvalue, rindices
 
+
 @builtin
-def dotx(input, other, acc=None, useD=None, pred=None,
-        mbars=[], mbarPreds=[],
-        input_precision=None, allow_tf32=None, max_num_imprecise_acc=None, out_dtype=core.float32,
-        _semantic=None):
+def dotx(
+    input,
+    other,
+    acc=None,
+    useD=None,
+    pred=None,
+    mbars=[],
+    mbarPreds=[],
+    input_precision=None,
+    allow_tf32=None,
+    max_num_imprecise_acc=None,
+    out_dtype=core.float32,
+    _semantic=None,
+):
     """
     Returns the matrix product of two blocks.
 
@@ -494,8 +589,9 @@ def dotx(input, other, acc=None, useD=None, pred=None,
     assert input_precision is None or allow_tf32 is None, "Only one of input_precision and allow_tf32 can be specified"
     if input_precision is None:
         supports_tf32 = "tf32" in _semantic.builder.options.allowed_dot_input_precisions
-        input_precision = knobs.language.fp32_default or ("tf32" if (supports_tf32 and
-                                                                     (allow_tf32 or allow_tf32 is None)) else "ieee")
+        input_precision = knobs.language.fp32_default or (
+            "tf32" if (supports_tf32 and (allow_tf32 or allow_tf32 is None)) else "ieee"
+        )
 
     input_precision = _unwrap_if_constexpr(input_precision)
     out_dtype = _unwrap_if_constexpr(out_dtype)
@@ -505,10 +601,13 @@ def dotx(input, other, acc=None, useD=None, pred=None,
     mbarPreds = [_unwrap_if_constexpr(mbarPred) for mbarPred in mbarPreds]
     useD = _unwrap_if_constexpr(useD)
     pred = _unwrap_if_constexpr(pred)
-    return _semantic.dotx(input, other, acc, useD, pred, mbars, mbarPreds, input_precision, max_num_imprecise_acc, out_dtype)
+    return _semantic.dotx(
+        input, other, acc, useD, pred, mbars, mbarPreds, input_precision, max_num_imprecise_acc, out_dtype
+    )
 
 
 ### from standard
+
 
 @jit
 def warp_max(input, axis=None, return_indices=False, return_indices_tie_break_left=True, keep_dims=False):
@@ -527,6 +626,7 @@ def warp_max(input, axis=None, return_indices=False, return_indices_tie_break_le
                 input = input.to(core.int32)
         return warp_reduce(input, axis, _elementwise_max, keep_dims=keep_dims)
 
+
 @jit
 def warp_sum(input, axis=None, keep_dims=False, dtype: core.constexpr = None):
     # Pick a default dtype for the reduction if one was not specified.
@@ -535,4 +635,3 @@ def warp_sum(input, axis=None, keep_dims=False, dtype: core.constexpr = None):
     if out_dtype is not None:
         input = input.to(out_dtype)
     return warp_reduce(input, axis, _sum_combine, keep_dims=keep_dims)
-

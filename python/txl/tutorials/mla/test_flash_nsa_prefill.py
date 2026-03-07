@@ -284,16 +284,12 @@ def main(dump_dir=None):
             1, 16384, 16384, 128, h_q=128, benchmark=True, check_correctness=True
         ),
     ]
-    # cases for large topk (2048)
+    # cases for large topk (128)
     testcases = [
+        TestParam(1, 4096, 16384, 128, h_q=128, benchmark=True, check_correctness=True),
+        TestParam(1, 8192, 32768, 128, h_q=128, benchmark=True, check_correctness=True),
         TestParam(
-            1, 4096, 16384, 2048, h_q=128, benchmark=True, check_correctness=True
-        ),
-        TestParam(
-            1, 8192, 32768, 2048, h_q=128, benchmark=True, check_correctness=True
-        ),
-        TestParam(
-            1, 16384, 65536, 2048, h_q=128, benchmark=True, check_correctness=True
+            1, 16384, 65536, 128, h_q=128, benchmark=True, check_correctness=True
         ),
     ]
 

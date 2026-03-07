@@ -874,6 +874,10 @@ void lowerFragSmemStore(tt::FragSmemStoreOp& op) {
             op.getPred(),
             regType
     );
+    // Copy the predStr attribute from FragSmemStoreOp to FragLocalStoreOp
+    if (auto predStrAttr = op->getAttrOfType<StringAttr>("txl.predStr")) {
+        frag_local_store->setAttr("txl.predStr", predStrAttr);
+    }
     int ctaIdAttr = op.getCtaId();
     if (ctaIdAttr != -1)
         frag_local_store->setAttr("ttxg.ctaid",

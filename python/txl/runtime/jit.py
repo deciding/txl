@@ -951,7 +951,7 @@ def jit(
     :type fn: Callable
 
     TXL-specific parameters:
-    :param diff_mode: Output mode for viewing MLIR differences. Options: "ttir", "ttgir", "llvm".
+    :param diff_mode: Output mode for viewing MLIR differences. Options: "ttir", "ttgir", "llir".
     :param diff_select: Pass number to diff when using diff_mode. Run without this parameter to see available passes.
     :param log_dir: Directory to dump intermediate IR (alternative to diff_mode for logging IR).
     :param src_file: Source file name for PTX debugging.

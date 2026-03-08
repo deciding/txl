@@ -49,30 +49,67 @@ class distributed_type(block_type):
 
 @builtin
 def tid(axis, _semantic=None):
+    """Get the thread index within a block along the specified axis.
+
+    Args:
+        axis: The axis (0, 1, or 2) to get the thread index for.
+
+    Returns:
+        The thread index along the given axis.
+    """
     axis = _unwrap_if_constexpr(axis)
     return _semantic.threadIdx(axis)
 
 
 @builtin
 def tdim(axis, _semantic=None):
+    """Get the block dimension (number of threads) along the specified axis.
+
+    Args:
+        axis: The axis (0, 1, or 2) to get the block dimension for.
+
+    Returns:
+        The number of threads along the given axis.
+    """
     axis = _unwrap_if_constexpr(axis)
     return _semantic.blockDim(axis)
 
 
 @builtin
 def bid(axis, _semantic=None):
+    """Get the block index within the grid along the specified axis.
+
+    Args:
+        axis: The axis (0, 1, or 2) to get the block index for.
+
+    Returns:
+        The block index along the given axis.
+    """
     axis = _unwrap_if_constexpr(axis)
     return _semantic.blockIdx(axis)
 
 
 @builtin
 def bdim(axis, _semantic=None):
+    """Get the grid dimension (number of blocks) along the specified axis.
+
+    Args:
+        axis: The axis (0, 1, or 2) to get the grid dimension for.
+
+    Returns:
+        The number of blocks along the given axis.
+    """
     axis = _unwrap_if_constexpr(axis)
     return _semantic.gridDim(axis)
 
 
 @builtin
 def thread0(_semantic=None):
+    """Check if the current thread is thread 0 in the entire grid.
+
+    Returns:
+        A boolean tensor that is True only for thread (block 0,0,0 x thread 0,0,0).
+    """
     is_bidx_x = bid(0, _semantic=_semantic)
     is_bidx_y = bid(1, _semantic=_semantic)
     is_bidx_z = bid(2, _semantic=_semantic)
@@ -90,6 +127,14 @@ def thread0(_semantic=None):
 
 @builtin
 def wg_thread0(wgid, _semantic=None):
+    """Check if the current thread is the first thread of the specified warpgroup.
+
+    Args:
+        wgid: The warpgroup ID to check against.
+
+    Returns:
+        A boolean tensor that is True only for the first thread of the given warpgroup.
+    """
     is_bidx_x = bid(0, _semantic=_semantic)
     is_bidx_y = bid(1, _semantic=_semantic)
     is_bidx_z = bid(2, _semantic=_semantic)
@@ -110,42 +155,96 @@ def wg_thread0(wgid, _semantic=None):
 
 @builtin
 def warp_id(_semantic=None):
+    """Get the warp ID within a thread block.
+
+    Returns:
+        The warp ID (0-31 on typical GPUs).
+    """
     return _semantic.warp_id()
 
 
 @builtin
 def warpgroup_id(_semantic=None):
+    """Get the warpgroup ID within a thread block.
+
+    Returns:
+        The warpgroup ID (0-3 for typical warpgroup sizes).
+    """
     return _semantic.warpgroup_id()
 
 
 @builtin
 def lane_id(_semantic=None):
+    """Get the lane ID within a warp.
+
+    Returns:
+        The lane ID (0-31 on typical GPUs).
+    """
     return _semantic.lane_id()
 
 
 @builtin
 def cta_rank(_semantic=None):
+    """Get the CTA (Cooperative Thread Array) rank within the grid.
+
+    Returns:
+        The linear CTA rank.
+    """
     return _semantic.cta_rank()
 
 
 @builtin
 def is_warpgroup(ids, _semantic=None):
+    """Check if the current thread belongs to a specific warpgroup.
+    Should always use this condition instead of a pure if wgid == 0
+
+    Args:
+        ids: The warpgroup ID or IDs to check.
+
+    Returns:
+        A boolean tensor indicating if the current thread is in the specified warpgroup(s).
+    """
     return _semantic.is_warpgroup(ids)
 
 
 @builtin
 def is_warp(ids, _semantic=None):
+    """Check if the current thread belongs to a specific warp.
+    Should always use this condition instead of a pure if wid == 0
+
+    Args:
+        ids: The warp ID or IDs to check.
+
+    Returns:
+        A boolean tensor indicating if the current thread is in the specified warp(s).
+    """
     return _semantic.is_warp(ids)
 
 
 @builtin
 def reg_alloc(count, _semantic=None):
+    """Allocate a number of registers.
+
+    Args:
+        count: The number of registers to allocate.
+
+    Returns:
+        A handle to the allocated registers.
+    """
     count = _unwrap_if_constexpr(count)
     return _semantic.reg_alloc(count)
 
 
 @builtin
 def reg_dealloc(count, _semantic=None):
+    """Deallocate a number of registers.
+
+    Args:
+        count: The number of registers to deallocate.
+
+    Returns:
+        A handle to the deallocated registers.
+    """
     count = _unwrap_if_constexpr(count)
     return _semantic.reg_dealloc(count)
 
@@ -154,6 +253,18 @@ def reg_dealloc(count, _semantic=None):
 def smem_alloc(
     shape, dtype: tl.dtype, num_stages: int = 1, mutable: bool = True, shared_enc=None, _semantic=None
 ) -> tl.tensor:
+    """Allocate shared memory.
+
+    Args:
+        shape: The shape of the shared memory tensor.
+        dtype: The data type of the shared memory.
+        num_stages: Number of pipeline stages (for double buffering).
+        mutable: Whether the memory can be modified.
+        shared_enc: Optional shared memory encoding.
+
+    Returns:
+        A tensor pointing to the allocated shared memory.
+    """
     # shape = _shape_check_impl(shape)
     dtype = _unwrap_if_constexpr(dtype)
     num_stages = _unwrap_if_constexpr(num_stages)
@@ -165,6 +276,16 @@ def smem_alloc(
 
 @builtin
 def smem_load(smem, layout=None, cta_id=-1, _semantic=None) -> tl.tensor:
+    """Load data from shared memory.
+
+    Args:
+        smem: The shared memory tensor to load from.
+        layout: The layout for the loaded tensor.
+        cta_id: The CTA ID for the load operation, for DSMEM copy.
+
+    Returns:
+        A tensor with the loaded data.
+    """
     layout = _unwrap_if_constexpr(layout)
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.smem_load(smem, layout, cta_id)
@@ -172,6 +293,13 @@ def smem_load(smem, layout=None, cta_id=-1, _semantic=None) -> tl.tensor:
 
 @builtin
 def smem_store(smem, value, cta_id=-1, _semantic=None) -> None:
+    """Store data to shared memory.
+
+    Args:
+        smem: The shared memory tensor to store to.
+        value: The value to store.
+        cta_id: The CTA ID for the store operation, for DSMEM copy.
+    """
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.smem_store(smem, value, cta_id)
 
@@ -180,6 +308,18 @@ def smem_store(smem, value, cta_id=-1, _semantic=None) -> None:
 def tmem_alloc(
     shape, dtype: tl.dtype, num_stages: int = 1, mutable: bool = True, shared_enc=None, _semantic=None
 ) -> tl.tensor:
+    """Allocate tensor memory (TMEM).
+
+    Args:
+        shape: The shape of the tensor memory.
+        dtype: The data type of the tensor memory.
+        num_stages: Number of pipeline stages (for double buffering).
+        mutable: Whether the memory can be modified.
+        shared_enc: Optional shared memory encoding.
+
+    Returns:
+        A tensor pointing to the allocated tensor memory.
+    """
     # shape = _shape_check_impl(shape)
     dtype = _unwrap_if_constexpr(dtype)
     num_stages = _unwrap_if_constexpr(num_stages)
@@ -189,12 +329,28 @@ def tmem_alloc(
 
 @builtin
 def tmem_load(smem, cta_id=-1, _semantic=None) -> tl.tensor:
+    """Load data from tensor memory (TMEM).
+
+    Args:
+        smem: The tensor memory to load from.
+        cta_id: The CTA ID for the load operation.
+
+    Returns:
+        A tensor with the loaded data.
+    """
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.tmem_load(smem, cta_id)
 
 
 @builtin
 def tmem_store(smem, value, cta_id=-1, _semantic=None) -> None:
+    """Store data to tensor memory (TMEM).
+
+    Args:
+        smem: The tensor memory to store to.
+        value: The value to store.
+        cta_id: The CTA ID for the store operation.
+    """
     cta_id = _unwrap_if_constexpr(cta_id)
     return _semantic.tmem_store(smem, value, cta_id)
 
@@ -203,11 +359,19 @@ def tmem_store(smem, value, cta_id=-1, _semantic=None) -> None:
 def frag_smem_load(
     smem, shape, layout, other=None, pred=None, is_broadcast=False, cta_id=-1, _semantic=None
 ) -> tl.tensor:
-    """
-    load a fragment of the whole smem. can fill the others for full layout of distributed tensor.
-    support:
-    1. lane, warp pred
-    2. broadcast of smem to tensor
+    """DEPRECATED: Load a fragment of shared memory with support for lane/warp-level predication and broadcasting.
+
+    Args:
+        smem: The shared memory tensor to load from.
+        shape: The shape of the fragment.
+        layout: The layout for the loaded tensor.
+        other: Optional fill value for non-participating threads.
+        pred: Optional predicate for lane/warp-level selection.
+        is_broadcast: Deprecated, use smem_load/smem_store instead.
+        cta_id: The CTA ID for the load operation.
+
+    Returns:
+        A tensor with the loaded fragment data.
     """
     layout = _unwrap_if_constexpr(layout)
     shape = _shape_check_impl((shape))
@@ -223,13 +387,20 @@ def frag_smem_load(
 
 @builtin
 def frag_smem_store(smem, value, layout, pred=None, cta_id=-1, mbar=None, predStr: str = "", _semantic=None) -> None:
-    """
-    support:
-    1. support 2d -> squeezed 1d reg based frag store.
-    2. TODO: check whether support lane and warp selection.
-    For other cases, please use smem_store
-    It just allows the fractional store from the whole tensor.
-    If predStr is provided (e.g., "slice:1"), it will derive the subRegLayout automatically
+    """DEPRECATED: Store a fragment to shared memory with 2D -> squeezed 1D register-based storage.
+
+    Args:
+        smem: The shared memory tensor to store to.
+        value: The value to store.
+        layout: The layout for the stored tensor.
+        pred: Optional predicate for lane/warp-level selection.
+        cta_id: The CTA ID for the store operation.
+        mbar: Optional memory barrier.
+        predStr: Optional predicate string (e.g., "slice:1") to derive subRegLayout automatically.
+
+    Note:
+        For other cases, please use smem_store.
+        It allows fractional store from the whole tensor.
     """
     if not isinstance(value.type, block_type):
         value = core.full((1,), value, value.type, _semantic=_semantic)
@@ -242,15 +413,22 @@ def frag_smem_store(smem, value, layout, pred=None, cta_id=-1, mbar=None, predSt
 
 @builtin
 def fence_proxy_async(_semantic=None):
+    """Insert an asynchronous fence proxy operation."""
     _semantic.fence_proxy_async()
 
 
 @builtin
 def relayout(value, shape, layout, _semantic=None) -> tl.tensor:
-    """
-    NOTE:
-    Must after all reshape
-    Must after all cast
+    """DEPRECATED: Relayout a tensor to a new shape and layout.
+
+    Args:
+        value: The tensor to relayout.
+        shape: The new shape.
+        layout: The new layout.
+
+    Note:
+        Must be called after all reshape operations.
+        Must be called after all cast operations.
     """
     layout = _unwrap_if_constexpr(layout)
     shape = _shape_check_impl(shape)
@@ -259,6 +437,14 @@ def relayout(value, shape, layout, _semantic=None) -> tl.tensor:
 
 @builtin
 def print_layout(shape, dtype, layout, save_loc=None, _semantic=None):
+    """Print the linear layout for debugging purposes.
+
+    Args:
+        shape: The shape of the tensor.
+        dtype: The data type.
+        layout: The layout to convert.
+        save_loc: Optional location to save the layout.
+    """
     shape = _shape_check_impl(shape)
     layout = _unwrap_if_constexpr(layout)
     dtype = _unwrap_if_constexpr(dtype)
@@ -267,6 +453,15 @@ def print_layout(shape, dtype, layout, save_loc=None, _semantic=None):
 
 @builtin
 def mbar_alloc(arr_count: int, num_stages: int = 1, _semantic=None) -> tl.tensor:
+    """Allocate a mbar (mbarrier) for thread synchronization.
+
+    Args:
+        arr_count: Number of array elements.
+        num_stages: Number of pipeline stages.
+
+    Returns:
+        A tensor representing the allocated mbar.
+    """
     arr_count = _unwrap_if_constexpr(arr_count)
     num_stages = _unwrap_if_constexpr(num_stages)
     return _semantic.mbar_alloc(arr_count, num_stages)
@@ -274,13 +469,35 @@ def mbar_alloc(arr_count: int, num_stages: int = 1, _semantic=None) -> tl.tensor
 
 @builtin
 def tma_load(value: tl.tensor, desc, offsets, mbar: tl.tensor, contiguity: int = -1, _semantic=None) -> tl.tensor:
+    """Load data using Tensor Memory Accelerator (TMA).
+
+    Args:
+        value: The tensor to store the loaded data.
+        desc: The TMA descriptor.
+        offsets: The offsets for the load.
+        mbar: The mbarrier for synchronization.
+        contiguity: The contiguity parameter.
+
+    Returns:
+        A tensor with the loaded data.
+    """
     contiguity = _unwrap_if_constexpr(contiguity)
     return _semantic.tma_load(value, desc, offsets, mbar, "", "", contiguity)
 
 
 @builtin
 def tma_gather(value: tl.tensor, desc, mbar: tl.tensor, *args, _semantic=None) -> tl.tensor:
-    """Gather multiple descriptors worth of data"""
+    """Gather multiple descriptors worth of data using TMA.
+
+    Args:
+        value: The tensor to store the gathered data.
+        desc: The TMA descriptor.
+        mbar: The mbarrier for synchronization.
+        *args: Must be (x_offsets, y_offset) for 2D indexing.
+
+    Returns:
+        A tensor with the gathered data.
+    """
     assert len(args) == 2, f"descriptor gather only supports 2D indexing, but got {len(args)}"
     x_offsets = args[0]
     y_offset = args[1]
@@ -289,21 +506,58 @@ def tma_gather(value: tl.tensor, desc, mbar: tl.tensor, *args, _semantic=None) -
 
 @builtin
 def tma_store(value: tl.tensor, desc, offsets, _semantic=None) -> tl.tensor:
+    """Store data using Tensor Memory Accelerator (TMA).
+
+    Args:
+        value: The tensor to store.
+        desc: The TMA descriptor.
+        offsets: The offsets for the store.
+
+    Returns:
+        A tensor representing the store operation.
+    """
     return _semantic.tma_store(value, desc, offsets)
 
 
 @builtin
 def tma_store_wait(pendings: int, _semantic=None) -> tl.tensor:
+    """Wait for pending TMA store operations.
+
+    Args:
+        pendings: The number of pending operations to wait for.
+
+    Returns:
+        A tensor representing the wait operation.
+    """
     return _semantic.tma_store_wait(pendings)
 
 
 @builtin
 def get_buffer(src: tl.tensor, index, _semantic=None) -> tl.tensor:
+    """Get a buffer from a tensor at the specified index.
+
+    Args:
+        src: The source tensor.
+        index: The buffer index.
+
+    Returns:
+        The buffer tensor at the specified index.
+    """
     return _semantic.get_buffer(src, index)
 
 
 @builtin
 def mbar_expect(mbar: tl.tensor, size_in_bytes: int, pred: tl.tensor = None, _semantic=None) -> tl.tensor:
+    """Expect data in a mbar (mbarrier).
+
+    Args:
+        mbar: The mbarrier tensor.
+        size_in_bytes: The expected size in bytes.
+        pred: Optional predicate for the operation.
+
+    Returns:
+        A tensor representing the expect operation.
+    """
     size_in_bytes = _unwrap_if_constexpr(size_in_bytes)
     if pred is None:
         pred = tl.full((), True, dtype=tl.int1, _semantic=_semantic)
@@ -312,6 +566,15 @@ def mbar_expect(mbar: tl.tensor, size_in_bytes: int, pred: tl.tensor = None, _se
 
 @builtin
 def mbar_wait(mbar: tl.tensor, phase, _semantic=None) -> tl.tensor:
+    """Wait on a mbar (mbarrier) for a specific phase.
+
+    Args:
+        mbar: The mbarrier tensor.
+        phase: The phase to wait for.
+
+    Returns:
+        A tensor representing the wait operation.
+    """
     return _semantic.mbar_wait(mbar, phase)
 
 
@@ -319,6 +582,17 @@ def mbar_wait(mbar: tl.tensor, phase, _semantic=None) -> tl.tensor:
 def mbar_arrive(
     mbar: tl.tensor, pred: tl.tensor = None, track_async_op: bool = False, tx_cnt: int = 0, _semantic=None
 ) -> tl.tensor:
+    """Arrive at a mbar (mbarrier) for synchronization.
+
+    Args:
+        mbar: The mbarrier tensor.
+        pred: Optional predicate for the operation.
+        track_async_op: Whether to track async operations.
+        tx_cnt: Transaction count.
+
+    Returns:
+        A tensor representing the arrive operation.
+    """
     track_async_op = _unwrap_if_constexpr(track_async_op)
     tx_cnt = _unwrap_if_constexpr(tx_cnt)
     # pred is Value not const expr
@@ -329,12 +603,29 @@ def mbar_arrive(
 
 @builtin
 def dot_wait(pendings: int, _semantic=None) -> tl.tensor:
+    """Wait for pending dot product operations.
+
+    Args:
+        pendings: The number of pending operations to wait for.
+
+    Returns:
+        A tensor representing the wait operation.
+    """
     pendings = _unwrap_if_constexpr(pendings)
     return _semantic.dot_wait(pendings)
 
 
 @builtin
 def bar_arrive(bar: int, num_threads: int, _semantic=None) -> tl.tensor:
+    """Arrive at a barrier.
+
+    Args:
+        bar: The barrier ID.
+        num_threads: The number of threads participating in the barrier.
+
+    Returns:
+        A tensor representing the arrive operation.
+    """
     bar = _unwrap_if_constexpr(bar)
     num_threads = _unwrap_if_constexpr(num_threads)
     return _semantic.bar_arrive(bar, num_threads)
@@ -342,6 +633,15 @@ def bar_arrive(bar: int, num_threads: int, _semantic=None) -> tl.tensor:
 
 @builtin
 def bar_wait(bar: int, num_threads: int, _semantic=None) -> tl.tensor:
+    """Wait at a barrier.
+
+    Args:
+        bar: The barrier ID.
+        num_threads: The number of threads participating in the barrier.
+
+    Returns:
+        A tensor representing the wait operation.
+    """
     bar = _unwrap_if_constexpr(bar)
     num_threads = _unwrap_if_constexpr(num_threads)
     return _semantic.bar_wait(bar, num_threads)
@@ -349,6 +649,15 @@ def bar_wait(bar: int, num_threads: int, _semantic=None) -> tl.tensor:
 
 @builtin
 def print(prefix_or_data, data=None, _semantic=None):
+    """Print data from the GPU kernel.
+
+    Args:
+        prefix_or_data: Either a string prefix or the data to print.
+        data: Optional data to print (if prefix_or_data is a string).
+
+    Note:
+        The prefix must be an ASCII string.
+    """
     import string
 
     prefix_or_data = _unwrap_if_constexpr(prefix_or_data)
@@ -445,18 +754,46 @@ def async_load(
 
 @builtin
 def async_load_wait(pendings: int, _semantic=None) -> tl.tensor:
+    """Wait for pending async load operations.
+
+    Args:
+        pendings: The number of pending operations to wait for.
+
+    Returns:
+        A tensor representing the wait operation.
+    """
     pendings = _unwrap_if_constexpr(pendings)
     return _semantic.async_load_wait(pendings)
 
 
 @builtin
 def smem_index(input, index: int, _semantic=None) -> tl.tensor:
+    """Get an indexed view of shared memory.
+
+    Args:
+        input: The shared memory tensor.
+        index: The index to access.
+
+    Returns:
+        A tensor representing the indexed view.
+    """
     index = _unwrap_if_constexpr(index)
     return _semantic.smem_index(input, index)
 
 
 @builtin
 def smem_slice(input, start, length, dim, _semantic=None) -> tl.tensor:
+    """Get a slice of shared memory.
+
+    Args:
+        input: The shared memory tensor.
+        start: The starting index.
+        length: The length of the slice.
+        dim: The dimension to slice.
+
+    Returns:
+        A tensor representing the sliced view.
+    """
     start = _unwrap_if_constexpr(start)
     length = _unwrap_if_constexpr(length)
     dim = _unwrap_if_constexpr(dim)
@@ -465,12 +802,30 @@ def smem_slice(input, start, length, dim, _semantic=None) -> tl.tensor:
 
 @builtin
 def smem_trans(input, order, _semantic=None) -> tl.tensor:
+    """Transpose shared memory.
+
+    Args:
+        input: The shared memory tensor.
+        order: The transposition order.
+
+    Returns:
+        A tensor representing the transposed view.
+    """
     order = _shape_check_impl(order)
     return _semantic.smem_trans(input, order)
 
 
 @builtin
 def smem_reshape(self, input, shape, _semantic=None) -> tl.tensor:
+    """Reshape shared memory.
+
+    Args:
+        input: The shared memory tensor.
+        shape: The new shape.
+
+    Returns:
+        A tensor representing the reshaped view.
+    """
     shape = _shape_check_impl(shape)
     return _semantic.smem_reshape(input, shape)
 
@@ -532,6 +887,17 @@ def warp_reduce(input, axis, combine_fn, keep_dims=False, _semantic=None, _gener
 
 @builtin
 def _warp_reduce_with_indices(input, axis, combine_fn, keep_dims=False, _semantic=None, _generator=None):
+    """Internal warp reduction that also returns indices.
+
+    Args:
+        input: The input tensor.
+        axis: The dimension along which to reduce.
+        combine_fn: The combination function.
+        keep_dims: Whether to keep reduced dimensions.
+
+    Returns:
+        A tuple of (reduced values, indices).
+    """
     axis = _unwrap_if_constexpr(axis)
     n = input.shape[axis]
     index = arange(0, n, _semantic=_semantic)
@@ -565,7 +931,7 @@ def dotx(
     _semantic=None,
 ):
     """
-    Returns the matrix product of two blocks.
+    Returns the matrix product of two blocks. Especially useful for tcgen05.
 
     The two blocks must both be two-dimensional or three-dimensional and have compatible inner dimensions.
     For three-dimensional blocks, `tl.dot` performs the batched matrix product,
@@ -611,6 +977,18 @@ def dotx(
 
 @jit
 def warp_max(input, axis=None, return_indices=False, return_indices_tie_break_left=True, keep_dims=False):
+    """Compute the maximum value across a warp.
+
+    Args:
+        input: The input tensor.
+        axis: The dimension along which to reduce. If None, reduces across all dimensions.
+        return_indices: Whether to return the indices of maximum values.
+        return_indices_tie_break_left: If True, break ties by choosing leftmost index.
+        keep_dims: Whether to keep reduced dimensions with size 1.
+
+    Returns:
+        The maximum value, or a tuple of (value, indices) if return_indices is True.
+    """
     input = core._promote_bfloat16_to_float32(input)
     if return_indices:
         if return_indices_tie_break_left:
@@ -629,6 +1007,17 @@ def warp_max(input, axis=None, return_indices=False, return_indices_tie_break_le
 
 @jit
 def warp_sum(input, axis=None, keep_dims=False, dtype: core.constexpr = None):
+    """Compute the sum across a warp.
+
+    Args:
+        input: The input tensor.
+        axis: The dimension along which to reduce. If None, reduces across all dimensions.
+        keep_dims: Whether to keep reduced dimensions with size 1.
+        dtype: Optional output dtype for the reduction.
+
+    Returns:
+        The sum of all elements along the specified axis.
+    """
     # Pick a default dtype for the reduction if one was not specified.
     out_dtype: core.constexpr = _pick_sum_dtype(input.dtype, dtype)
 

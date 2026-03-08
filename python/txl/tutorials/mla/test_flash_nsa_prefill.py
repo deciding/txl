@@ -161,6 +161,7 @@ def run_test(p: TestParam) -> bool:
         torch.cuda.synchronize()
         ref_max_logits, ref_lse, ref_out = reference_torch(p, t, sm_scale)
         torch.cuda.synchronize()
+
         res = ans_out - ref_out
         res_txl = ans_out_txl - ref_out
 
@@ -270,26 +271,18 @@ def main(dump_dir=None):
     ]
     # cases for medium topk
     testcases = [
-        TestParam(1, 4096, 4096, 128, h_q=128, benchmark=True, check_correctness=True),
-        TestParam(1, 8192, 8192, 128, h_q=128, benchmark=True, check_correctness=True),
-        TestParam(
-            1, 16384, 16384, 128, h_q=128, benchmark=True, check_correctness=True
-        ),
+        TestParam(1, 1, 256, 128, h_q=128, benchmark=False, check_correctness=True)
     ]
-    # cases for medium topk
-    testcases = [
-        TestParam(1, 4096, 4096, 128, h_q=128, benchmark=True, check_correctness=True),
-        TestParam(1, 8192, 8192, 128, h_q=128, benchmark=True, check_correctness=True),
+    # cases for large topk
+    testcases += [
         TestParam(
-            1, 16384, 16384, 128, h_q=128, benchmark=True, check_correctness=True
+            1, 4096, 16384, 2048, h_q=128, benchmark=True, check_correctness=True
         ),
-    ]
-    # cases for large topk (128)
-    testcases = [
-        TestParam(1, 4096, 16384, 128, h_q=128, benchmark=True, check_correctness=True),
-        TestParam(1, 8192, 32768, 128, h_q=128, benchmark=True, check_correctness=True),
         TestParam(
-            1, 16384, 65536, 128, h_q=128, benchmark=True, check_correctness=True
+            1, 8192, 32768, 2048, h_q=128, benchmark=True, check_correctness=True
+        ),
+        TestParam(
+            1, 16384, 65536, 2048, h_q=128, benchmark=True, check_correctness=True
         ),
     ]
 

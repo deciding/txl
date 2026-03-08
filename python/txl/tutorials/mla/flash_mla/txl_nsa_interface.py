@@ -118,7 +118,7 @@ def txl_mla0(
     mbar_k1_ready0 = txl.get_buffer(mbar_k1_ready, 0)
     mbar_k1_ready1 = txl.get_buffer(mbar_k1_ready, 1)
 
-    mbar_is_kv_valid_ready_buf = txl.mbar_alloc(16, num_stages=1)
+    mbar_is_kv_valid_ready_buf = txl.mbar_alloc(128, num_stages=1)
     mbar_is_kv_valid_ready = txl.get_buffer(mbar_is_kv_valid_ready_buf, 0)
 
     if txl.is_warpgroup([0, 1]):
@@ -526,30 +526,30 @@ def txl_mla0(
                 )
             txl.mbar_arrive(mbar_k1_ready0, track_async_op=True)
 
-            if tid % 8 == 0:
-                is_token_valid0 = is_token_valid_arr[0]
-                is_token_valid1 = is_token_valid_arr[1]
-                # Take first column (element from each row) and store to smem
-                # Use frag_smem_store with predStr="slice:1" to extract first column
-                txl.frag_smem_store(
-                    is_kv_valid0,
-                    is_token_valid0.to(tl.int8),
-                    is_kv_valid_layout,
-                    None,
-                    -1,
-                    None,
-                    predStr="slice:1",
-                )
-                txl.frag_smem_store(
-                    is_kv_valid1,
-                    is_token_valid1.to(tl.int8),
-                    is_kv_valid_layout,
-                    None,
-                    -1,
-                    None,
-                    predStr="slice:1",
-                )
-                txl.mbar_arrive(mbar_is_kv_valid_ready)
+            is_token_valid0 = is_token_valid_arr[0]
+            is_token_valid1 = is_token_valid_arr[1]
+            # Take first column (element from each row) and store to smem
+            # Use frag_smem_store with predStr="slice:1" to extract first column
+            # Use pred to filter threads where tid % 8 == 0 to avoid race conditions
+            txl.frag_smem_store(
+                is_kv_valid0,
+                is_token_valid0.to(tl.int8),
+                is_kv_valid_layout,
+                (tid % 8 == 0),
+                -1,
+                None,
+                predStr="slice:1",
+            )
+            txl.frag_smem_store(
+                is_kv_valid1,
+                is_token_valid1.to(tl.int8),
+                is_kv_valid_layout,
+                (tid % 8 == 0),
+                -1,
+                None,
+                predStr="slice:1",
+            )
+            txl.mbar_arrive(mbar_is_kv_valid_ready)
 
             cur_bar_wait_phase ^= 1
 

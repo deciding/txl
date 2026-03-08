@@ -271,7 +271,7 @@ def main(dump_dir=None):
     ]
     # cases for medium topk
     testcases = [
-        TestParam(1, 1, 256, 128, h_q=128, benchmark=False, check_correctness=True)
+        TestParam(1, 1, 256, 256, h_q=128, benchmark=False, check_correctness=True)
     ]
     # cases for large topk
     testcases += [

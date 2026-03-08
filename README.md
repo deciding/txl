@@ -1,8 +1,8 @@
-<img src="docs/images/logo.png" alt="TXL" width="200"/>
+<img src="docs/images/logo.png" alt="TeraXLang" width="200"/>
 
-# TXL (Triton Xtra Language)
+# TeraXLang
 
-TXL is a CUDA kernel-specific DSL built on top of Triton that achieves **SOTA GPU kernel performance** on both **Hopper** (H100) and **Blackwell** (B200) architectures.
+TeraXLang is a CUDA kernel-specific DSL built on top of Triton that achieves **SOTA GPU kernel performance** on both **Hopper** (H100) and **Blackwell** (B200) architectures.
 
 ## Key Features
 
@@ -75,11 +75,11 @@ pip install thirdparty/triton/dist/txl-*.whl
 
 ## Documentation
 
-See [docsdocs/) for detailed API documentation.
+See [docs/](https://deciding.github.io/txl/) for detailed API documentation.
 
 ## Architecture
 
-/](TXL adds these key operations to Triton:
+TeraXLang adds these key operations to Triton:
 
 | Operation | Description |
 |-----------|-------------|

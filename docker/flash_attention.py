@@ -14,7 +14,10 @@ DUMP_DIR = os.environ.get("DUMP_DIR", "default")
 txl_wheel_name = os.environ.get("TXL_WHEEL_NAME")
 if not txl_wheel_name:
     dist_dir = root_dir / "thirdparty" / "triton" / "dist"
-    wheel_files = list(dist_dir.glob("txl-*.whl"))
+    # Search for both teraxlang-*.whl and txl-*.whl
+    wheel_files = list(dist_dir.glob("teraxlang-*.whl")) + list(
+        dist_dir.glob("txl-*.whl")
+    )
     if wheel_files:
         # Prefer linux_x86_64 wheel
         txl_wheel = next(
@@ -23,7 +26,7 @@ if not txl_wheel_name:
         txl_wheel_name = txl_wheel.name
         print(f"Using wheel: {txl_wheel_name}")
     else:
-        txl_wheel_name = "txl-3.5.1-cp312-cp312-linux_x86_64.whl"  # fallback
+        txl_wheel_name = "teraxlang-3.5.1-cp312-cp312-linux_x86_64.whl"  # fallback
 
 print(f"Dump directory: {DUMP_DIR}")
 

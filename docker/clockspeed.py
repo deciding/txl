@@ -12,7 +12,10 @@ app_name = "clock"
 txl_wheel_name = os.environ.get("TXL_WHEEL_NAME")
 if not txl_wheel_name:
     dist_dir = root_dir / "thirdparty" / "triton" / "dist"
-    wheel_files = list(dist_dir.glob("txl-*.whl"))
+    # Search for both teraxlang-*.whl and txl-*.whl
+    wheel_files = list(dist_dir.glob("teraxlang-*.whl")) + list(
+        dist_dir.glob("txl-*.whl")
+    )
     if wheel_files:
         txl_wheel = next(
             (f for f in wheel_files if "linux_x86_64" in f.name), wheel_files[0]
@@ -20,7 +23,7 @@ if not txl_wheel_name:
         txl_wheel_name = txl_wheel.name
         print(f"Using wheel: {txl_wheel_name}")
     else:
-        txl_wheel_name = "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
+        txl_wheel_name = "teraxlang-3.5.1-cp312-cp312-linux_x86_64.whl"
 
 txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
 

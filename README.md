@@ -6,6 +6,19 @@
 
 TeraXLang is a CUDA kernel-specific DSL built on top of Triton that achieves **SOTA GPU kernel performance** on both **Hopper** (H100) and **Blackwell** (B200) architectures.
 
+## Why TeraXLang?
+
+### Why build another DSL when there are already Tilelang, Gluon, etc.?
+
+I wanted to understand what really happens in Triton:
+- What optimizations has Triton done?
+- Why do many DSLs claim they can easily outperform Triton?
+- What if we add a few more APIs that might harm Triton's generality, but bring superior performance in exchange?
+
+### Why not use Gluon (provided by Triton itself)?
+
+Gluon has removed some auto-optimizations of Triton to be more low-level friendly, and may not support all features needed for new hardware architectures.
+
 ## Key Features
 
 - **Minimal Extensions**: Adds only essential methods to Triton (smem, tmem, mbar, TMA operations)

@@ -61,6 +61,19 @@ TFLOPS:
 - Cute:  521, 572, 609, 628, 635
 
 
+## Matmul
+
+hardware: H100 80GB HBM3
+- M=8192, N=8192, K=1024
+
+| Kernel | Time (ms) |
+|--------|-----------|
+| cuBLAS | 710.4 |
+| TXL (hopper_txl_ws_persistent) | 697.7 |
+
+TXL is ~2% faster than cuBLAS on this configuration.
+
+
 WS3 downgrade might because of the additional bar.sync added.
 
 Known that triton optimized with 3 multi-stages with MMAPV overlap with prev buffer's MMAQK, even no warpgroup specialization.

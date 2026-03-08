@@ -1,4 +1,6 @@
-<img src="docs/images/logo.png" alt="TeraXLang" width="200"/>
+<p align="center">
+  <img src="docs/images/logo.png" alt="TeraXLang" width="400"/>
+</p>
 
 # TeraXLang
 

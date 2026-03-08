@@ -1,0 +1,454 @@
+import math
+from triton._C.libtriton import ir
+from triton.language import core as tl
+from triton.language.semantic import TritonSemantic, TensorTy
+from typing import Optional, Tuple, Sequence, List
+from .core import distributed_type
+
+def pairs_to_tikz(pairs, nrows, ncols):
+    latex = []
+    latex.append('\\documentclass[convert]{standalone}')
+    latex.append('\\usepackage{tikz}')
+    latex.append('\\begin{document}')
+    latex.append('\\begin{tikzpicture}[x={(1cm,0cm)}, y={(0cm,-1cm)}, every node/.style={minimum size=1cm, outer sep=0pt, draw}]')
+    latex.append('% --- Row headers ---')
+    for row in range(nrows):
+        latex.append(f'\\node at (-1,{row}) {{\\Large\\texttt{{{row}}}}};')
+    latex.append('% --- Column headers ---')
+    for col in range(ncols):
+        latex.append(f'\\node at ({col},-1) {{\\Large\\texttt{{{col}}}}};')
+    latex.append('% --- Labels ---')
+    for label, indices in pairs:
+        if len(indices) == 1:
+            i, j = (1, indices[0])
+        else:
+            i, j = (indices[0], indices[1])
+        label_str = ','.join(map(str, label))
+        label_str = '\\\\ '.join(map(str, label))
+        latex.append(f'\\node[align=center] at ({j},{i}) {{\\scriptsize {label_str}}};')
+    latex.append('\\end{tikzpicture}')
+    latex.append('\\end{document}')
+    return '\n'.join(latex)
+
+class TXLSemantic(TritonSemantic):
+
+    def _str_to_load_cache_modifierx(self, cache_modifier):
+        cache = ir.CACHE_MODIFIERX.NONE
+        if cache_modifier:
+            if cache_modifier == '.ca':
+                cache = ir.CACHE_MODIFIERX.CA
+            elif cache_modifier == '.cg':
+                cache = ir.CACHE_MODIFIERX.CG
+            elif cache_modifier == '.cv':
+                cache = ir.CACHE_MODIFIERX.CV
+            else:
+                raise ValueError(f'Cache modifier {cache_modifier} not supported')
+        return cache
+
+    def _str_to_eviction_policyx(self, eviction_policy):
+        eviction = ir.EVICTION_POLICYX.NORMAL
+        if eviction_policy:
+            if eviction_policy == 'evict_last':
+                eviction = ir.EVICTION_POLICYX.EVICT_LAST
+            elif eviction_policy == 'evict_first':
+                eviction = ir.EVICTION_POLICYX.EVICT_FIRST
+            else:
+                raise ValueError(f'Eviction policy {eviction_policy} not supported')
+        return eviction
+
+    def _str_to_padding_optionx(self, padding_option):
+        padding = None
+        if padding_option:
+            if padding_option == 'zero':
+                padding = ir.PADDING_OPTIONX.PAD_ZERO
+            elif padding_option == 'nan':
+                padding = ir.PADDING_OPTIONX.PAD_NAN
+            else:
+                raise ValueError(f'Padding option {padding_option} not supported')
+        return padding
+
+    def threadIdx(self, axis: int) -> TensorTy:
+        if axis not in (0, 1, 2):
+            raise ValueError(f'thread index axis must be 0, 1, or 2 but got {axis}')
+        handle = self.builder.create_get_threadidx(axis)
+        return self.tensor(self.builder.create_index_cast(handle, tl.int32.to_ir(self.builder)), tl.int32)
+
+    def blockDim(self, axis: int) -> TensorTy:
+        if axis not in (0, 1, 2):
+            raise ValueError(f'block dim axis must be 0, 1, or 2 but got {axis}')
+        handle = self.builder.create_get_blockdim(axis)
+        return self.tensor(self.builder.create_index_cast(handle, tl.int32.to_ir(self.builder)), tl.int32)
+
+    def blockIdx(self, axis: int) -> TensorTy:
+        if axis not in (0, 1, 2):
+            raise ValueError(f'block index axis must be 0, 1, or 2 but got {axis}')
+        return self.tensor(self.builder.create_get_program_id(axis), tl.int32)
+
+    def gridDim(self, axis: int) -> TensorTy:
+        if axis not in (0, 1, 2):
+            raise ValueError(f'grid dim axis must be 0, 1, or 2 but got {axis}')
+        return self.tensor(self.builder.create_get_num_programs(axis), tl.int32)
+
+    def warp_id(self) -> TensorTy:
+        return self.tensor(self.builder.create_get_canonical_warp_id(), tl.int32)
+
+    def warpgroup_id(self) -> TensorTy:
+        return self.tensor(self.builder.create_get_canonical_wrapgroup_id(), tl.int32)
+
+    def lane_id(self) -> TensorTy:
+        return self.tensor(self.builder.create_get_lane_id(), tl.int32)
+
+    def cta_rank(self) -> TensorTy:
+        return self.tensor(self.builder.create_get_cta_rank(), tl.int32)
+
+    def is_warpgroup(self, ids) -> TensorTy:
+        return self.tensor(self.builder.create_is_warpgroup(ids), tl.int1)
+
+    def is_warp(self, ids) -> TensorTy:
+        return self.tensor(self.builder.create_is_warp(ids), tl.int1)
+
+    def reg_alloc(self, count: int):
+        self.builder.create_reg_alloc(count)
+
+    def reg_dealloc(self, count: int):
+        self.builder.create_reg_dealloc(count)
+
+    def smem_alloc(self, shape, dtype: tl.dtype, num_stages: int=1, mutable: bool=True, shared_enc=None) -> TensorTy:
+        block_type = tl.block_type(dtype, shape)
+        dtype = dtype.to_ir(self.builder)
+        if shared_enc is not None:
+            shared_enc = shared_enc._to_ir(self.builder)
+            return self.tensor(self.builder.create_smem_alloc_with_shared_enc(shape, dtype, num_stages, mutable, shared_enc), block_type)
+        else:
+            return self.tensor(self.builder.create_smem_alloc(shape, dtype, num_stages, mutable), block_type)
+
+    def smem_load(self, mem_desc, layout, cta_id: int=-1):
+        ret_ty = tl.block_type(mem_desc.dtype, mem_desc.shape)
+        if layout:
+            reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
+        else:
+            reg_ty = None
+        handle = self.builder.create_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, reg_ty.to_ir(self.builder) if reg_ty else None, cta_id)
+        return self.tensor(handle, ret_ty)
+
+    def smem_store(self, mem_desc, value, cta_id: int=-1):
+        assert value.shape == mem_desc.shape, f'source shape {value.shape} and destination shape {mem_desc.shape} must match'
+        assert value.dtype == mem_desc.dtype, f'source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match'
+        self.builder.create_smem_store(mem_desc.handle, value.handle, cta_id)
+
+    def tmem_alloc(self, shape, dtype: tl.dtype, num_stages: int=1, mutable: bool=True, shared_enc=None) -> TensorTy:
+        block_type = tl.block_type(dtype, shape)
+        dtype = dtype.to_ir(self.builder)
+        return self.tensor(self.builder.create_tmem_alloc(shape, dtype, num_stages, mutable), block_type)
+
+    def tmem_load(self, mem_desc, cta_id: int=-1):
+        ret_ty = tl.block_type(mem_desc.dtype, mem_desc.shape)
+        handle = self.builder.create_tmem_load(ret_ty.to_ir(self.builder), mem_desc.handle, cta_id)
+        return self.tensor(handle, ret_ty)
+
+    def tmem_store(self, mem_desc, value, cta_id: int=-1):
+        assert value.shape == mem_desc.shape, f'source shape {value.shape} and destination shape {mem_desc.shape} must match'
+        assert value.dtype == mem_desc.dtype, f'source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match'
+        self.builder.create_tmem_store(mem_desc.handle, value.handle, cta_id)
+
+    def frag_smem_load(self, mem_desc, shape, layout, other, pred, is_broadcast=False, cta_id: int=-1):
+        partial_load = False
+        for i, (s1, s2) in enumerate(zip(mem_desc.shape, shape)):
+            assert s1 <= s2, f'dim{i} with large size {s1} than specified size {s2}'
+            if s1 < s2:
+                partial_load = True
+        if is_broadcast:
+            partial_load = False
+        if partial_load:
+            assert other is not None, f'param `other` must be provided to fill the full load'
+        pred = pred.handle if isinstance(pred, tl.tensor) else pred
+        ret_ty = tl.block_type(mem_desc.dtype, shape)
+        reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
+        handle = self.builder.create_frag_smem_load(ret_ty.to_ir(self.builder), mem_desc.handle, other.handle if other else None, pred, reg_ty.to_ir(self.builder), partial_load, cta_id)
+        return self.tensor(handle, ret_ty)
+
+    def frag_smem_store(self, mem_desc, value, layout, pred, cta_id: int=-1, mbar=None, predStr: str=''):
+        reg_ty = distributed_type(mem_desc.dtype, mem_desc.shape, layout)
+        assert value.dtype == mem_desc.dtype, f'source dtype {value.dtype} and destination dtype {mem_desc.dtype} must match'
+        pred = pred.handle if isinstance(pred, tl.tensor) else pred
+        self.builder.create_frag_smem_store(mem_desc.handle, value.handle, mbar.handle if mbar else None, pred, reg_ty.to_ir(self.builder), predStr, cta_id)
+
+    def fence_proxy_async(self):
+        self.builder.create_fence_proxy_async()
+
+    def relayout(self, value, shape, layout):
+        ret_ty = tl.block_type(value.dtype, shape)
+        reg_ty = distributed_type(value.dtype, shape, layout)
+        handle = self.builder.create_relayout(ret_ty.to_ir(self.builder), value.handle, reg_ty.to_ir(self.builder))
+        return self.tensor(handle, ret_ty)
+
+    def print_layout(self, shape, dtype, layout, save_loc=None):
+        reg_ty = distributed_type(dtype, shape, layout)
+        res = self.builder.to_linear_layout(reg_ty.to_ir(self.builder))
+        if save_loc is not None:
+            res = [x.split('|') for x in res]
+            res = [([int(l) for l in labels.split(',')], [int(i) for i in indices.split(',')]) for labels, indices in res]
+            new_res = {}
+            for labels, indices in res:
+                indices = tuple(indices)
+                labels = tuple(labels)
+                if indices in new_res:
+                    all_labels = new_res[indices]
+                    all_labels.append(labels)
+                else:
+                    new_res[indices] = [labels]
+            res = new_res.items()
+            res = [(y, x) for x, y in res]
+            assert len(shape) == 1 or len(shape) == 2
+            if len(shape) == 1:
+                shape = (1, shape[0])
+            latex = pairs_to_tikz(res, shape[0], shape[1])
+            with open(save_loc, 'w') as f:
+                f.write(latex)
+
+    def mbar_alloc(self, arr_count: int, num_stages: int=1) -> TensorTy:
+        block_type = tl.block_type(tl.int64, [1])
+        return self.tensor(self.builder.create_mbar_alloc(arr_count, num_stages), block_type)
+
+    def tma_load(self, value: tl.tensor, desc: tl.tensor_descriptor_base, offsets, mbar: tl.tensor, cache_modifier: str, eviction_policy: str, contiguity: int) -> TensorTy:
+        assert isinstance(desc, tl.tensor_descriptor_base)
+        ndim = len(desc.block_shape)
+        assert len(offsets) == ndim, f'expected {ndim} offsets, but got {len(offsets)}'
+        offsets = self._convert_to_ir_values(offsets, require_i64=False)
+        x = self.builder.create_tma_load(value.handle, mbar.handle, desc.handle, offsets, self._str_to_load_cache_modifierx(cache_modifier), self._str_to_eviction_policyx(eviction_policy), contiguity)
+        return self.tensor(x, tl.void)
+
+    def tma_store(self, value: tl.tensor, desc: tl.tensor_descriptor_base, offsets) -> TensorTy:
+        assert isinstance(desc, tl.tensor_descriptor_base)
+        ndim = len(desc.block_shape)
+        assert len(offsets) == ndim, f'expected {ndim} offsets, but got {len(offsets)}'
+        offsets = self._convert_to_ir_values(offsets, require_i64=False)
+        x = self.builder.create_tma_store(value.handle, desc.handle, offsets)
+        return self.tensor(x, tl.void)
+
+    def tma_store_wait(self, pendings: int) -> TensorTy:
+        x = self.builder.create_tma_store_wait(pendings)
+        return self.tensor(x, tl.void)
+
+    def tma_gather(self, value, desc, x_offsets, y_offset, mbar: tl.tensor, cache_modifier: str, eviction_policy: str) -> TensorTy:
+        assert isinstance(desc, tl.tensor_descriptor_base)
+        assert cache_modifier == '', 'cache modifier is not supported yet'
+        assert eviction_policy == '', 'eviction policy is not supported yet'
+        assert len(desc.block_shape) == 2, f'descriptor must be 2D, but got {desc.block_shape}'
+        assert desc.block_shape[0] == 1, f'descriptor block must have 1 row, but got {desc.block_shape}'
+        assert len(x_offsets.shape) == 1, f'x offsets must be 1D, but got {x_offsets.shape}'
+        assert x_offsets.shape[0] >= 8, f'descriptor gather must have at least 8 rows, but got {x_offsets.shape}'
+        dtype = desc.dtype
+        min_cols = 32 // dtype.primitive_bitwidth * 8
+        assert desc.block_shape[1] >= min_cols, f'descriptor gather of {dtype} must have at least {min_cols} columns, but got {desc.block_shape[1]}'
+        type = tl.block_type(desc.dtype, [x_offsets.shape[0], desc.block_shape[1]])
+        y_offset = self._convert_to_ir_values((y_offset,), require_i64=False)[0]
+        x = self.builder.create_tma_gather(value.handle, mbar.handle, desc.handle, x_offsets.handle, y_offset)
+        return self.tensor(x, tl.void)
+
+    def dot_wait(self, pendings: int) -> TensorTy:
+        x = self.builder.create_dot_wait(pendings)
+        return self.tensor(x, tl.void)
+
+    def bar_arrive(self, bar: int, num_threads: int) -> TensorTy:
+        x = self.builder.create_bar_arrive(bar, num_threads)
+        return self.tensor(x, tl.void)
+
+    def bar_wait(self, bar: int, num_threads: int) -> TensorTy:
+        x = self.builder.create_bar_wait(bar, num_threads)
+        return self.tensor(x, tl.void)
+
+    def get_buffer(self, src: tl.tensor, index: tl.tensor) -> TensorTy:
+        index = tl.tensor(self._convert_elem_to_ir_value(index, False), type=tl.int32)
+        x = self.builder.create_get_buffer(src.handle, index.handle)
+        return self.tensor(x, src.type)
+
+    def mbar_expect(self, mbar: tl.tensor, size_in_bytes: int, pred: tl.tensor) -> TensorTy:
+        x = self.builder.create_mbar_expect(mbar.handle, pred.handle, size_in_bytes)
+        return self.tensor(x, tl.void)
+
+    def mbar_wait(self, mbar: tl.tensor, phase: tl.tensor) -> TensorTy:
+        phase = tl.tensor(self._convert_elem_to_ir_value(phase, False), type=tl.int32)
+        x = self.builder.create_mbar_wait(mbar.handle, phase.handle)
+        return self.tensor(x, tl.void)
+
+    def mbar_arrive(self, mbar: tl.tensor, pred: tl.tensor, track_async_op: bool, tx_cnt: int) -> TensorTy:
+        x = self.builder.create_mbar_arrive(mbar.handle, pred.handle, track_async_op, tx_cnt)
+        return self.tensor(x, tl.void)
+
+    def _async_load_block_pointer(self, mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile, contiguity):
+        if mask is not None or other is not None:
+            raise ValueError('`mask` and `other` arguments cannot be specified for loading block pointers')
+        elt_ty = ptr.type.element_ty.element_ty
+        assert elt_ty != tl.int1, '`tl.int1` should be rewritten in `tl.make_block_ptr`'
+        if elt_ty.is_int() and padding == ir.PADDING_OPTION.PAD_NAN:
+            raise ValueError('Padding option `nan` is not supported for integer block pointers')
+        dst_ty = ptr.type.element_ty
+        boundary_check = self._canonicalize_boundary_check(boundary_check, dst_ty.get_block_shapes())
+        return self.tensor(self.builder.create_tensor_pointer_async_load(mem.handle, ptr.handle, boundary_check, padding, cache, eviction, is_volatile, contiguity), tl.void)
+
+    def _async_load_legacy(self, mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile, contiguity):
+        if not ptr.type.scalar.is_ptr():
+            raise ValueError(f'Unsupported ptr type {ptr.type.__repr__()} in `tl.load`')
+        if mask is None and other is not None:
+            raise ValueError('`other` cannot be provided without `mask`')
+        if padding or boundary_check:
+            raise ValueError('`padding_option` or `boundary_check` argument is not supported for loading a tensor ofpointers or loading a scalar. Because the compiler does not know the boundary; please use block pointers (defined by `make_block_ptr`) instead')
+        if not ptr.type.is_block():
+            if mask and mask.type.is_block():
+                raise ValueError('Mask argument cannot be block type if pointer argument is not a block')
+            if other and other.type.is_block():
+                raise ValueError('Other argument cannot be block type if pointer argument is not a block')
+        if ptr.type.is_block():
+            if mask is not None:
+                mask = self.broadcast_impl_shape(mask, ptr.type.get_block_shapes())
+            if other is not None:
+                other = self.broadcast_impl_shape(other, ptr.type.get_block_shapes())
+        ptr_ty = ptr.type.scalar
+        elt_ty = ptr_ty.element_ty
+        is_bool = elt_ty == tl.int1
+        if is_bool:
+            elt_ty = tl.int8
+            ptr_ty = tl.pointer_type(elt_ty, ptr_ty.address_space)
+            ptr = self.cast(ptr, ptr_ty)
+        if other is not None:
+            other = self.cast(other, elt_ty)
+        if ptr.type.is_block():
+            dst_ty = ptr.type.with_element_ty(elt_ty)
+        else:
+            dst_ty = elt_ty
+        if mask is None:
+            ret = self.tensor(self.builder.create_async_load(mem.handle, ptr.handle, cache, eviction, is_volatile, contiguity), tl.void)
+        else:
+            ret = self.tensor(self.builder.create_masked_async_load(mem.handle, ptr.handle, mask.handle, other.handle if other else None, cache, eviction, is_volatile, contiguity), tl.void)
+        return ret
+
+    def async_load(self, mem: TensorTy, ptr: TensorTy, mask: Optional[TensorTy], other: Optional[TensorTy], boundary_check: Tuple, padding_option: str, cache_modifier: str, eviction_policy: str, is_volatile: bool, contiguity: int) -> TensorTy:
+        cache = self._str_to_load_cache_modifierx(cache_modifier)
+        eviction = self._str_to_eviction_policyx(eviction_policy)
+        padding = self._str_to_padding_optionx(padding_option)
+        if ptr.type.is_ptr() and ptr.type.element_ty.is_block():
+            return self._async_load_block_pointer(mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile, contiguity)
+        else:
+            return self._async_load_legacy(mem, ptr, mask, other, boundary_check, padding, cache, eviction, is_volatile, contiguity)
+
+    def async_load_wait(self, pendings: int) -> TensorTy:
+        x = self.builder.create_async_load_wait(pendings)
+        return self.tensor(x, tl.void)
+
+    def warp_reduction(self, inputs: Sequence[TensorTy], axis: int, region_builder_fn) -> Tuple[TensorTy, ...]:
+        if axis is None:
+            inputs = tuple((self.reshape(t, [t.numel.value], can_reorder=True) for t in inputs))
+            axis = 0
+        shape = inputs[0].type.shape
+        rank = len(shape)
+        assert axis < rank, f'reduction axis must be < inputs rank ({rank})'
+        ret_shape = [s for i, s in enumerate(shape) if i != axis]
+        assert all((t.type.shape == shape for t in inputs)), 'all reduction inputs must have the same shape'
+        reduce_op = self.builder.create_warp_reduce([t.handle for t in inputs], axis)
+        region_builder_fn(reduce_op)
+        assert reduce_op.verify()
+        return tuple((self.wrap_tensor(reduce_op.get_result(i), inputs[i].type.scalar, ret_shape) for i in range(len(inputs))))
+
+    def smem_index(self, input: TensorTy, index) -> TensorTy:
+        shape = input.shape[1:]
+        index = self.to_tensor(index)
+        ret_type = tl.block_type(input.type.scalar, shape)
+        return self.tensor(self.builder.create_smem_index(input.handle, index.handle), ret_type)
+
+    def smem_slice(self, input: TensorTy, start, length, dim):
+        offsets = [0] * len(input.shape)
+        offsets[dim] = start
+        shape = list(input.shape)
+        shape[dim] = length
+        ret_type = tl.block_type(input.type.scalar, shape)
+        return self.tensor(self.builder.create_smem_subslice(input.handle, shape, offsets), ret_type)
+
+    def smem_trans(self, input: TensorTy, order: Tuple[int]) -> TensorTy:
+        if len(input.shape) != len(dims):
+            raise ValueError('permute dims must have the same length as input shape')
+        if sorted((tl._unwrap_if_constexpr(d) for d in dims)) != list(range(len(dims))):
+            raise ValueError(f'permute dims must be a permutation of 0, 1, ..., n-1, but were {dims}')
+        ret_type = tl.block_type(input.type.scalar, [input.shape[d] for d in dims])
+        return self.tensor(self.builder.create_smem_trans(input.handle, order, ret_type), ret_type)
+
+    def smem_reshape(self, input: TensorTy, shape) -> TensorTy:
+        ret_type = tl.block_type(input.type.scalar, shape)
+        return self.tensor(self.builder.create_smem_reshape(input.handle, shape), ret_type)
+
+    def _str_to_dot_input_precision(self, input_precision):
+        assert input_precision.lower() in self.builder.options.allowed_dot_input_precisions, f'input_precision must be one of {self.builder.options.allowed_dot_input_precisions}. Got {input_precision}'
+        input_precision = input_precision.upper()
+        if input_precision == 'TF32X3':
+            input_precision = 'TF32x3'
+        return getattr(ir.INPUT_PRECISION, input_precision)
+
+    def dotx(self, lhs: TensorTy, rhs: TensorTy, acc: TensorTy, useD: Optional[TensorTy], pred: Optional[TensorTy], mbars: Optional[List[TensorTy]], mbarPreds: Optional[List[TensorTy]], input_precision: Optional[str], max_num_imprecise_acc: int, out_dtype: tl.dtype) -> TensorTy:
+        assert lhs.type.is_block() and rhs.type.is_block()
+        if lhs.dtype.is_fp8() and rhs.dtype.is_fp8():
+            pass
+        else:
+            assert lhs.dtype in (tl.int8, tl.uint8, tl.float16, tl.bfloat16, tl.float32, tl.float64), f'Unsupported lhs dtype {lhs.dtype}'
+            assert rhs.dtype in (tl.int8, tl.uint8, tl.float16, tl.bfloat16, tl.float32, tl.float64), f'Unsupported rhs dtype {rhs.dtype}'
+            assert lhs.dtype == rhs.dtype, f'Both operands must be same dtype. Got {lhs.dtype} and {rhs.dtype}'
+        if lhs.dtype.is_fp8e4b15() or rhs.dtype.is_fp8e4b15():
+            if 'fp8e4b15' in self.builder.options.deprecated_fp8_dot_operand_dtypes:
+                warnings.warn('the use of fp8e4b15 is deprecated on Hopper and later architectures and can cause significant slow down. It will be removed in a future triton release')
+            lhs = self.cast(lhs, tl.float16)
+            rhs = self.cast(rhs, tl.float16)
+        uses_fp8e4b8 = lhs.dtype.is_fp8e4b8() or rhs.dtype.is_fp8e4b8()
+        uses_fp8e5b16 = lhs.dtype.is_fp8e5b16() or rhs.dtype.is_fp8e5b16()
+        if uses_fp8e4b8 or uses_fp8e5b16:
+            type_name = 'fp8e4b8' if uses_fp8e4b8 else 'fp8e5b16'
+            if type_name in self.builder.options.deprecated_fp8_dot_operand_dtypes:
+                arch = self.builder.options.arch
+                warnings.warn(f"{type_name} is AMD gfx942 specific and not supported on {arch} so it's upcasted to fp16 and can cause significant slow down. Please use OCP fp8 variants on {arch} for performance")
+                lhs = self.cast(lhs, tl.float16)
+                rhs = self.cast(rhs, tl.float16)
+        if input_precision is None:
+            input_precision = self.builder.options.default_dot_input_precision
+        input_precision = self._str_to_dot_input_precision(input_precision)
+        lhs_rank = len(lhs.shape)
+        rhs_rank = len(rhs.shape)
+        assert lhs_rank == rhs_rank == 2 or lhs_rank == rhs_rank == 3, f'Both inputs must be either 2D or 3D; (lhs: {lhs.shape} vs rhs: {rhs.shape})'
+        assert lhs.shape[-1].value == rhs.shape[-2].value, f'First input shape ({lhs.shape}) and second input shape {rhs.shape} are not compatible for matmul (second index of first shape ({lhs.shape[-1].value}) must be equal to first index of second shape ({rhs.shape[-2].value})'
+        assert self.builder.codegen_fns.get('min_dot_size') is not None, "target doesn't provide lower shape bounds for dot."
+        min_dot_size = self.builder.codegen_fns['min_dot_size'](lhs.type, rhs.type)
+        assert lhs.shape[-2].value >= min_dot_size[0] and lhs.shape[-1].value >= min_dot_size[2] and (rhs.shape[-1].value >= min_dot_size[1]), f'Input shapes should have M >= {min_dot_size[0]}, N >= {min_dot_size[1]} and K >= {min_dot_size[2]}'
+        if lhs.type.scalar.is_int():
+            assert lhs.type.scalar == tl.int8, 'only int8 supported!'
+            _0 = self.builder.get_int32(0)
+            ret_scalar_ty = tl.int32
+        elif out_dtype.is_bf16():
+            raise ValueError('out_dtype=bfloat16 is unsupported. Please use out_dtype=float32/float16 and cast with `.to(tl.bfloat16)`')
+        elif lhs.type.scalar.is_fp32() or lhs.type.scalar.is_bf16():
+            _0 = self.builder.get_fp32(0)
+            ret_scalar_ty = tl.float32
+        elif lhs.type.scalar.is_fp64():
+            _0 = self.builder.get_fp64(0)
+            ret_scalar_ty = tl.float64
+        else:
+            _0 = self.builder.get_fp16(0) if out_dtype.is_fp16() else self.builder.get_fp32(0)
+            ret_scalar_ty = out_dtype
+        M = lhs.type.shape[-2]
+        N = rhs.type.shape[-1]
+        K = lhs.type.shape[-1]
+        B = lhs.type.shape[0] if lhs_rank == 3 else None
+        ret_ty = tl.block_type(ret_scalar_ty, [B, M, N] if B else [M, N])
+        if acc is None:
+            acc_handle = self.builder.create_splat(ret_ty.to_ir(self.builder), _0)
+        else:
+            acc_handle = acc.handle
+            assert acc.type.shape == ret_ty.shape and acc.type.element_ty == out_dtype
+        if max_num_imprecise_acc is None:
+            if lhs.dtype.is_fp8() and rhs.dtype.is_fp8():
+                max_num_imprecise_acc = self.builder.options.max_num_imprecise_acc_default
+            else:
+                max_num_imprecise_acc = 0
+        elif lhs.dtype.is_fp8() and rhs.dtype.is_fp8() and (max_num_imprecise_acc > K):
+            raise ValueError(f'max_num_imprecise_acc ({max_num_imprecise_acc}) must be <= K ({K})')
+        useD_handle = useD.handle if useD else None
+        pred_handle = pred.handle if pred else None
+        mbars = [mbar.handle for mbar in mbars]
+        mbarPreds = [mbarPred.handle for mbarPred in mbarPreds]
+        return self.tensor(self.builder.create_dotx(lhs.handle, rhs.handle, acc_handle, useD_handle, pred_handle, mbars, mbarPreds, input_precision, max_num_imprecise_acc), ret_ty)

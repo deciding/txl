@@ -107,6 +107,7 @@ cp -r ${FROM_DIR}/third_party/nvidia/lib/Dialect/TXLGPU ${TO_DIR}/third_party/nv
 cp -r ${FROM_DIR}/third_party/nvidia/lib/TXLGPUToLLVM ${TO_DIR}/third_party/nvidia/lib/
 
 cp -r python/txl ${TO_DIR}/python
+cp -r python/teraxlang ${TO_DIR}/python
 
 
 

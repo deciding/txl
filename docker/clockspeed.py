@@ -27,7 +27,7 @@ if not txl_wheel_name:
 
 txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
 
-test_file = root_dir / "python" / "txl" / "tutorials" / "01-matmul.py"
+test_file = root_dir / "python" / "teraxlang" / "tutorials" / "01-matmul.py"
 
 ptx_file_name = "matmul_persistent_ws_tma_txl_kernel"
 ttgir_file = local_dir / f"{ptx_file_name}.ttgir"  # for proton init

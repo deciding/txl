@@ -30,7 +30,7 @@ if not txl_wheel_name:
 
 print(f"Dump directory: {DUMP_DIR}")
 
-test_file = root_dir / "python" / "txl" / "tutorials" / "02-flash-attention.py"
+test_file = root_dir / "python" / "teraxlang" / "tutorials" / "02-flash-attention.py"
 
 app = App(name="txl-mac")  # Note: this is optional since Modal 0.57
 volume = Volume.from_name(

@@ -110,4 +110,8 @@ cp -r ${FROM_DIR}/python/txl/language python/txl/
 cp -r ${FROM_DIR}/python/txl/compiler python/txl/
 cp -r ${FROM_DIR}/python/txl/runtime python/txl/
 
+cp -r ${FROM_DIR}/python/teraxlang/language python/teraxlang/
+cp -r ${FROM_DIR}/python/teraxlang/compiler python/teraxlang/
+cp -r ${FROM_DIR}/python/teraxlang/runtime python/teraxlang/
+
 find patch/triton -type f | wc -l

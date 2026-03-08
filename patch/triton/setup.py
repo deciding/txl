@@ -795,7 +795,7 @@ PYTHON_CLASSIFIERS = [
 CLASSIFIERS = BASE_CLASSIFIERS + PYTHON_CLASSIFIERS
 
 setup(
-    name=os.environ.get("TRITON_WHEEL_NAME", "txl"),
+    name=os.environ.get("TRITON_WHEEL_NAME", "teraxlang"),
     version=TRITON_VERSION,
     author="zhangzn710",
     author_email="zhangzn710@gmail.com",

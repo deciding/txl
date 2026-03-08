@@ -27,7 +27,7 @@ if not txl_wheel_name:
 
 print(f"Dump directory: {DUMP_DIR}")
 
-tutorial_path = root_dir / "python" / "txl" / "tutorials" / "mla"
+tutorial_path = root_dir / "python" / "teraxlang" / "tutorials" / "mla"
 test_file = tutorial_path / "test_flash_nsa_prefill.py"
 test_file_lib = tutorial_path / "lib.py"
 flash_mla_dir = tutorial_path / "flash_mla"

@@ -24,7 +24,7 @@ if not txl_wheel_name:
 
 txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
 
-test_file = root_dir / "python" / "txl" / "tests" / "smem.py"
+test_file = root_dir / "python" / "teraxlang" / "tests" / "smem.py"
 # test_file = local_dir / "smem.py"
 
 app = App(name="txl")  # Note: this is optional since Modal 0.57

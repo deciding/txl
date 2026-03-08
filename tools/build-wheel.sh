@@ -112,115 +112,58 @@ fi
 echo "=== Step 4: Installing Triton build dependencies ==="
 pip install -r thirdparty/triton/python/requirements.txt
 
-# Step 5: Rename triton to teraxlang_triton and update imports
-echo "=== Step 5: Renaming triton to teraxlang_triton ==="
-cd thirdparty/triton/python
-
-# Copy triton to teraxlang_triton
-echo "Copying triton to teraxlang_triton..."
-rm -rf teraxlang_triton
-cp -r triton teraxlang_triton
-
-# Replace imports in teraxlang_triton
-echo "Replacing imports in teraxlang_triton..."
-python /txl/tools/replace_imports.py teraxlang_triton
-
-# Replace imports in txl (but exclude tests)
-echo "Replacing imports in txl..."
-rm -rf txl_temp
-cp -r txl txl_temp
-rm -rf txl
-mv txl_temp txl
-python /txl/tools/replace_imports.py txl
-
-# Update setup.py to build teraxlang_triton instead of triton
-echo "Updating setup.py..."
-cat > setup.py << 'SETUP_EOF'
-import os
-from setuptools import setup, find_packages
-
-# Read version from triton/__init__.py
-version = {}
-with open("teraxlang_triton/__init__.py") as f:
-    exec(f.read(), version)
-
-# Read requirements
-install_requires = []
-if os.path.exists("requirements.txt"):
-    with open("requirements.txt") as f:
-        install_requires = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-
-setup(
-    name="teraxlang",
-    version=version.get("__version__", "3.5.1"),
-    description="TeraXLang - CUDA kernel DSL built on Triton",
-    author="TeraXLang Team",
-    packages=find_packages(include=["teraxlang_triton", "teraxlang_triton.*", "txl", "txl.*"]),
-    package_dir={
-        "teraxlang_triton": "teraxlang_triton",
-        "txl": "txl",
-    },
-    install_requires=install_requires,
-    python_requires=">=3.8",
-)
-SETUP_EOF
-
-# Go back to triton directory
-cd ..
+# Step 5: Skip - renaming is done once by running tools/rename_to_teraxlang.sh
+echo "=== Step 5: Skipping (run tools/rename_to_teraxlang.sh first) ==="
 
 # Step 6: Build the wheel
 echo "=== Step 6: Building wheel ==="
-cd thirdparty/triton
 
 # Clean build directory if -c flag is set
 if [ "$CLEAN_BUILD" == "true" ]; then
     echo "Cleaning build directories..."
-    rm -rf build dist
-    mkdir -p build dist
+    rm -rf thirdparty/triton/build thirdparty/triton/dist
+    mkdir -p thirdparty/triton/build thirdparty/triton/dist
 fi
 
-# Build the wheel with explicit compiler settings
+# Build the wheel using the root setup.py
 echo "Building with CC=$CC CXX=$CXX"
+cd thirdparty/triton
 python setup.py bdist_wheel
+cd ../..
 
 # Step 7: Verify and repair wheel for manylinux compliance
 echo "=== Step 7: Verifying and repairing wheel ==="
-WHEEL_PATH=$(find dist -name "*.whl" | head -1)
+WHEEL_PATH=$(find thirdparty/triton/dist -name "*.whl" | head -1)
 if [ -n "$WHEEL_PATH" ]; then
     echo "Wheel built: $WHEEL_PATH"
     ls -lh "$WHEEL_PATH"
     
     # Run auditwheel for manylinux compliance
     echo "Running auditwheel repair..."
-    auditwheel repair "$WHEEL_PATH" -w dist || {
+    auditwheel repair "$WHEEL_PATH" -w thirdparty/triton/dist || {
         echo "Warning: auditwheel repair failed, using original wheel"
     }
     
     # Find final wheel
-    FINAL_WHEEL=$(find dist -name "*.whl" | grep -v "none-any" | head -1)
+    FINAL_WHEEL=$(find thirdparty/triton/dist -name "*.whl" | grep -v "none-any" | head -1)
     if [ -z "$FINAL_WHEEL" ]; then
-        FINAL_WHEEL=$(find dist -name "*.whl" | head -1)
+        FINAL_WHEEL=$(find thirdparty/triton/dist -name "*.whl" | head -1)
     fi
     
     echo "Final wheel: $FINAL_WHEEL"
     ls -lh "$FINAL_WHEEL"
     
-    # Copy to output directory
-    if [ -d "/output" ]; then
-        # Rename wheel from teraxlang to txl for backward compatibility
-        BASENAME=$(basename "$FINAL_WHEEL")
-        NEW_NAME=${BASENAME/teraxlang/txl}
-        cp "$FINAL_WHEEL" "/output/$NEW_NAME"
-        echo "Wheel copied to /output/$NEW_NAME"
-        
-        # Also copy with teraxlang name
-        cp "$FINAL_WHEEL" "/output/$BASENAME"
-        echo "Also copied as /output/$BASENAME"
-        ls -lh /output/
-    fi
+    ## Copy to output directory
+    #if [ -d "/output" ]; then
+    #    # Just copy the wheel as-is (teraxlang name)
+    #    BASENAME=$(basename "$FINAL_WHEEL")
+    #    cp "$FINAL_WHEEL" "/output/$BASENAME"
+    #    echo "Wheel copied to /output/$BASENAME"
+    #    ls -lh /output/
+    #fi
 else
-    echo "Error: No wheel file found in dist/"
-    ls -la dist/ 2>/dev/null || true
+    echo "Error: No wheel file found in thirdparty/triton/dist/"
+    ls -la thirdparty/triton/dist/ 2>/dev/null || true
     exit 1
 fi
 

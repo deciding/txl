@@ -31,7 +31,7 @@ txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
 
 dump_dir = "modal_dump"
 
-test_file = root_dir / "python" / "txl" / "tutorials" / "01-matmul.py"
+test_file = root_dir / "python" / "teraxlang" / "tutorials" / "01-matmul.py"
 # ptx_file_name = "matmul_persistent_tma_txl_bw_kernel6"
 # ptx_file = local_dir / dump_dir / f"{ptx_file_name}.ptx"
 # signature_file = local_dir / dump_dir / f"{ptx_file_name}_signature.json"

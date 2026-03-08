@@ -112,8 +112,64 @@ fi
 echo "=== Step 4: Installing Triton build dependencies ==="
 pip install -r thirdparty/triton/python/requirements.txt
 
-# Step 5: Build the wheel
-echo "=== Step 5: Building wheel ==="
+# Step 5: Rename triton to teraxlang_triton and update imports
+echo "=== Step 5: Renaming triton to teraxlang_triton ==="
+cd thirdparty/triton/python
+
+# Copy triton to teraxlang_triton
+echo "Copying triton to teraxlang_triton..."
+rm -rf teraxlang_triton
+cp -r triton teraxlang_triton
+
+# Replace imports in teraxlang_triton
+echo "Replacing imports in teraxlang_triton..."
+python /txl/tools/replace_imports.py teraxlang_triton
+
+# Replace imports in txl (but exclude tests)
+echo "Replacing imports in txl..."
+rm -rf txl_temp
+cp -r txl txl_temp
+rm -rf txl
+mv txl_temp txl
+python /txl/tools/replace_imports.py txl
+
+# Update setup.py to build teraxlang_triton instead of triton
+echo "Updating setup.py..."
+cat > setup.py << 'SETUP_EOF'
+import os
+from setuptools import setup, find_packages
+
+# Read version from triton/__init__.py
+version = {}
+with open("teraxlang_triton/__init__.py") as f:
+    exec(f.read(), version)
+
+# Read requirements
+install_requires = []
+if os.path.exists("requirements.txt"):
+    with open("requirements.txt") as f:
+        install_requires = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+
+setup(
+    name="teraxlang",
+    version=version.get("__version__", "3.5.1"),
+    description="TeraXLang - CUDA kernel DSL built on Triton",
+    author="TeraXLang Team",
+    packages=find_packages(include=["teraxlang_triton", "teraxlang_triton.*", "txl", "txl.*"]),
+    package_dir={
+        "teraxlang_triton": "teraxlang_triton",
+        "txl": "txl",
+    },
+    install_requires=install_requires,
+    python_requires=">=3.8",
+)
+SETUP_EOF
+
+# Go back to triton directory
+cd ..
+
+# Step 6: Build the wheel
+echo "=== Step 6: Building wheel ==="
 cd thirdparty/triton
 
 # Clean build directory if -c flag is set
@@ -127,8 +183,8 @@ fi
 echo "Building with CC=$CC CXX=$CXX"
 python setup.py bdist_wheel
 
-# Step 6: Verify and repair wheel for manylinux compliance
-echo "=== Step 6: Verifying and repairing wheel ==="
+# Step 7: Verify and repair wheel for manylinux compliance
+echo "=== Step 7: Verifying and repairing wheel ==="
 WHEEL_PATH=$(find dist -name "*.whl" | head -1)
 if [ -n "$WHEEL_PATH" ]; then
     echo "Wheel built: $WHEEL_PATH"
@@ -151,8 +207,15 @@ if [ -n "$WHEEL_PATH" ]; then
     
     # Copy to output directory
     if [ -d "/output" ]; then
-        cp "$FINAL_WHEEL" /output/
-        echo "Wheel copied to /output/"
+        # Rename wheel from teraxlang to txl for backward compatibility
+        BASENAME=$(basename "$FINAL_WHEEL")
+        NEW_NAME=${BASENAME/teraxlang/txl}
+        cp "$FINAL_WHEEL" "/output/$NEW_NAME"
+        echo "Wheel copied to /output/$NEW_NAME"
+        
+        # Also copy with teraxlang name
+        cp "$FINAL_WHEEL" "/output/$BASENAME"
+        echo "Also copied as /output/$BASENAME"
         ls -lh /output/
     fi
 else

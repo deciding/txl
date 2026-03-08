@@ -1,5 +1,6 @@
 from modal import Image, App, Volume
 import pathlib
+import os
 
 local_dir = pathlib.Path(__file__).parent
 root_dir = local_dir.parent
@@ -10,23 +11,28 @@ GPU_model = "H100"  # B200
 # GPU_model = 'B200' # B200
 app_name = "txl" if Use_TXL else "triton"
 
+txl_wheel_name = os.environ.get("TXL_WHEEL_NAME")
+if not txl_wheel_name:
+    dist_dir = root_dir / "thirdparty" / "triton" / "dist"
+    wheel_files = list(dist_dir.glob("txl-*.whL"))
+    if wheel_files:
+        txl_wheel = next(
+            (f for f in wheel_files if "linux_x86_64" in f.name), wheel_files[0]
+        )
+        txl_wheel_name = txl_wheel.name
+        print(f"Using wheel: {txl_wheel_name}")
+    else:
+        txl_wheel_name = "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
 
-# txl
-txl_wheel_file = (
-    root_dir
-    / "thirdparty"
-    / "triton"
-    / "dist"
-    / "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
-)
+txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
 
 dump_dir = "modal_dump"
 
 test_file = root_dir / "python" / "txl" / "tutorials" / "01-matmul.py"
-ptx_file_name = "matmul_persistent_tma_txl_bw_kernel6"
-ptx_file = local_dir / dump_dir / f"{ptx_file_name}.ptx"
-signature_file = local_dir / dump_dir / f"{ptx_file_name}_signature.json"
-json_file = local_dir / dump_dir / f"{ptx_file_name}.json"
+# ptx_file_name = "matmul_persistent_tma_txl_bw_kernel6"
+# ptx_file = local_dir / dump_dir / f"{ptx_file_name}.ptx"
+# signature_file = local_dir / dump_dir / f"{ptx_file_name}_signature.json"
+# json_file = local_dir / dump_dir / f"{ptx_file_name}.json"
 
 # txl
 app = App(name=f"{app_name}-matmul")  # Note: this is optional since Modal 0.57
@@ -60,7 +66,7 @@ if Use_TXL:
         .pip_install_from_requirements(requirements_file)  # local file not remote file
         # txl
         .run_commands(
-            "pip install /workspace/txl-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl",
+            f"pip install /workspace/{txl_wheel_name}",
         )
         .env(
             {
@@ -70,17 +76,17 @@ if Use_TXL:
         .add_local_file(
             test_file, remote_path="/workspace/test_txl.py", copy=False
         )  # copy after image build, no need rebuild
-        .add_local_file(
-            ptx_file, remote_path=f"/workspace/{ptx_file_name}.ptx", copy=False
-        )
-        .add_local_file(
-            signature_file,
-            remote_path=f"/workspace/{ptx_file_name}_signature.json",
-            copy=False,
-        )
-        .add_local_file(
-            json_file, remote_path=f"/workspace/{ptx_file_name}.json", copy=False
-        )
+        # .add_local_file(
+        #    ptx_file, remote_path=f"/workspace/{ptx_file_name}.ptx", copy=False
+        # )
+        # .add_local_file(
+        #    signature_file,
+        #    remote_path=f"/workspace/{ptx_file_name}_signature.json",
+        #    copy=False,
+        # )
+        # .add_local_file(
+        #    json_file, remote_path=f"/workspace/{ptx_file_name}.json", copy=False
+        # )
     )
 else:
     txl_image = (
@@ -196,11 +202,9 @@ def test_flash_attention():
 
     from test_txl import test_matmul
 
-    # test_matmul("/workspace/dump", "0")
-    # test_matmul(None, "1")
-    test_matmul("/workspace/dump", "h1")
-    # test_matmul('/workspace/dump', "b6")
-    # test_matmul(None, "b6")
+    # test_matmul("/workspace/dump", "hopper_triton_ws_persistent")
+    test_matmul("/workspace/dump", "hopper_txl_ws_persistent")
+    # test_matmul('/workspace/dump', "blackwell_txl_ws_persistent")
     # import subprocess
     # p = subprocess.Popen(
     #        ["/usr/local/cuda-12.4/bin/cuda-gdb", "-ex", "run", "--args", "python", "/workspace/test_txl.py"],

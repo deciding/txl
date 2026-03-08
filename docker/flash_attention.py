@@ -97,7 +97,7 @@ def test_flash_attention(dump_dir: str = "default"):
     # Create dump directory and run test
     os.makedirs(dump_path, exist_ok=True)
     print(f"Dump path: {dump_path}")
-    run_test(3, dump_path)
+    run_test("hopper_txl_ws_fa3", dump_path)
 
 
 # Local entrypoint - reads DUMP_DIR from environment and passes to function

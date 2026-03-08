@@ -31,12 +31,12 @@ Gluon has removed some auto-optimizations of Triton to be more low-level friendl
 ### Matmul (H100 80GB HBM3)
 M=8192, N=8192, K=1024
 
-| Kernel | Time (ms) |
-|--------|-----------|
+| Kernel | TFLOPS |
+|--------|--------|
 | cuBLAS | 710.4 |
 | TXL (hopper_txl_ws_persistent) | 697.7 |
 
-**~2% faster than cuBLAS**
+**~2% slower than cuBLAS**
 
 ### Flash Attention (H100 80GB HBM3)
 batch=16, heads=32, seq_len=16384, head_dim=128
@@ -47,6 +47,22 @@ batch=16, heads=32, seq_len=16384, head_dim=128
 | TXL (hopper_txl_ws_fa3) | 676.26 |
 
 **~6% faster than FlashAttention3**
+
+### MLA Decoding (H100 80GB HBM3)
+TestParam(b=132, s_q=1, s_k=32768, is_varlen=False, is_causal=False, is_fp8=False, topk=None, test_performance=True, is_all_indices_invalid=False, have_zero_seqlen_k=False, block_size=64, h_q=128, h_kv=1, d=576, dv=512, seed=0)
+
+| Kernel | Time (ms) | TFLOPS | GB/s |
+|--------|-----------|--------|------|
+| HuggingFace MLA | 2.030 | 593 | 2472 |
+| TXL MLA | 2.227 | 541 | 2254 |
+
+### NSA Prefill (H100 80GB HBM3)
+TestParam(b=1, s_q=16384, s_kv=16384, topk=128, h_q=128, h_kv=1, d_qk=576, d_v=512, seed=0, check_correctness=True, benchmark=True)
+
+| Kernel | Time (us) | TFLOPS |
+|--------|-----------|--------|
+| Prefill FlashNSA | 2352 | 248.4 |
+| TXL NSA | 2193 | 266.4 |
 
 ## Quick Start
 

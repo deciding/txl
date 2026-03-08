@@ -682,14 +682,7 @@ class JitFunctionInfo:
 
 # NOTE: txl
 class TXLJITFunction(JITFunction):
-    """TXL-specific JIT function that extends the standard Triton JITFunction.
-
-    This class adds TXL-specific compilation options like diff_mode, diff_select,
-    and log_dir for debugging compilation passes.
-    """
-
     def is_gluon(self):
-        """Check if this is a Gluon kernel."""
         return False
 
     def create_binder(self):
@@ -940,7 +933,8 @@ def jit(
     src_file: Optional[str] = None,  # use the src file directly for compilation
     use_txl: bool = True,  # use txl passes
 ) -> Union[JITFunction[T], Callable[[T], JITFunction[T]]]:
-    """Decorator for JIT-compiling a function using the Triton compiler.
+    """
+    Decorator for JIT-compiling a function using the Triton compiler.
 
     :note: When a jit'd function is called, arguments are
         implicitly converted to pointers if they have a :code:`.data_ptr()` method
@@ -957,11 +951,11 @@ def jit(
     :type fn: Callable
 
     TXL-specific parameters:
-    :param diff_mode: Enable IR diffing between compilation passes. Options: "ttgir", "llvm".
-    :param diff_select: Select which pass to diff (used with diff_mode).
-    :param log_dir: Directory to save intermediate IR logs.
-    :param src_file: Use source file directly for compilation.
-    :param use_txl: Whether to use TXL passes (default: True).
+    :param diff_mode: Output mode for viewing MLIR differences. Options: "ttir", "ttgir", "llvm".
+    :param diff_select: Pass number to diff when using diff_mode. Run without this parameter to see available passes.
+    :param log_dir: Directory to dump intermediate IR (alternative to diff_mode for logging IR).
+    :param src_file: Source file name for PTX debugging.
+    :param use_txl: Set to False to use default Triton behavior instead of TXL passes.
     """
 
     def decorator(fn: T) -> JITFunction[T]:

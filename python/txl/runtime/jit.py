@@ -10,7 +10,18 @@ import textwrap
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Callable, Generic, Iterable, Optional, TypeVar, Union, overload, Dict, Any, Tuple
+from typing import (
+    Callable,
+    Generic,
+    Iterable,
+    Optional,
+    TypeVar,
+    Union,
+    overload,
+    Dict,
+    Any,
+    Tuple,
+)
 
 from triton.tools.tensor_descriptor import TensorDescriptor
 from types import ModuleType
@@ -20,7 +31,12 @@ from triton import knobs
 from triton.runtime.driver import driver
 from triton.runtime import _async_compile
 from triton.runtime.cache import get_cache_key
-from triton._utils import find_paths_if, get_iterable_path, type_canonicalisation_dict, canonicalize_dtype
+from triton._utils import (
+    find_paths_if,
+    get_iterable_path,
+    type_canonicalisation_dict,
+    canonicalize_dtype,
+)
 from triton.runtime import JITFunction
 from triton.runtime.jit import compute_cache_key
 
@@ -59,16 +75,16 @@ class DependenciesFinder(ast.NodeVisitor):
 
         # Python builtins that can be accessed from Triton kernels.
         self.supported_python_builtins = {
-            'float',
-            'getattr',
-            'int',
-            'isinstance',
-            'len',
-            'list',
-            'max',
-            'min',
-            'print',
-            'range',
+            "float",
+            "getattr",
+            "int",
+            "isinstance",
+            "len",
+            "list",
+            "max",
+            "min",
+            "print",
+            "range",
         }
         self.supported_modules = {
             GLUON_MODULE,
@@ -121,6 +137,7 @@ class DependenciesFinder(ast.NodeVisitor):
 
     def record_reference(self, val, var_dict=None, name=None):
         from ..language.core import constexpr
+
         # Only keep track of "interesting" global variables, that non-evil users
         # might change.  Don't consider functions, modules, builtins, etc.  This
         # helps keep the list of vars we have to check small.
@@ -138,7 +155,11 @@ class DependenciesFinder(ast.NodeVisitor):
             self._update_hash(val)
             return
 
-        if callable(val) and not isinstance(val, type) and not isinstance(val, constexpr):
+        if (
+            callable(val)
+            and not isinstance(val, type)
+            and not isinstance(val, constexpr)
+        ):
             raise RuntimeError(f"Unsupported function referenced: {val}")
 
         # Python default arguments are resolved only once, when the
@@ -220,7 +241,12 @@ class DependenciesFinder(ast.NodeVisitor):
             finally:
                 self.visiting_arg_default_value = False
 
-        for arg in itertools.chain(node.posonlyargs, node.args, [node.vararg] if node.vararg else [], node.kwonlyargs):
+        for arg in itertools.chain(
+            node.posonlyargs,
+            node.args,
+            [node.vararg] if node.vararg else [],
+            node.kwonlyargs,
+        ):
             self.visit(arg)
 
         visit_defaults(node.kw_defaults)
@@ -272,6 +298,7 @@ class DependenciesFinder(ast.NodeVisitor):
 
 def _normalize_ty(ty) -> str:
     import triton.language.core as core
+
     if isinstance(ty, str):
         ty = ty.strip()
         if ty.startswith("const "):
@@ -299,8 +326,13 @@ def _normalize_ty(ty) -> str:
 class KernelParam:
     """Represents a parameter (name plus metadata) to a @jit'ed function."""
 
-    def __init__(self, num: int, param: inspect.Parameter, do_not_specialize: bool,
-                 do_not_specialize_on_alignment: bool):
+    def __init__(
+        self,
+        num: int,
+        param: inspect.Parameter,
+        do_not_specialize: bool,
+        do_not_specialize_on_alignment: bool,
+    ):
         self.num = num
         self._param = param
         self.do_not_specialize = do_not_specialize
@@ -312,7 +344,10 @@ class KernelParam:
 
     @cached_property
     def annotation(self) -> str:
-        if not self._param.annotation or self._param.annotation == inspect.Parameter.empty:
+        if (
+            not self._param.annotation
+            or self._param.annotation == inspect.Parameter.empty
+        ):
             return ""
         return _normalize_ty(self._param.annotation)
 
@@ -353,7 +388,9 @@ specialize_impl_cache = []
 def create_specialize_impl(specialize_extra):
 
     from ..language import constexpr
-    from triton.experimental.gluon.nvidia.hopper import TensorDescriptor as GluonTensorDescriptor
+    from triton.experimental.gluon.nvidia.hopper import (
+        TensorDescriptor as GluonTensorDescriptor,
+    )
 
     def specialize_impl(arg, is_const=False, specialize_value=True, align=True):
         if arg is None:
@@ -361,7 +398,9 @@ def create_specialize_impl(specialize_extra):
         elif isinstance(arg, bool):
             return ("u1", None)
         elif isinstance(arg, int):
-            key = specialize_extra(arg, "int", align=align) if specialize_value else None
+            key = (
+                specialize_extra(arg, "int", align=align) if specialize_value else None
+            )
             if arg == 1 and specialize_value:
                 return ("constexpr", 1)
             elif -(2**31) <= arg and arg <= 2**31 - 1:
@@ -379,7 +418,11 @@ def create_specialize_impl(specialize_extra):
             if res is None:
                 res = ("*k" if dsk[1] else "*") + canonicalize_dtype(dsk[0])
                 dtype2str[dsk] = res
-            key = specialize_extra(arg, "tensor", align=align) if specialize_value else None
+            key = (
+                specialize_extra(arg, "tensor", align=align)
+                if specialize_value
+                else None
+            )
             return (res, key)
         elif isinstance(arg, JITCallable):
             return ("constexpr", arg.cache_key)
@@ -387,7 +430,9 @@ def create_specialize_impl(specialize_extra):
             return ("constexpr", arg)
         elif isinstance(arg, tuple):
             spec = [specialize_impl(x) for x in arg]
-            make_tuple = lambda vals: type(arg)(*vals) if hasattr(arg, "_fields") else tuple(vals)
+            make_tuple = lambda vals: (
+                type(arg)(*vals) if hasattr(arg, "_fields") else tuple(vals)
+            )
             tys = make_tuple([x[0] for x in spec])
             keys = make_tuple([x[1] for x in spec])
             return (tys, keys)
@@ -421,17 +466,28 @@ class KernelInterface(Generic[T]):
         Hence JITFunction.__getitem__ returns a callable proxy that
         memorizes the grid.
         """
-        return lambda *args, **kwargs: self.run(grid=grid, warmup=False, *args, **kwargs)
+        return lambda *args, **kwargs: self.run(
+            grid=grid, warmup=False, *args, **kwargs
+        )
         # return cast(T, functools.partial(cast(Callable, self.run), grid=grid))
 
 
 def serialize_specialization_data(name, signature, constants, attrs, options, key):
-    constants = {key: str(value) if value.__class__.__name__ == "dtype" else value for key, value in constants.items()}
+    constants = {
+        key: str(value) if value.__class__.__name__ == "dtype" else value
+        for key, value in constants.items()
+    }
     import json
+
     obj = {
-        'name': name, 'signature': signature, 'constant_keys': [list(x) for x in constants.keys()], 'constant_vals':
-        list(constants.values()), 'attrs_keys': [list(x) for x in attrs.keys()], 'attrs_vals': list(attrs.values()),
-        'options': options.__dict__, 'key': key
+        "name": name,
+        "signature": signature,
+        "constant_keys": [list(x) for x in constants.keys()],
+        "constant_vals": list(constants.values()),
+        "attrs_keys": [list(x) for x in attrs.keys()],
+        "attrs_vals": list(attrs.values()),
+        "options": options.__dict__,
+        "key": key,
     }
     serialized_obj = json.dumps(obj)
     return serialized_obj
@@ -452,13 +508,16 @@ def create_function_from_signature(sig, kparams, backend):
         if kp.is_constexpr:
             specialization.append(f'("constexpr", {name})')
         else:
-            is_const = 'True' if kp.is_const else 'False'
-            specialize = 'False' if kp.do_not_specialize else 'True'
-            align = 'False' if kp.do_not_specialize_on_alignment else 'True'
+            is_const = "True" if kp.is_const else "False"
+            specialize = "False" if kp.do_not_specialize else "True"
+            align = "False" if kp.do_not_specialize_on_alignment else "True"
             ret = f"specialize_impl({name}, {is_const}, {specialize}, {align})"
             if kp.annotation_type:
                 if isinstance(kp.annotation_type, str):
-                    if kp.annotation_type == "u1" or kp.annotation_type[:2] in ["fp", "bf"]:
+                    if kp.annotation_type == "u1" or kp.annotation_type[:2] in [
+                        "fp",
+                        "bf",
+                    ]:
                         # we do not specialize non-constexpr floats and bools:
                         specialize = False
                 if specialize:
@@ -470,12 +529,14 @@ def create_function_from_signature(sig, kparams, backend):
                 specialization.append(f"{ret}")
 
     # compute argument string for a given parameter
-    arg = lambda x: x[0] if x[1].default is inspect.Parameter.empty else f"{x[0]}=default_{x[0]}"
+    arg = lambda x: (
+        x[0] if x[1].default is inspect.Parameter.empty else f"{x[0]}=default_{x[0]}"
+    )
     # Join all arguments into a function definition string
     func_body = f"""
 def dynamic_func({", ".join(list(map(arg, sig.parameters.items())) + ["**options"])}):
-    params = {{{', '.join([f"'{name}': {name}" for name in sig.parameters.keys()])}}}
-    specialization = [{','.join(specialization)}]
+    params = {{{", ".join([f"'{name}': {name}" for name in sig.parameters.keys()])}}}
+    specialization = [{",".join(specialization)}]
     return params, specialization, options
 """
     # Prepare defaults to be inserted into function namespace
@@ -486,13 +547,15 @@ def dynamic_func({", ".join(list(map(arg, sig.parameters.items())) + ["**options
     }
 
     func_namespace["JITCallable"] = JITCallable
-    func_namespace["specialize_impl"] = create_specialize_impl(backend.get_arg_specialization)
+    func_namespace["specialize_impl"] = create_specialize_impl(
+        backend.get_arg_specialization
+    )
 
     # Execute the function string in func_namespace to create the function
     exec(func_body, func_namespace)
 
     # Extract the newly created function from the namespace
-    return func_namespace['dynamic_func']
+    return func_namespace["dynamic_func"]
 
 
 def get_full_name(fn):
@@ -500,7 +563,6 @@ def get_full_name(fn):
 
 
 class JITCallable:
-
     def __init__(self, fn):
         self.fn = fn
         self.signature = inspect.signature(fn)
@@ -513,7 +575,7 @@ class JITCallable:
 
         # function source code (without decorators)
         src = textwrap.dedent("".join(self.raw_src))
-        src = src[re.search(r"^def\s+\w+\s*\(", src, re.MULTILINE).start():]
+        src = src[re.search(r"^def\s+\w+\s*\(", src, re.MULTILINE).start() :]
         self._src = src
         self.hash = None
 
@@ -548,16 +610,27 @@ class JITCallable:
             # transitively calls itself. The full hash is set after.
             self.hash = f"recursion:{self._fn_name}"
             nonlocals = inspect.getclosurevars(self.fn).nonlocals
-            dependencies_finder = DependenciesFinder(name=self._fn_name, globals=self.__globals__, nonlocals=nonlocals,
-                                                     src=self.src)
+            dependencies_finder = DependenciesFinder(
+                name=self._fn_name,
+                globals=self.__globals__,
+                nonlocals=nonlocals,
+                src=self.src,
+            )
             dependencies_finder.visit(self.parse())
             self.hash = dependencies_finder.ret + str(self.starting_line_number)
-            self.used_global_vals = dict(sorted(dependencies_finder.used_global_vals.items()))
+            self.used_global_vals = dict(
+                sorted(dependencies_finder.used_global_vals.items())
+            )
 
             from triton.language.core import constexpr
-            self.hash += str([(name, val)
-                              for (name, _), (val, _) in self.used_global_vals.items()
-                              if isinstance(val, constexpr)])
+
+            self.hash += str(
+                [
+                    (name, val)
+                    for (name, _), (val, _) in self.used_global_vals.items()
+                    if isinstance(val, constexpr)
+                ]
+            )
             self.hash = hashlib.sha256(self.hash.encode("utf-8")).hexdigest()
         return self.hash
 
@@ -574,6 +647,7 @@ class JITCallable:
     @property
     def type(self):
         from triton.language.core import constexpr_type
+
         return constexpr_type(self)
 
     def _unsafe_update_src(self, new_src):
@@ -587,9 +661,11 @@ class JITCallable:
         self._src = new_src
 
     def _set_src(self):
-        raise AttributeError("Cannot set attribute 'src' directly. "
-                             "Use '_unsafe_update_src()' and manually clear `.hash` of all callers"
-                             "instead.")
+        raise AttributeError(
+            "Cannot set attribute 'src' directly. "
+            "Use '_unsafe_update_src()' and manually clear `.hash` of all callers"
+            "instead."
+        )
 
     def _get_src(self):
         return self._src
@@ -606,8 +682,14 @@ class JitFunctionInfo:
 
 # NOTE: txl
 class TXLJITFunction(JITFunction):
+    """TXL-specific JIT function that extends the standard Triton JITFunction.
+
+    This class adds TXL-specific compilation options like diff_mode, diff_select,
+    and log_dir for debugging compilation passes.
+    """
 
     def is_gluon(self):
+        """Check if this is a Gluon kernel."""
         return False
 
     def create_binder(self):
@@ -615,6 +697,7 @@ class TXLJITFunction(JITFunction):
         Precompute as much as possible.
         """
         from ..compiler import CompiledKernel, compile, ASTSource, make_backend
+
         target = driver.active.get_current_target()
         backend = make_backend(target)
         self.CompiledKernel = CompiledKernel
@@ -639,7 +722,9 @@ class TXLJITFunction(JITFunction):
         for hook in self.pre_run_hooks:
             hook(*args, **kwargs)
 
-        kernel_cache, kernel_key_cache, target, backend, binder = self.device_caches[device]
+        kernel_cache, kernel_key_cache, target, backend, binder = self.device_caches[
+            device
+        ]
         # specialization is list[tuple[str, Any]], where first element of tuple is
         # the type and the second parameter is the 'specialization' value.
         bound_args, specialization, options = binder(*args, **kwargs)
@@ -649,10 +734,13 @@ class TXLJITFunction(JITFunction):
 
         # Kernel is not cached; we have to compile.
         if kernel is None:
-            options, signature, constexprs, attrs = self._pack_args(backend, kwargs, bound_args, specialization,
-                                                                    options)
+            options, signature, constexprs, attrs = self._pack_args(
+                backend, kwargs, bound_args, specialization, options
+            )
 
-            kernel = self._do_compile(key, signature, device, constexprs, options, attrs, warmup)
+            kernel = self._do_compile(
+                key, signature, device, constexprs, options, attrs, warmup
+            )
             if kernel is None:
                 return None
 
@@ -661,7 +749,8 @@ class TXLJITFunction(JITFunction):
         for (name, _), (val, globals_dict) in self.used_global_vals.items():
             if (newVal := globals_dict.get(name, not_present)) != val:
                 raise RuntimeError(
-                    f"Global variable {name} has changed since we compiled this kernel, from {val} to {newVal}")
+                    f"Global variable {name} has changed since we compiled this kernel, from {val} to {newVal}"
+                )
 
         if not warmup:
             # canonicalize grid
@@ -676,15 +765,47 @@ class TXLJITFunction(JITFunction):
                 kernel = kernel.result()
             # launch kernel
             launch_metadata = kernel.launch_metadata(grid, stream, *bound_args.values())
-            kernel.run(grid_0, grid_1, grid_2, stream, kernel.function, kernel.packed_metadata, launch_metadata,
-                       knobs.runtime.launch_enter_hook, knobs.runtime.launch_exit_hook, *bound_args.values())
+            kernel.run(
+                grid_0,
+                grid_1,
+                grid_2,
+                stream,
+                kernel.function,
+                kernel.packed_metadata,
+                launch_metadata,
+                knobs.runtime.launch_enter_hook,
+                knobs.runtime.launch_exit_hook,
+                *bound_args.values(),
+            )
         return kernel
 
-    def __init__(self, fn, version=None, do_not_specialize=None, do_not_specialize_on_alignment=None, debug=None,
-                 noinline=None, repr=None, launch_metadata=None,
-                 # NOTE: txl
-                 diff_mode=None, diff_select=None, log_dir=None, src_file=None, use_txl=True):
-        super().__init__(fn=fn, version=version, do_not_specialize=do_not_specialize, do_not_specialize_on_alignment=do_not_specialize_on_alignment, debug=debug, noinline=noinline, repr=repr, launch_metadata=launch_metadata)
+    def __init__(
+        self,
+        fn,
+        version=None,
+        do_not_specialize=None,
+        do_not_specialize_on_alignment=None,
+        debug=None,
+        noinline=None,
+        repr=None,
+        launch_metadata=None,
+        # NOTE: txl
+        diff_mode=None,
+        diff_select=None,
+        log_dir=None,
+        src_file=None,
+        use_txl=True,
+    ):
+        super().__init__(
+            fn=fn,
+            version=version,
+            do_not_specialize=do_not_specialize,
+            do_not_specialize_on_alignment=do_not_specialize_on_alignment,
+            debug=debug,
+            noinline=noinline,
+            repr=repr,
+            launch_metadata=launch_metadata,
+        )
 
         # NOTE: txl
         self.diff_mode = diff_mode
@@ -692,12 +813,21 @@ class TXLJITFunction(JITFunction):
         self.log_dir = log_dir
         self.src_file = src_file
         self.use_txl = use_txl
-        self.txl_options = {'num_warpgroups': 1}
+        self.txl_options = {"num_warpgroups": 1}
 
     def _do_compile(self, key, signature, device, constexprs, options, attrs, warmup):
         kernel_cache, _, target, backend, _ = self.device_caches[device]
 
-        if self._call_hook(knobs.runtime.jit_cache_hook, key, signature, device, constexprs, options, [attrs], warmup):
+        if self._call_hook(
+            knobs.runtime.jit_cache_hook,
+            key,
+            signature,
+            device,
+            constexprs,
+            options,
+            [attrs],
+            warmup,
+        ):
             return None
         # NOTE: txl
         if self.src_file:
@@ -707,14 +837,22 @@ class TXLJITFunction(JITFunction):
 
         async_mode = _async_compile.active_mode.get()
         if async_mode is not None:
-
             env_vars = get_cache_invalidating_env_vars()
             cache_key = get_cache_key(src, backend, options, env_vars)
 
             def async_compile():
                 # txl
-                return self.compile(src, target=target, options=options.__dict__, _env_vars=env_vars,
-                        diff_mode=self.diff_mode, diff_select=self.diff_select, log_dir=self.log_dir, use_txl=self.use_txl, txl_options=self.txl_options)
+                return self.compile(
+                    src,
+                    target=target,
+                    options=options.__dict__,
+                    _env_vars=env_vars,
+                    diff_mode=self.diff_mode,
+                    diff_select=self.diff_select,
+                    log_dir=self.log_dir,
+                    use_txl=self.use_txl,
+                    txl_options=self.txl_options,
+                )
 
             def finalize_compile(kernel):
                 # txl
@@ -722,20 +860,44 @@ class TXLJITFunction(JITFunction):
                     exit()
 
                 kernel_cache[key] = kernel
-                self._call_hook(knobs.runtime.jit_post_compile_hook, key, signature, device, constexprs, options,
-                                [attrs], warmup)
+                self._call_hook(
+                    knobs.runtime.jit_post_compile_hook,
+                    key,
+                    signature,
+                    device,
+                    constexprs,
+                    options,
+                    [attrs],
+                    warmup,
+                )
 
             kernel = async_mode.submit(cache_key, async_compile, finalize_compile)
         else:
             # txl
-            kernel = self.compile(src, target=target, options=options.__dict__,
-                    diff_mode=self.diff_mode, diff_select=self.diff_select, log_dir=self.log_dir, use_txl=self.use_txl, txl_options=self.txl_options)
+            kernel = self.compile(
+                src,
+                target=target,
+                options=options.__dict__,
+                diff_mode=self.diff_mode,
+                diff_select=self.diff_select,
+                log_dir=self.log_dir,
+                use_txl=self.use_txl,
+                txl_options=self.txl_options,
+            )
             if self.diff_mode:
                 exit()
 
             kernel_cache[key] = kernel
-            self._call_hook(knobs.runtime.jit_post_compile_hook, key, signature, device, constexprs, options, [attrs],
-                            warmup)
+            self._call_hook(
+                knobs.runtime.jit_post_compile_hook,
+                key,
+                signature,
+                device,
+                constexprs,
+                options,
+                [attrs],
+                warmup,
+            )
         return kernel
 
 
@@ -745,8 +907,7 @@ class TXLJITFunction(JITFunction):
 
 
 @overload
-def jit(fn: T) -> JITFunction[T]:
-    ...
+def jit(fn: T) -> JITFunction[T]: ...
 
 
 @overload
@@ -759,8 +920,7 @@ def jit(
     do_not_specialize_on_alignment: Optional[Iterable[int | str]] = None,
     debug: Optional[bool] = None,
     noinline: Optional[bool] = None,
-) -> Callable[[T], JITFunction[T]]:
-    ...
+) -> Callable[[T], JITFunction[T]]: ...
 
 
 def jit(
@@ -774,14 +934,13 @@ def jit(
     debug: Optional[bool] = None,
     noinline: Optional[bool] = None,
     # NOTE: txl
-    diff_mode: Optional[str] = None, # diff the passes
+    diff_mode: Optional[str] = None,  # diff the passes
     diff_select: Optional[int] = None,
-    log_dir: Optional[str] = None, # log the intermediate ir
-    src_file: Optional[str] = None, # use the src file directly for compilation
-    use_txl: bool = True, # use txl passes
+    log_dir: Optional[str] = None,  # log the intermediate ir
+    src_file: Optional[str] = None,  # use the src file directly for compilation
+    use_txl: bool = True,  # use txl passes
 ) -> Union[JITFunction[T], Callable[[T], JITFunction[T]]]:
-    """
-    Decorator for JIT-compiling a function using the Triton compiler.
+    """Decorator for JIT-compiling a function using the Triton compiler.
 
     :note: When a jit'd function is called, arguments are
         implicitly converted to pointers if they have a :code:`.data_ptr()` method
@@ -796,15 +955,30 @@ def jit(
 
     :param fn: the function to be jit-compiled
     :type fn: Callable
+
+    TXL-specific parameters:
+    :param diff_mode: Enable IR diffing between compilation passes. Options: "ttgir", "llvm".
+    :param diff_select: Select which pass to diff (used with diff_mode).
+    :param log_dir: Directory to save intermediate IR logs.
+    :param src_file: Use source file directly for compilation.
+    :param use_txl: Whether to use TXL passes (default: True).
     """
 
     def decorator(fn: T) -> JITFunction[T]:
         assert callable(fn)
         if knobs.runtime.interpret:
             from .interpreter import InterpretedFunction
-            return InterpretedFunction(fn, version=version, do_not_specialize=do_not_specialize,
-                                       do_not_specialize_on_alignment=do_not_specialize_on_alignment, debug=debug,
-                                       noinline=noinline, repr=repr, launch_metadata=launch_metadata)
+
+            return InterpretedFunction(
+                fn,
+                version=version,
+                do_not_specialize=do_not_specialize,
+                do_not_specialize_on_alignment=do_not_specialize_on_alignment,
+                debug=debug,
+                noinline=noinline,
+                repr=repr,
+                launch_metadata=launch_metadata,
+            )
         else:
             return TXLJITFunction(
                 fn,

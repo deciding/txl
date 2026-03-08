@@ -60,6 +60,18 @@ TFLOPS:
 - TXL3: 485, 537, 566, 594, 603
 - Cute:  521, 572, 609, 628, 635
 
+### Flash Attention TXL (H100 80GB HBM3)
+
+hardware: H100 80GB HBM3
+- batch=16, heads=32, seq_len=16384, head_dim=128, causal=False
+
+| Kernel | TFLOPS |
+|--------|--------|
+| FlashAttention3 | 640 |
+| TXL (hopper_txl_ws_fa3) | 676.26 |
+
+TXL is ~6% faster than FlashAttention3 on this configuration.
+
 
 ## Matmul
 

@@ -1,124 +1,166 @@
 from modal import Image, App, Volume
 import pathlib
+import os
+
 local_dir = pathlib.Path(__file__).parent
 root_dir = local_dir.parent
 requirements_file = root_dir / "requirements.txt"
 
 Use_TXL = True
-app_name = 'txl' if Use_TXL else 'triton'
+app_name = "txl" if Use_TXL else "triton"
 
+txl_wheel_name = os.environ.get("TXL_WHEEL_NAME")
+if not txl_wheel_name:
+    dist_dir = root_dir / "thirdparty" / "triton" / "dist"
+    wheel_files = list(dist_dir.glob("txl-*.whl"))
+    if wheel_files:
+        txl_wheel = next(
+            (f for f in wheel_files if "linux_x86_64" in f.name), wheel_files[0]
+        )
+        txl_wheel_name = txl_wheel.name
+        print(f"Using wheel: {txl_wheel_name}")
+    else:
+        txl_wheel_name = "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
 
-#txl
-txl_wheel_file = local_dir / "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
+txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
 
 test_file = root_dir / "python" / "txl" / "tutorials" / "01-matmul.py"
 
 ptx_file_name = "matmul_persistent_ws_tma_txl_kernel"
-ttgir_file = local_dir / f"{ptx_file_name}.ttgir" # for proton init
+ttgir_file = local_dir / f"{ptx_file_name}.ttgir"  # for proton init
 ptx_file = local_dir / f"{ptx_file_name}.ptx"
 signature_file = local_dir / f"{ptx_file_name}_signature.json"
 json_file = local_dir / f"{ptx_file_name}.json"
 
 # txl
 app = App(name=f"{app_name}-compare-matmul")  # Note: this is optional since Modal 0.57
-volume = Volume.from_name(f"{app_name}-compare-matmul-dump", create_if_missing=True) # create a cloud volume to store compiled dump files
+volume = Volume.from_name(
+    f"{app_name}-compare-matmul-dump", create_if_missing=True
+)  # create a cloud volume to store compiled dump files
 
 if Use_TXL:
     txl_image = (
         Image.debian_slim(python_version="3.12")
         # 2. Install tools required for CUDA repo
         .apt_install("wget", "curl", "gnupg")
-
         # 3. Add NVIDIA CUDA repository for Debian 12 (Bookworm)
         .run_commands(
             "wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb",
             "dpkg -i cuda-keyring_1.1-1_all.deb",
-            "apt-get update"
+            "apt-get update",
         )
-
         # 4. Install CUDA debugging tools
         .apt_install(
-            "cuda-toolkit-12-4",   # contains cuda-gdb
+            "cuda-toolkit-12-4",  # contains cuda-gdb
             # OR if you only want debugger:
             # "cuda-gdb",
         )
-
         .workdir("/workspace")
         # txl
-        .add_local_file(txl_wheel_file, remote_path="/workspace/", copy=True) # copy the local code to the image
-        .run_commands( "ls .")
-        .pip_install_from_requirements(requirements_file) # local file not remote file
+        .add_local_file(
+            txl_wheel_file, remote_path="/workspace/", copy=True
+        )  # copy the local code to the image
+        .run_commands("ls .")
+        .pip_install_from_requirements(requirements_file)  # local file not remote file
         .pip_install(
             "nvidia-ml-py",
         )
         # txl
         .run_commands(
-            "pip install /workspace/txl-3.5.1-cp312-cp312-linux_x86_64.whl",
+            f"pip install /workspace/{txl_wheel_name}",
         )
-        .env({
-            "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib"
-        })
-        .add_local_file(test_file, remote_path="/workspace/test_txl.py", copy=False) # copy after image build, no need rebuild
-        .add_local_file(ttgir_file, remote_path=f"/workspace/{ptx_file_name}.ttgir", copy=False)
-        .add_local_file(ptx_file, remote_path=f"/workspace/{ptx_file_name}.ptx", copy=False)
-        .add_local_file(signature_file, remote_path=f"/workspace/{ptx_file_name}_signature.json", copy=False)
-        .add_local_file(json_file, remote_path=f"/workspace/{ptx_file_name}.json", copy=False)
+        .env(
+            {
+                "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib"
+            }
+        )
+        .add_local_file(
+            test_file, remote_path="/workspace/test_txl.py", copy=False
+        )  # copy after image build, no need rebuild
+        .add_local_file(
+            ttgir_file, remote_path=f"/workspace/{ptx_file_name}.ttgir", copy=False
+        )
+        .add_local_file(
+            ptx_file, remote_path=f"/workspace/{ptx_file_name}.ptx", copy=False
+        )
+        .add_local_file(
+            signature_file,
+            remote_path=f"/workspace/{ptx_file_name}_signature.json",
+            copy=False,
+        )
+        .add_local_file(
+            json_file, remote_path=f"/workspace/{ptx_file_name}.json", copy=False
+        )
     )
 else:
     txl_image = (
         Image.debian_slim(python_version="3.12")
-        #Image.from_dockerfile(path="./Dockerfile")
+        # Image.from_dockerfile(path="./Dockerfile")
         .workdir("/workspace")
-        .run_commands( "ls .")
-        .pip_install_from_requirements(requirements_file) # local file not remote file
+        .run_commands("ls .")
+        .pip_install_from_requirements(requirements_file)  # local file not remote file
         # triton
         .pip_install(
             "triton==3.5.1",
             "nvidia-ml-py",
         )
-        .env({
-            "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib"
-        })
-        .add_local_file(test_file, remote_path="/workspace/test_txl.py", copy=False) # copy after image build, no need rebuild
+        .env(
+            {
+                "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib"
+            }
+        )
+        .add_local_file(
+            test_file, remote_path="/workspace/test_txl.py", copy=False
+        )  # copy after image build, no need rebuild
     )
 
+
 # Example function that uses the image
-@app.function(gpu="H100", image=txl_image, timeout=60,
-#@app.function(gpu="B200", image=txl_image, timeout=300,
-		volumes={"/workspace/dump": volume})
+@app.function(
+    gpu="H100",
+    image=txl_image,
+    timeout=60,
+    # @app.function(gpu="B200", image=txl_image, timeout=300,
+    volumes={"/workspace/dump": volume},
+)
 def test_flash_attention():
 
     def get_gpu_type():
         import subprocess
-    
+
         try:
-            #result = subprocess.run(['find', '/', '-name', 'libcublas.so*'], capture_output=True, text=True, check=True)
-            #output = result.stdout
-            #print(output)
-            #result = subprocess.run(['find', '/', '-name', 'cuda-gdb'], capture_output=True, text=True, check=True)
-            #output = result.stdout
-            #print(output)
+            # result = subprocess.run(['find', '/', '-name', 'libcublas.so*'], capture_output=True, text=True, check=True)
+            # output = result.stdout
+            # print(output)
+            # result = subprocess.run(['find', '/', '-name', 'cuda-gdb'], capture_output=True, text=True, check=True)
+            # output = result.stdout
+            # print(output)
             # Execute nvidia-smi command to query GPU details
-            result = subprocess.run(['nvidia-smi', '-q'], capture_output=True, text=True, check=True)
+            result = subprocess.run(
+                ["nvidia-smi", "-q"], capture_output=True, text=True, check=True
+            )
             output = result.stdout
 
             # Look for indicators of SXM or PCIe in the output
             for line in output.split("\n"):
                 if "Product Name" in line:
                     print(line)
-                    if 'H100' in line and 'HBM3' in line:
-                    #if 'B200' in line:
+                    if "H100" in line and "HBM3" in line:
+                        # if 'B200' in line:
                         return True
         except subprocess.CalledProcessError as e:
             print(f"Error running nvidia-smi: {e}")
         except FileNotFoundError:
-            print("nvidia-smi not found. Please ensure NVIDIA drivers are installed and in your PATH.")
+            print(
+                "nvidia-smi not found. Please ensure NVIDIA drivers are installed and in your PATH."
+            )
         return False
 
     if not get_gpu_type():
         return
 
     import pynvml
+
     def get_clock(handle):
         """Helper to fetch the current graphics clock speed."""
         # 0 = Graphics Clock, 1 = Memory Clock
@@ -143,8 +185,6 @@ def test_flash_attention():
         # 3. Cleanup
         pynvml.nvmlShutdown()
 
-
-
     import torch
     import triton
     import triton.language as tl
@@ -153,10 +193,13 @@ def test_flash_attention():
     from contextlib import contextmanager
 
     from typing import Optional
+
     try:
         import txl
+
         Has_TXL = True
         from triton.tools.tensor_descriptor import TensorDescriptor
+
         DEVICE = triton.runtime.driver.active.get_active_torch_device()
 
         # profile
@@ -167,33 +210,44 @@ def test_flash_attention():
         pl.enable_semantic("triton")
         pl.enable_semantic_obj(TXLSemantic)
 
-
         print("TXL")
     except:
+
         class txl:
             class Config:
-                def __init__ (
+                def __init__(
                     self,
                     config,
                     num_stages=1,
                     num_warps=1,
                     num_warpgroups=1,
                     pre_hook=None,
-                    ):
+                ):
                     pass
 
             @staticmethod
-            def jit(use_txl=False, diff_mode='ttir', diff_select=-1, log_dir='', src_file='', launch_metadata=None):
+            def jit(
+                use_txl=False,
+                diff_mode="ttir",
+                diff_select=-1,
+                log_dir="",
+                src_file="",
+                launch_metadata=None,
+            ):
                 def decorator(func):
                     return func
+
                 return decorator
+
             @staticmethod
-            def autotune(configs=[], key='', use_cuda_graph=False):
+            def autotune(configs=[], key="", use_cuda_graph=False):
                 def decorator(func):
                     return func
+
                 return decorator
+
         Has_TXL = False
-        DEVICE = torch.device('cuda:0')
+        DEVICE = torch.device("cuda:0")
         print("No txl")
 
     def matmul_tma_set_block_size_hook(nargs):
@@ -209,28 +263,32 @@ def test_flash_attention():
             nargs["c_desc"].block_shape = [BLOCK_M, BLOCK_N // 2]
         else:
             nargs["c_desc"].block_shape = [BLOCK_M, BLOCK_N]
+
     def _matmul_launch_metadata(grid, kernel, args):
         ret = {}
-        M, N, K, WS = args["M"], args["N"], args["K"], args.get("WARP_SPECIALIZE", False)
+        M, N, K, WS = (
+            args["M"],
+            args["N"],
+            args["K"],
+            args.get("WARP_SPECIALIZE", False),
+        )
         ws_str = "_ws" if WS else ""
         ret["name"] = f"{kernel.name}{ws_str} [M={M}, N={N}, K={K}]"
         if "c_ptr" in args:
             bytes_per_elem = args["c_ptr"].element_size()
         else:
             bytes_per_elem = 1 if args["FP8_OUTPUT"] else 2
-        ret[f"flops{bytes_per_elem * 8}"] = 2. * M * N * K
+        ret[f"flops{bytes_per_elem * 8}"] = 2.0 * M * N * K
         ret["bytes"] = bytes_per_elem * (M * K + N * K + M * N)
         return ret
-
-
 
     @txl.autotune(
         configs=[
             txl.Config(
                 {
                     "BLOCK_SIZE_M": 128,
-                    #"BLOCK_SIZE_N": 64,
-                    #"BLOCK_SIZE_K": 32,
+                    # "BLOCK_SIZE_N": 64,
+                    # "BLOCK_SIZE_K": 32,
                     "BLOCK_SIZE_N": 128,
                     "BLOCK_SIZE_K": 128,
                     "GROUP_SIZE_M": 8,
@@ -240,14 +298,14 @@ def test_flash_attention():
                 num_stages=3,
                 num_warps=4,
                 num_warpgroups=3,
-                pre_hook=matmul_tma_set_block_size_hook
+                pre_hook=matmul_tma_set_block_size_hook,
             ),
         ],
         key=["M", "N", "K"],
         use_cuda_graph=True,
     )
     @txl.jit(launch_metadata=_matmul_launch_metadata)
-    #@txl.jit(launch_metadata=_matmul_launch_metadata, src_file=f'/workspace/{ptx_file_name}.ptx')
+    # @txl.jit(launch_metadata=_matmul_launch_metadata, src_file=f'/workspace/{ptx_file_name}.ptx')
     def matmul_persistent_ws_tma_txl_kernel(
         a_desc,
         b_desc,
@@ -263,9 +321,8 @@ def test_flash_attention():
         NUM_CONSUMER_GROUPS: tl.constexpr,
         NUM_STAGES: tl.constexpr,
         PROFILING: tl.constexpr,
-
         # 3.4.x
-        #EPILOGUE_SUBTILE: tl.constexpr,  #
+        # EPILOGUE_SUBTILE: tl.constexpr,  #
         NUM_SMS: tl.constexpr,  #
         WARP_SPECIALIZE: tl.constexpr,  #
     ):
@@ -275,9 +332,15 @@ def test_flash_attention():
         num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
         num_pid_in_group = GROUP_SIZE_M * num_pid_n
 
-        a0 = txl.smem_alloc([BLOCK_SIZE_M//2, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
-        a1 = txl.smem_alloc([BLOCK_SIZE_M//2, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
-        b0 = txl.smem_alloc([BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+        a0 = txl.smem_alloc(
+            [BLOCK_SIZE_M // 2, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES
+        )
+        a1 = txl.smem_alloc(
+            [BLOCK_SIZE_M // 2, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES
+        )
+        b0 = txl.smem_alloc(
+            [BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES
+        )
 
         mbar_producer_a0 = txl.mbar_alloc(1, num_stages=NUM_STAGES)
         mbar_producer_a1 = txl.mbar_alloc(1, num_stages=NUM_STAGES)
@@ -289,9 +352,7 @@ def test_flash_attention():
         c_add = tid * 0.0001
         c_add = c_add.to(tl.float16)
 
-
         if txl.is_warpgroup([0]):
-
             phase = 1
             bufIdx = 0
             for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
@@ -300,8 +361,8 @@ def test_flash_attention():
                 group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
                 pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
                 pid_n = (pid % num_pid_in_group) // group_size_m
-                #pid_m = pid % num_pid_m
-                #pid_n = pid // num_pid_m
+                # pid_m = pid % num_pid_m
+                # pid_n = pid // num_pid_m
 
                 offs_am = pid_m * BLOCK_SIZE_M
                 offs_bn = pid_n * BLOCK_SIZE_N
@@ -320,27 +381,27 @@ def test_flash_attention():
                     b0_buf = txl.get_buffer(b0, bufIdx)
 
                     txl.mbar_wait(mbar_c1, phase)
-                    txl.mbar_expect(mbar_p_a0, BLOCK_SIZE_M//2*BLOCK_SIZE_K*2)
-                    #with pl.scope('load_a0'):
+                    txl.mbar_expect(mbar_p_a0, BLOCK_SIZE_M // 2 * BLOCK_SIZE_K * 2)
+                    # with pl.scope('load_a0'):
                     txl.tma_load(a0_buf, a_desc, [offs_am, offs_k], mbar_p_a0)
 
                     txl.mbar_wait(mbar_c2, phase)
-                    txl.mbar_expect(mbar_p_a1, BLOCK_SIZE_M//2*BLOCK_SIZE_K*2)
-                    #with pl.scope('load_a1'):
-                    txl.tma_load(a1_buf, a_desc, [offs_am + BLOCK_SIZE_M // 2, offs_k], mbar_p_a1)
+                    txl.mbar_expect(mbar_p_a1, BLOCK_SIZE_M // 2 * BLOCK_SIZE_K * 2)
+                    # with pl.scope('load_a1'):
+                    txl.tma_load(
+                        a1_buf, a_desc, [offs_am + BLOCK_SIZE_M // 2, offs_k], mbar_p_a1
+                    )
 
-
-                    txl.mbar_expect(mbar_p_b0, BLOCK_SIZE_N*BLOCK_SIZE_K*2)
-                    #with pl.scope('load_b0'):
+                    txl.mbar_expect(mbar_p_b0, BLOCK_SIZE_N * BLOCK_SIZE_K * 2)
+                    # with pl.scope('load_b0'):
                     txl.tma_load(b0_buf, b_desc, [offs_bn, offs_k], mbar_p_b0)
-
 
                     offs_k += BLOCK_SIZE_K
                     bufIdx = (bufIdx + 1) % NUM_STAGES
                     if bufIdx == 0:
-                        phase = phase^1
+                        phase = phase ^ 1
 
-        if txl.is_warpgroup([1, 2]): # TODO: else
+        if txl.is_warpgroup([1, 2]):  # TODO: else
             phase = 0
             bufIdx = 0
             for pid in range(tl.program_id(0), num_tiles, tl.num_programs(0)):
@@ -349,14 +410,16 @@ def test_flash_attention():
                 group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
                 pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
                 pid_n = (pid % num_pid_in_group) // group_size_m
-                #pid_m = pid % num_pid_m
-                #pid_n = pid // num_pid_m
+                # pid_m = pid % num_pid_m
+                # pid_n = pid // num_pid_m
 
                 offs_am = pid_m * BLOCK_SIZE_M
                 offs_bn = pid_n * BLOCK_SIZE_N
                 offs_k = 0
-                accumulator = tl.zeros((BLOCK_SIZE_M//2, BLOCK_SIZE_N), dtype=tl.float32)
-                #accumulator = tl.zeros((BLOCK_SIZE_M//2, BLOCK_SIZE_N), dtype=tl.float16)
+                accumulator = tl.zeros(
+                    (BLOCK_SIZE_M // 2, BLOCK_SIZE_N), dtype=tl.float32
+                )
+                # accumulator = tl.zeros((BLOCK_SIZE_M//2, BLOCK_SIZE_N), dtype=tl.float16)
 
                 if txl.is_warpgroup([1]):
                     txl.bar_arrive(8, 256)
@@ -366,9 +429,8 @@ def test_flash_attention():
 
                     b0_buf = txl.get_buffer(b0, bufIdx)
 
-                    #with pl.scope("wait_b"):
+                    # with pl.scope("wait_b"):
                     txl.mbar_wait(mbar_p_b0, phase)
-
 
                     if txl.is_warpgroup([1]):
                         mbar_p_a0 = txl.get_buffer(mbar_producer_a0, bufIdx)
@@ -383,30 +445,31 @@ def test_flash_attention():
                         if PROFILING:
                             pl.exit_scope("wait_a0")
 
-
                         if PROFILING:
                             pl.enter_scope("dot0")
 
-                        accumulator = tl.dot(a0_buf, b0_buf.T, accumulator) # accumulator is reg, no contention among buffers
+                        accumulator = tl.dot(
+                            a0_buf, b0_buf.T, accumulator
+                        )  # accumulator is reg, no contention among buffers
                         txl.dot_wait(0)
 
-                        #with pl.scope("x1"):
+                        # with pl.scope("x1"):
                         #    accumulator = a0_buf + c_add
                         #    accumulator = accumulator + c_add
                         #    accumulator = accumulator + c_add
                         #    accumulator = accumulator + c_add
 
-                        #with pl.scope("fma"):
+                        # with pl.scope("fma"):
                         #    a = a0_buf * 2.0 + 0.0001
-                        #with pl.scope("add"):
+                        # with pl.scope("add"):
                         #    a += accumulator
-                        #with pl.scope("cast"):
+                        # with pl.scope("cast"):
                         #    a = a.to(tl.float32)
-                        #with pl.scope("ex2_1"):
+                        # with pl.scope("ex2_1"):
                         #    accumulator = tl.exp2(a)
-                        #with pl.scope("ex2_2"):
+                        # with pl.scope("ex2_2"):
                         #    accumulator = tl.exp2(accumulator)
-                        #with pl.scope("ex2_3"):
+                        # with pl.scope("ex2_3"):
                         #    accumulator = tl.exp2(accumulator)
 
                         if PROFILING:
@@ -416,7 +479,7 @@ def test_flash_attention():
 
                         txl.mbar_arrive(mbar_c1)
 
-                    if txl.is_warpgroup([2]): # TODO: else test
+                    if txl.is_warpgroup([2]):  # TODO: else test
                         mbar_p_a1 = txl.get_buffer(mbar_producer_a1, bufIdx)
                         mbar_c2 = txl.get_buffer(mbar_consumer2, bufIdx)
                         a1_buf = txl.get_buffer(a1, bufIdx)
@@ -429,24 +492,23 @@ def test_flash_attention():
                         if PROFILING:
                             pl.exit_scope("wait_a1")
 
-
                         if PROFILING:
                             pl.enter_scope("dot1")
 
                         accumulator = tl.dot(a1_buf, b0_buf.T, accumulator)
                         txl.dot_wait(0)
 
-                        #with pl.scope("x2"):
+                        # with pl.scope("x2"):
                         #    accumulator = a1_buf + c_add
                         #    accumulator = accumulator + c_add
                         #    accumulator = accumulator + c_add
                         #    accumulator = accumulator + c_add
 
-                        #a = a1_buf * 2.0 + 0.0001 + accumulator # 128x128 x 2fma + add
-                        #a = a.to(tl.float32) # 128x128 x 0.5 cast
-                        #accumulator = tl.exp2(a) # 128x128 x4
-                        #accumulator = tl.exp2(accumulator+0.0001) #128x128 5
-                        #accumulator = tl.exp2(accumulator+0.0001) # 128x128 5
+                        # a = a1_buf * 2.0 + 0.0001 + accumulator # 128x128 x 2fma + add
+                        # a = a.to(tl.float32) # 128x128 x 0.5 cast
+                        # accumulator = tl.exp2(a) # 128x128 x4
+                        # accumulator = tl.exp2(accumulator+0.0001) #128x128 5
+                        # accumulator = tl.exp2(accumulator+0.0001) # 128x128 5
 
                         if PROFILING:
                             pl.exit_scope("dot1")
@@ -457,22 +519,22 @@ def test_flash_attention():
 
                     offs_k += BLOCK_SIZE_K
                     bufIdx = (bufIdx + 1) % NUM_STAGES
-                    if bufIdx == 0: # TODO: pipelinestate
-                        phase = phase^1
+                    if bufIdx == 0:  # TODO: pipelinestate
+                        phase = phase ^ 1
 
                 c = accumulator.to(dtype)
                 if txl.is_warpgroup([1]):
                     c_desc.store([offs_am, offs_bn], c)
                 if txl.is_warpgroup([2]):
-                    c_desc.store([offs_am + BLOCK_SIZE_M//2, offs_bn], c)
+                    c_desc.store([offs_am + BLOCK_SIZE_M // 2, offs_bn], c)
 
     @txl.autotune(
         configs=[
             txl.Config(
                 {
                     "BLOCK_SIZE_M": 128,
-                    #"BLOCK_SIZE_N": 64,
-                    #"BLOCK_SIZE_K": 32,
+                    # "BLOCK_SIZE_N": 64,
+                    # "BLOCK_SIZE_K": 32,
                     "BLOCK_SIZE_N": 128,
                     "BLOCK_SIZE_K": 128,
                     "GROUP_SIZE_M": 8,
@@ -481,14 +543,14 @@ def test_flash_attention():
                 },
                 num_stages=3,
                 num_warps=8,
-                pre_hook=matmul_tma_set_block_size_hook
+                pre_hook=matmul_tma_set_block_size_hook,
             ),
         ],
         key=["M", "N", "K"],
         use_cuda_graph=True,
     )
     @txl.jit(launch_metadata=_matmul_launch_metadata)
-    #@txl.jit(launch_metadata=_matmul_launch_metadata, src_file=f'/workspace/{ptx_file_name}.ptx')
+    # @txl.jit(launch_metadata=_matmul_launch_metadata, src_file=f'/workspace/{ptx_file_name}.ptx')
     def matmul_persistent_ws_tma_txl_kernel1(
         a_desc,
         b_desc,
@@ -504,9 +566,8 @@ def test_flash_attention():
         NUM_CONSUMER_GROUPS: tl.constexpr,
         NUM_STAGES: tl.constexpr,
         PROFILING: tl.constexpr,
-
         # 3.4.x
-        #EPILOGUE_SUBTILE: tl.constexpr,  #
+        # EPILOGUE_SUBTILE: tl.constexpr,  #
         NUM_SMS: tl.constexpr,  #
         WARP_SPECIALIZE: tl.constexpr,  #
     ):
@@ -516,8 +577,12 @@ def test_flash_attention():
         num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
         num_pid_in_group = GROUP_SIZE_M * num_pid_n
 
-        a0 = txl.smem_alloc([BLOCK_SIZE_M, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
-        b0 = txl.smem_alloc([BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES)
+        a0 = txl.smem_alloc(
+            [BLOCK_SIZE_M, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES
+        )
+        b0 = txl.smem_alloc(
+            [BLOCK_SIZE_N, BLOCK_SIZE_K], dtype=dtype, num_stages=NUM_STAGES
+        )
 
         mbar_producer_a0 = txl.mbar_alloc(1, num_stages=NUM_STAGES)
         mbar_producer_b0 = txl.mbar_alloc(1, num_stages=NUM_STAGES)
@@ -525,7 +590,6 @@ def test_flash_attention():
         tid = txl.tid(0)
         c_add = tid * 0.0001
         c_add = c_add.to(tl.float16)
-
 
         phase = 0
         bufIdx = 0
@@ -535,8 +599,8 @@ def test_flash_attention():
             group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
             pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
             pid_n = (pid % num_pid_in_group) // group_size_m
-            #pid_m = pid % num_pid_m
-            #pid_n = pid // num_pid_m
+            # pid_m = pid % num_pid_m
+            # pid_n = pid // num_pid_m
 
             accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
 
@@ -545,16 +609,14 @@ def test_flash_attention():
             offs_k = 0
 
             for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
-
                 mbar_p_a0 = txl.get_buffer(mbar_producer_a0, bufIdx)
                 mbar_p_b0 = txl.get_buffer(mbar_producer_b0, bufIdx)
 
                 a0_buf = txl.get_buffer(a0, bufIdx)
                 b0_buf = txl.get_buffer(b0, bufIdx)
 
-
-                txl.mbar_expect(mbar_p_a0, BLOCK_SIZE_M*BLOCK_SIZE_K*2)
-                #with pl.scope('load_a0'):
+                txl.mbar_expect(mbar_p_a0, BLOCK_SIZE_M * BLOCK_SIZE_K * 2)
+                # with pl.scope('load_a0'):
                 txl.tma_load(a0_buf, a_desc, [offs_am, offs_k], mbar_p_a0)
 
                 if PROFILING:
@@ -563,8 +625,8 @@ def test_flash_attention():
                 if PROFILING:
                     pl.exit_scope("wait_a0")
 
-                txl.mbar_expect(mbar_p_b0, BLOCK_SIZE_N*BLOCK_SIZE_K*2)
-                #with pl.scope('load_b0'):
+                txl.mbar_expect(mbar_p_b0, BLOCK_SIZE_N * BLOCK_SIZE_K * 2)
+                # with pl.scope('load_b0'):
                 txl.tma_load(b0_buf, b_desc, [offs_bn, offs_k], mbar_p_b0)
 
                 if PROFILING:
@@ -573,22 +635,21 @@ def test_flash_attention():
                 if PROFILING:
                     pl.exit_scope("wait_b0")
 
-
-
                 if PROFILING:
                     pl.enter_scope("dot")
 
-                accumulator = tl.dot(a0_buf, b0_buf.T, accumulator) # accumulator is reg, no contention among buffers
+                accumulator = tl.dot(
+                    a0_buf, b0_buf.T, accumulator
+                )  # accumulator is reg, no contention among buffers
                 txl.dot_wait(0)
 
                 if PROFILING:
                     pl.exit_scope("dot")
 
-
                 offs_k += BLOCK_SIZE_K
                 bufIdx = (bufIdx + 1) % NUM_STAGES
                 if bufIdx == 0:
-                    phase = phase^1
+                    phase = phase ^ 1
 
             c = accumulator.to(dtype)
             c_desc.store([offs_am, offs_bn], c)
@@ -616,22 +677,33 @@ def test_flash_attention():
             nonlocal a_desc, b_desc, c_desc
             BLOCK_M = META["BLOCK_SIZE_M"]
             BLOCK_N = META["BLOCK_SIZE_N"]
-            return (min(
-                NUM_SMS,
-                triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N),
-            ), )
+            return (
+                min(
+                    NUM_SMS,
+                    triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N),
+                ),
+            )
 
-        #profiling = True
+        # profiling = True
         if profiling:
-            #proton.start("/workspace/dump/mm", backend="instrumentation", mode='default:sampling_strategy=selective:sampling_options=0,4,8', data="trace")
-            proton.start("/workspace/dump/mm", backend="instrumentation", mode='default:sampling_strategy=selective:sampling_options=0', data="trace")
+            # proton.start("/workspace/dump/mm", backend="instrumentation", mode='default:sampling_strategy=selective:sampling_options=0,4,8', data="trace")
+            proton.start(
+                "/workspace/dump/mm",
+                backend="instrumentation",
+                mode="default:sampling_strategy=selective:sampling_options=0",
+                data="trace",
+            )
 
         handle = init_clock()
         get_clock(handle)
-        #matmul_persistent_ws_tma_txl_kernel[grid](
+        # matmul_persistent_ws_tma_txl_kernel[grid](
         matmul_persistent_ws_tma_txl_kernel1[grid](
-            a_desc, b_desc, c_desc,  #
-            M, N, K,  #
+            a_desc,
+            b_desc,
+            c_desc,  #
+            M,
+            N,
+            K,  #
             FP8_OUTPUT=dtype == torch.float8_e4m3fn,  #
             NUM_SMS=NUM_SMS,  #
             WARP_SPECIALIZE=False,  #
@@ -645,27 +717,28 @@ def test_flash_attention():
 
         return c
 
-    def validate(M, N, K, dtype, log=False, algo='0'):
+    def validate(M, N, K, dtype, log=False, algo="0"):
         print(f"{M=}, {N=}, {K=}, verification naive vs: ")
         a = torch.randn((M, K), device="cuda", dtype=torch.float16).to(dtype)
         bn = torch.randn((K, N), device="cuda", dtype=torch.float16).to(dtype)
         b = bn.T.contiguous()
         for _ in range(100):
             matmul_tma_ws_persistent_txl(a, b, False)
-        print('start profiling')
+        print("start profiling")
         matmul_tma_ws_persistent_txl(a, b)
 
     from triton import knobs
-    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
-    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
-    #os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-wgmma-pipeline"
-    #knobs.runtime.override_arch='sm100'
-    knobs.autotuning.print=True
-    knobs.compilation.always_compile=True
-    #dump_dir = '/workspace/dump'
+
+    # os.environ["TRITON_LLVM_DEBUG_ONLY"] = "tritongpu-remove-layout-conversions"
+    # os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-pipeliner"
+    # os.environ["TRITON_LLVM_DEBUG_ONLY"] = "txlgpu-wgmma-pipeline"
+    # knobs.runtime.override_arch='sm100'
+    knobs.autotuning.print = True
+    knobs.compilation.always_compile = True
+    # dump_dir = '/workspace/dump'
     dump_dir = None
 
     if dump_dir:
-        knobs.compilation.dump_ir=True
-        knobs.cache.dump_dir=dump_dir
+        knobs.compilation.dump_ir = True
+        knobs.cache.dump_dir = dump_dir
     validate(1024, 1024, 1024, torch.float16)

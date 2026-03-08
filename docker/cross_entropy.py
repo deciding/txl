@@ -1,16 +1,25 @@
 from modal import Image, App, Volume
 import pathlib
+import os
 
 local_dir = pathlib.Path(__file__).parent
 root_dir = local_dir.parent
 requirements_file = root_dir / "requirements.txt"
-txl_wheel_file = (
-    root_dir
-    / "thirdparty"
-    / "triton"
-    / "dist"
-    / "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
-)
+
+txl_wheel_name = os.environ.get("TXL_WHEEL_NAME")
+if not txl_wheel_name:
+    dist_dir = root_dir / "thirdparty" / "triton" / "dist"
+    wheel_files = list(dist_dir.glob("txl-*.whl"))
+    if wheel_files:
+        txl_wheel = next(
+            (f for f in wheel_files if "linux_x86_64" in f.name), wheel_files[0]
+        )
+        txl_wheel_name = txl_wheel.name
+        print(f"Using wheel: {txl_wheel_name}")
+    else:
+        txl_wheel_name = "txl-3.5.1-cp312-cp312-linux_x86_64.whl"
+
+txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
 
 test_file = root_dir / "python" / "txl" / "tutorials" / "04-softmax.py"
 
@@ -29,7 +38,7 @@ txl_image = (
     .pip_install_from_requirements(requirements_file)  # local file not remote file
     .pip_install("quack-kernels==0.1.11")
     .run_commands(
-        "pip install /workspace/txl-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl",
+        f"pip install /workspace/{txl_wheel_name}",
     )
     .add_local_file(
         test_file, remote_path="/workspace/test_txl.py", copy=False

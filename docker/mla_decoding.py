@@ -9,6 +9,7 @@ requirements_file = root_dir / "requirements.txt"
 DUMP_DIR = os.environ.get("DUMP_DIR", "default")
 
 txl_wheel_name = os.environ.get("TXL_WHEEL_NAME")
+main_cmd = None
 if not txl_wheel_name:
     dist_dir = root_dir / "thirdparty" / "triton" / "dist"
     # Search for both teraxlang-*.whl and txl-*.whl
@@ -17,12 +18,20 @@ if not txl_wheel_name:
     )
     if wheel_files:
         txl_wheel = next(
-            (f for f in wheel_files if "linux_x86_64" in f.name), wheel_files[0]
+            (f for f in wheel_files if "manylinux" in f.name), wheel_files[0]
         )
         txl_wheel_name = txl_wheel.name
         print(f"Using wheel: {txl_wheel_name}")
+        main_cmd = f"pip install /workspace/{txl_wheel_name}"
     else:
-        txl_wheel_name = "teraxlang-3.5.1-cp312-cp312-linux_x86_64.whl"
+        use_pip = True
+        print("Using Pip")
+        main_cmd = "pip install teraxlang"
+
+if txl_wheel_name:
+    txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
+else:
+    txl_wheel_file = None
 
 print(f"Dump directory: {DUMP_DIR}")
 
@@ -35,16 +44,16 @@ bins_dir = local_dir / "bins"
 app = App(name="txl-mla-decoding")
 volume = Volume.from_name("txl-dump", create_if_missing=True)
 
-txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
-
+txl_image = Image.debian_slim(python_version="3.12").workdir("/workspace")
+if txl_wheel_file:
+    txl_image = txl_image.add_local_file(
+        txl_wheel_file, remote_path="/workspace/", copy=True
+    )
 txl_image = (
-    Image.debian_slim(python_version="3.12")
-    .workdir("/workspace")
-    .add_local_file(txl_wheel_file, remote_path="/workspace/", copy=True)
-    .run_commands("ls .")
+    txl_image.run_commands("ls .")
     .pip_install("torch==2.8.0")
     .pip_install_from_requirements(requirements_file)
-    .run_commands(f"pip install /workspace/{txl_wheel_name}")
+    .run_commands(main_cmd)
     .add_local_file(test_file, remote_path="/workspace/test_txl.py", copy=False)
     .add_local_file(test_file_lib, remote_path="/workspace/lib.py", copy=False)
     .add_local_dir(flash_mla_dir, remote_path="/workspace/flash_mla", copy=False)

@@ -1,6 +1,6 @@
-# TXL (Triton Xtra Language)
+# TeraXLang (formerly Triton Xtra Language)
 
-TXL is a Triton-based language extension that provides additional features for GPU programming, including:
+TeraXLang is a Triton-based language extension that provides additional features for GPU programming, including:
 
 - **Shared Memory Operations**: Efficient smem/tmem operations with fragment-based loading/storing
 - **TMA (Tensor Memory Accelerator)**: Hardware-accelerated memory operations
@@ -9,5 +9,5 @@ TXL is a Triton-based language extension that provides additional features for G
 
 ## API Reference
 
-- [Core API](api/core.md) - Low-level TXL primitives
+- [Core API](api/core.md) - Low-level TeraXLang primitives
 - [JIT API](api/jit.md) - JIT compilation utilities

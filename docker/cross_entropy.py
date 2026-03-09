@@ -7,6 +7,7 @@ root_dir = local_dir.parent
 requirements_file = root_dir / "requirements.txt"
 
 txl_wheel_name = os.environ.get("TXL_WHEEL_NAME")
+main_cmd = None
 if not txl_wheel_name:
     dist_dir = root_dir / "thirdparty" / "triton" / "dist"
     # Search for both teraxlang-*.whl and txl-*.whl
@@ -15,14 +16,20 @@ if not txl_wheel_name:
     )
     if wheel_files:
         txl_wheel = next(
-            (f for f in wheel_files if "linux_x86_64" in f.name), wheel_files[0]
+            (f for f in wheel_files if "manylinux" in f.name), wheel_files[0]
         )
         txl_wheel_name = txl_wheel.name
         print(f"Using wheel: {txl_wheel_name}")
+        main_cmd = f"pip install /workspace/{txl_wheel_name}"
     else:
-        txl_wheel_name = "teraxlang-3.5.1-cp312-cp312-linux_x86_64.whl"
+        use_pip = True
+        print("Using Pip")
+        main_cmd = "pip install teraxlang"
 
-txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
+if txl_wheel_name:
+    txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
+else:
+    txl_wheel_file = None
 
 test_file = root_dir / "python" / "teraxlang" / "tutorials" / "04-softmax.py"
 
@@ -31,21 +38,16 @@ volume = Volume.from_name(
     "txl-dump", create_if_missing=True
 )  # create a cloud volume to store compiled dump files
 
-txl_image = (
-    Image.debian_slim(python_version="3.12")
-    # Image.from_dockerfile(path="./Dockerfile")
-    .workdir("/workspace")
-    .add_local_file(
+txl_image = Image.debian_slim(python_version="3.12").workdir("/workspace")
+if txl_wheel_file:
+    txl_image = txl_image.add_local_file(
         txl_wheel_file, remote_path="/workspace/", copy=True
-    )  # copy the local code to the image
-    .pip_install_from_requirements(requirements_file)  # local file not remote file
-    .pip_install("quack-kernels==0.1.11")
-    .run_commands(
-        f"pip install /workspace/{txl_wheel_name}",
     )
-    .add_local_file(
-        test_file, remote_path="/workspace/test_txl.py", copy=False
-    )  # copy after image build, no need rebuild
+txl_image = (
+    txl_image.pip_install_from_requirements(requirements_file)
+    .pip_install("quack-kernels==0.1.11")
+    .run_commands(main_cmd)
+    .add_local_file(test_file, remote_path="/workspace/test_txl.py", copy=False)
 )
 
 

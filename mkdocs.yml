@@ -1,26 +1,13 @@
-site_name: TXL Language API
-site_url: https://deciding.github.io/txl/
-repo_url: https://github.com/deciding/txl
-site_description: Triton Xtra Language (TXL) API Documentation
+site_name: TeraXLang API
+site_url: https://deciding.github.io/teraxlang/
+repo_url: https://github.com/deciding/teraxlang
+site_description: TeraXLang (formerly Triton Xtra Language) API Documentation
 
 theme:
   name: material
   palette:
     - primary: indigo
       accent: blue
-
-plugins:
-  - mkdocstrings:
-      handlers:
-        python:
-          paths:
-            - thirdparty/triton/python
-            - python
-          options:
-            show_source: true
-            show_root_heading: true
-            show_category_heading: true
-            members_order: source
 
 nav:
   - Home: index.md

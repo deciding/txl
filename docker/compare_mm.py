@@ -10,6 +10,7 @@ Use_TXL = True
 app_name = "txl" if Use_TXL else "triton"
 
 txl_wheel_name = os.environ.get("TXL_WHEEL_NAME")
+main_cmd = None
 if not txl_wheel_name:
     dist_dir = root_dir / "thirdparty" / "triton" / "dist"
     # Search for both teraxlang-*.whl and txl-*.whl
@@ -18,14 +19,20 @@ if not txl_wheel_name:
     )
     if wheel_files:
         txl_wheel = next(
-            (f for f in wheel_files if "linux_x86_64" in f.name), wheel_files[0]
+            (f for f in wheel_files if "manylinux" in f.name), wheel_files[0]
         )
         txl_wheel_name = txl_wheel.name
         print(f"Using wheel: {txl_wheel_name}")
+        main_cmd = f"pip install /workspace/{txl_wheel_name}"
     else:
-        txl_wheel_name = "teraxlang-3.5.1-cp312-cp312-linux_x86_64.whl"
+        use_pip = True
+        print("Using Pip")
+        main_cmd = "pip install teraxlang"
 
-txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
+if txl_wheel_name:
+    txl_wheel_file = root_dir / "thirdparty" / "triton" / "dist" / txl_wheel_name
+else:
+    txl_wheel_file = None
 
 test_file = root_dir / "python" / "teraxlang" / "tutorials" / "01-matmul.py"
 
@@ -42,44 +49,32 @@ volume = Volume.from_name(
 )  # create a cloud volume to store compiled dump files
 
 if Use_TXL:
+    txl_image = Image.debian_slim(python_version="3.12")
     txl_image = (
-        Image.debian_slim(python_version="3.12")
-        # 2. Install tools required for CUDA repo
-        .apt_install("wget", "curl", "gnupg")
-        # 3. Add NVIDIA CUDA repository for Debian 12 (Bookworm)
+        txl_image.apt_install("wget", "curl", "gnupg")
         .run_commands(
             "wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb",
             "dpkg -i cuda-keyring_1.1-1_all.deb",
             "apt-get update",
         )
-        # 4. Install CUDA debugging tools
-        .apt_install(
-            "cuda-toolkit-12-4",  # contains cuda-gdb
-            # OR if you only want debugger:
-            # "cuda-gdb",
-        )
+        .apt_install("cuda-toolkit-12-4")
         .workdir("/workspace")
-        # txl
-        .add_local_file(
+    )
+    if txl_wheel_file:
+        txl_image = txl_image.add_local_file(
             txl_wheel_file, remote_path="/workspace/", copy=True
-        )  # copy the local code to the image
-        .run_commands("ls .")
-        .pip_install_from_requirements(requirements_file)  # local file not remote file
-        .pip_install(
-            "nvidia-ml-py",
         )
-        # txl
-        .run_commands(
-            f"pip install /workspace/{txl_wheel_name}",
-        )
+    txl_image = (
+        txl_image.run_commands("ls .")
+        .pip_install_from_requirements(requirements_file)
+        .pip_install("nvidia-ml-py")
+        .run_commands(main_cmd)
         .env(
             {
                 "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib"
             }
         )
-        .add_local_file(
-            test_file, remote_path="/workspace/test_txl.py", copy=False
-        )  # copy after image build, no need rebuild
+        .add_local_file(test_file, remote_path="/workspace/test_txl.py", copy=False)
         .add_local_file(
             ttgir_file, remote_path=f"/workspace/{ptx_file_name}.ttgir", copy=False
         )

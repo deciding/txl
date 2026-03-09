@@ -6,11 +6,11 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Triton Xtra Language (TXL) API Documentation">
+        <meta name="description" content="TeraXLang (formerly Triton Xtra Language) API Documentation">
       
       
       
-        <link rel="canonical" href="https://deciding.github.io/txl/api/jit/">
+        <link rel="canonical" href="https://deciding.github.io/teraxlang/api/jit/">
       
       
         <link rel="prev" href="../core/">
@@ -25,7 +25,7 @@
     
     
       
-        <title>JIT - TXL Language API</title>
+        <title>JIT - TeraXLang API</title>
       
     
     
@@ -50,8 +50,6 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
-    
-      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -94,7 +92,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="TXL Language API" class="md-header__button md-logo" aria-label="TXL Language API" data-md-component="logo">
+    <a href="../.." title="TeraXLang API" class="md-header__button md-logo" aria-label="TeraXLang API" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -108,7 +106,7 @@
       <div class="md-header__ellipsis">
         <div class="md-header__topic">
           <span class="md-ellipsis">
-            TXL Language API
+            TeraXLang API
           </span>
         </div>
         <div class="md-header__topic" data-md-component="header-topic">
@@ -138,9 +136,49 @@
     
     
     
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
     
       <div class="md-header__source">
-        <a href="https://github.com/deciding/txl" title="Go to repository" class="md-source" data-md-component="source">
+        <a href="https://github.com/deciding/teraxlang" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
@@ -176,17 +214,17 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="TXL Language API" class="md-nav__button md-logo" aria-label="TXL Language API" data-md-component="logo">
+    <a href="../.." title="TeraXLang API" class="md-nav__button md-logo" aria-label="TeraXLang API" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
 
     </a>
-    TXL Language API
+    TeraXLang API
   </label>
   
     <div class="md-nav__source">
-      <a href="https://github.com/deciding/txl" title="Go to repository" class="md-source" data-md-component="source">
+      <a href="https://github.com/deciding/teraxlang" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
@@ -370,198 +408,46 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#txl.runtime.jit" class="md-nav__link">
+  <a href="#jit-decorator" class="md-nav__link">
     <span class="md-ellipsis">
       
-        jit
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="jit">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit-classes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Classes
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Classes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.DependenciesFinder" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        DependenciesFinder
+        @jit Decorator
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.KernelParam" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#config" class="md-nav__link">
     <span class="md-ellipsis">
       
-        KernelParam
+        Config
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.KernelInterface" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#autotune-decorator" class="md-nav__link">
     <span class="md-ellipsis">
       
-        KernelInterface
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="KernelInterface">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.KernelInterface-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Functions
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Functions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.KernelInterface.__getitem__" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        __getitem__
+        @autotune Decorator
       
     </span>
   </a>
   
 </li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.JITCallable" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#heuristics-decorator" class="md-nav__link">
     <span class="md-ellipsis">
       
-        JITCallable
+        @heuristics Decorator
       
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.TXLJITFunction" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TXLJITFunction
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="TXLJITFunction">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.TXLJITFunction-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Functions
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Functions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.TXLJITFunction.create_binder" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        create_binder
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Functions
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Functions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.create_function_from_signature" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        create_function_from_signature
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.jit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        jit
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -608,198 +494,46 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#txl.runtime.jit" class="md-nav__link">
+  <a href="#jit-decorator" class="md-nav__link">
     <span class="md-ellipsis">
       
-        jit
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="jit">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit-classes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Classes
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Classes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.DependenciesFinder" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        DependenciesFinder
+        @jit Decorator
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.KernelParam" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#config" class="md-nav__link">
     <span class="md-ellipsis">
       
-        KernelParam
+        Config
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.KernelInterface" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#autotune-decorator" class="md-nav__link">
     <span class="md-ellipsis">
       
-        KernelInterface
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="KernelInterface">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.KernelInterface-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Functions
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Functions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.KernelInterface.__getitem__" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        __getitem__
+        @autotune Decorator
       
     </span>
   </a>
   
 </li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.JITCallable" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#heuristics-decorator" class="md-nav__link">
     <span class="md-ellipsis">
       
-        JITCallable
+        @heuristics Decorator
       
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.TXLJITFunction" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TXLJITFunction
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="TXLJITFunction">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.TXLJITFunction-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Functions
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Functions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.TXLJITFunction.create_binder" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        create_binder
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit-functions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Functions
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Functions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.create_function_from_signature" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        create_function_from_signature
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#txl.runtime.jit.jit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        jit
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -824,1708 +558,48 @@
 
 
 <h1 id="jit-api">JIT API</h1>
-
-
-<div class="doc doc-object doc-module">
-
-
-
-<h2 id="txl.runtime.jit" class="doc doc-heading">
-            <code>txl.runtime.jit</code>
-
-
-</h2>
-
-    <div class="doc doc-contents first">
-
-
-
-
-
-
-
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-<h3 id="txl.runtime.jit-classes">Classes</h3>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h4 id="txl.runtime.jit.DependenciesFinder" class="doc doc-heading">
-            <code>DependenciesFinder</code>
-
-
-</h4>
-
-
-    <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><span title="ast.NodeVisitor">NodeVisitor</span></code></p>
-
-
-
-        <p>This AST visitor is used to find dependencies of a JITFunction. This can
-be used to invalidate a JITFunction's hash when its source code -- or
-that of its dependencies -- changes.</p>
-<p>This visitor also keeps track of the global variables touched by the
-JITFunction.  When we launch the kernel, we check that these have the same
-values as they did when we ran this visitor.  If not, we raise an error (or
-otherwise we could recompile).</p>
-
-
-
-
-
-
-
-
-              <details class="mkdocstrings-source">
-                <summary>Source code in <code>thirdparty/triton/python/txl/runtime/jit.py</code></summary>
-                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 39</span>
-<span class="normal"> 40</span>
-<span class="normal"> 41</span>
-<span class="normal"> 42</span>
-<span class="normal"> 43</span>
-<span class="normal"> 44</span>
-<span class="normal"> 45</span>
-<span class="normal"> 46</span>
-<span class="normal"> 47</span>
-<span class="normal"> 48</span>
-<span class="normal"> 49</span>
-<span class="normal"> 50</span>
-<span class="normal"> 51</span>
-<span class="normal"> 52</span>
-<span class="normal"> 53</span>
-<span class="normal"> 54</span>
-<span class="normal"> 55</span>
-<span class="normal"> 56</span>
-<span class="normal"> 57</span>
-<span class="normal"> 58</span>
-<span class="normal"> 59</span>
-<span class="normal"> 60</span>
-<span class="normal"> 61</span>
-<span class="normal"> 62</span>
-<span class="normal"> 63</span>
-<span class="normal"> 64</span>
-<span class="normal"> 65</span>
-<span class="normal"> 66</span>
-<span class="normal"> 67</span>
-<span class="normal"> 68</span>
-<span class="normal"> 69</span>
-<span class="normal"> 70</span>
-<span class="normal"> 71</span>
-<span class="normal"> 72</span>
-<span class="normal"> 73</span>
-<span class="normal"> 74</span>
-<span class="normal"> 75</span>
-<span class="normal"> 76</span>
-<span class="normal"> 77</span>
-<span class="normal"> 78</span>
-<span class="normal"> 79</span>
-<span class="normal"> 80</span>
-<span class="normal"> 81</span>
-<span class="normal"> 82</span>
-<span class="normal"> 83</span>
-<span class="normal"> 84</span>
-<span class="normal"> 85</span>
-<span class="normal"> 86</span>
-<span class="normal"> 87</span>
-<span class="normal"> 88</span>
-<span class="normal"> 89</span>
-<span class="normal"> 90</span>
-<span class="normal"> 91</span>
-<span class="normal"> 92</span>
-<span class="normal"> 93</span>
-<span class="normal"> 94</span>
-<span class="normal"> 95</span>
-<span class="normal"> 96</span>
-<span class="normal"> 97</span>
-<span class="normal"> 98</span>
-<span class="normal"> 99</span>
-<span class="normal">100</span>
-<span class="normal">101</span>
-<span class="normal">102</span>
-<span class="normal">103</span>
-<span class="normal">104</span>
-<span class="normal">105</span>
-<span class="normal">106</span>
-<span class="normal">107</span>
-<span class="normal">108</span>
-<span class="normal">109</span>
-<span class="normal">110</span>
-<span class="normal">111</span>
-<span class="normal">112</span>
-<span class="normal">113</span>
-<span class="normal">114</span>
-<span class="normal">115</span>
-<span class="normal">116</span>
-<span class="normal">117</span>
-<span class="normal">118</span>
-<span class="normal">119</span>
-<span class="normal">120</span>
-<span class="normal">121</span>
-<span class="normal">122</span>
-<span class="normal">123</span>
-<span class="normal">124</span>
-<span class="normal">125</span>
-<span class="normal">126</span>
-<span class="normal">127</span>
-<span class="normal">128</span>
-<span class="normal">129</span>
-<span class="normal">130</span>
-<span class="normal">131</span>
-<span class="normal">132</span>
-<span class="normal">133</span>
-<span class="normal">134</span>
-<span class="normal">135</span>
-<span class="normal">136</span>
-<span class="normal">137</span>
-<span class="normal">138</span>
-<span class="normal">139</span>
-<span class="normal">140</span>
-<span class="normal">141</span>
-<span class="normal">142</span>
-<span class="normal">143</span>
-<span class="normal">144</span>
-<span class="normal">145</span>
-<span class="normal">146</span>
-<span class="normal">147</span>
-<span class="normal">148</span>
-<span class="normal">149</span>
-<span class="normal">150</span>
-<span class="normal">151</span>
-<span class="normal">152</span>
-<span class="normal">153</span>
-<span class="normal">154</span>
-<span class="normal">155</span>
-<span class="normal">156</span>
-<span class="normal">157</span>
-<span class="normal">158</span>
-<span class="normal">159</span>
-<span class="normal">160</span>
-<span class="normal">161</span>
-<span class="normal">162</span>
-<span class="normal">163</span>
-<span class="normal">164</span>
-<span class="normal">165</span>
-<span class="normal">166</span>
-<span class="normal">167</span>
-<span class="normal">168</span>
-<span class="normal">169</span>
-<span class="normal">170</span>
-<span class="normal">171</span>
-<span class="normal">172</span>
-<span class="normal">173</span>
-<span class="normal">174</span>
-<span class="normal">175</span>
-<span class="normal">176</span>
-<span class="normal">177</span>
-<span class="normal">178</span>
-<span class="normal">179</span>
-<span class="normal">180</span>
-<span class="normal">181</span>
-<span class="normal">182</span>
-<span class="normal">183</span>
-<span class="normal">184</span>
-<span class="normal">185</span>
-<span class="normal">186</span>
-<span class="normal">187</span>
-<span class="normal">188</span>
-<span class="normal">189</span>
-<span class="normal">190</span>
-<span class="normal">191</span>
-<span class="normal">192</span>
-<span class="normal">193</span>
-<span class="normal">194</span>
-<span class="normal">195</span>
-<span class="normal">196</span>
-<span class="normal">197</span>
-<span class="normal">198</span>
-<span class="normal">199</span>
-<span class="normal">200</span>
-<span class="normal">201</span>
-<span class="normal">202</span>
-<span class="normal">203</span>
-<span class="normal">204</span>
-<span class="normal">205</span>
-<span class="normal">206</span>
-<span class="normal">207</span>
-<span class="normal">208</span>
-<span class="normal">209</span>
-<span class="normal">210</span>
-<span class="normal">211</span>
-<span class="normal">212</span>
-<span class="normal">213</span>
-<span class="normal">214</span>
-<span class="normal">215</span>
-<span class="normal">216</span>
-<span class="normal">217</span>
-<span class="normal">218</span>
-<span class="normal">219</span>
-<span class="normal">220</span>
-<span class="normal">221</span>
-<span class="normal">222</span>
-<span class="normal">223</span>
-<span class="normal">224</span>
-<span class="normal">225</span>
-<span class="normal">226</span>
-<span class="normal">227</span>
-<span class="normal">228</span>
-<span class="normal">229</span>
-<span class="normal">230</span>
-<span class="normal">231</span>
-<span class="normal">232</span>
-<span class="normal">233</span>
-<span class="normal">234</span>
-<span class="normal">235</span>
-<span class="normal">236</span>
-<span class="normal">237</span>
-<span class="normal">238</span>
-<span class="normal">239</span>
-<span class="normal">240</span>
-<span class="normal">241</span>
-<span class="normal">242</span>
-<span class="normal">243</span>
-<span class="normal">244</span>
-<span class="normal">245</span>
-<span class="normal">246</span>
-<span class="normal">247</span>
-<span class="normal">248</span>
-<span class="normal">249</span>
-<span class="normal">250</span>
-<span class="normal">251</span>
-<span class="normal">252</span>
-<span class="normal">253</span>
-<span class="normal">254</span>
-<span class="normal">255</span>
-<span class="normal">256</span>
-<span class="normal">257</span>
-<span class="normal">258</span>
-<span class="normal">259</span>
-<span class="normal">260</span>
-<span class="normal">261</span>
-<span class="normal">262</span>
-<span class="normal">263</span>
-<span class="normal">264</span>
-<span class="normal">265</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">DependenciesFinder</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">NodeVisitor</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    This AST visitor is used to find dependencies of a JITFunction. This can</span>
-<span class="sd">    be used to invalidate a JITFunction&#39;s hash when its source code -- or</span>
-<span class="sd">    that of its dependencies -- changes.</span>
-
-<span class="sd">    This visitor also keeps track of the global variables touched by the</span>
-<span class="sd">    JITFunction.  When we launch the kernel, we check that these have the same</span>
-<span class="sd">    values as they did when we ran this visitor.  If not, we raise an error (or</span>
-<span class="sd">    otherwise we could recompile).</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="nb">globals</span><span class="p">,</span> <span class="n">nonlocals</span><span class="p">,</span> <span class="n">src</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">hasher</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">))</span>
-
-        <span class="c1"># This function&#39;s __globals__ dict.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">globals</span> <span class="o">=</span> <span class="nb">globals</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">nonlocals</span> <span class="o">=</span> <span class="n">nonlocals</span>
-
-        <span class="c1"># Python builtins that can be accessed from Triton kernels.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">supported_python_builtins</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s1">&#39;float&#39;</span><span class="p">,</span>
-            <span class="s1">&#39;getattr&#39;</span><span class="p">,</span>
-            <span class="s1">&#39;int&#39;</span><span class="p">,</span>
-            <span class="s1">&#39;isinstance&#39;</span><span class="p">,</span>
-            <span class="s1">&#39;len&#39;</span><span class="p">,</span>
-            <span class="s1">&#39;list&#39;</span><span class="p">,</span>
-            <span class="s1">&#39;max&#39;</span><span class="p">,</span>
-            <span class="s1">&#39;min&#39;</span><span class="p">,</span>
-            <span class="s1">&#39;print&#39;</span><span class="p">,</span>
-            <span class="s1">&#39;range&#39;</span><span class="p">,</span>
-        <span class="p">}</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">supported_modules</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="n">GLUON_MODULE</span><span class="p">,</span>
-            <span class="n">TRITON_MODULE</span><span class="p">,</span>
-            <span class="s2">&quot;copy&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;math&quot;</span><span class="p">,</span>
-        <span class="p">}</span>
-
-        <span class="c1"># used_global_vals tells us which global variables are used by this</span>
-        <span class="c1"># function and all those it transitively calls, plus the values of those</span>
-        <span class="c1"># variables when each function was initially run.  (That is, if A calls</span>
-        <span class="c1"># C, and B calls C, then the values for C in used_global_vals will be</span>
-        <span class="c1"># from the first time C was run, either by A or B.)</span>
-        <span class="c1">#</span>
-        <span class="c1"># Each function may have a different __globals__ dict, so the global</span>
-        <span class="c1"># variable `foo` may actually have a different value in the different</span>
-        <span class="c1"># functions.  Thus this map is actually</span>
-        <span class="c1">#  (var_name, id(__globals__)) -&gt; (var_value, __globals__).</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">used_global_vals</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">{}</span>
-
-        <span class="bp">self</span><span class="o">.</span><span class="n">visiting_arg_default_value</span> <span class="o">=</span> <span class="kc">False</span>
-
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">ret</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">hasher</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_is_triton_builtin</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">,</span> <span class="n">func</span><span class="p">):</span>
-        <span class="k">if</span> <span class="n">inspect</span><span class="o">.</span><span class="n">isbuiltin</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">func</span><span class="p">):</span>
-            <span class="k">return</span> <span class="kc">True</span>
-        <span class="n">module</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="s2">&quot;__module__&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">module</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">TRITON_MODULE</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_update_hash</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">):</span>
-        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="n">JITCallable</span><span class="p">)</span>
-        <span class="c1"># Merge our used_global_vals with those of the called function,</span>
-        <span class="c1"># after checking that all overlapping values are consistent.</span>
-        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">used_global_vals</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span> <span class="o">&amp;</span> <span class="n">func</span><span class="o">.</span><span class="n">used_global_vals</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
-            <span class="n">var_name</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">k</span>
-            <span class="n">v1</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">used_global_vals</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
-            <span class="n">v2</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">func</span><span class="o">.</span><span class="n">used_global_vals</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
-            <span class="k">if</span> <span class="n">v1</span> <span class="o">!=</span> <span class="n">v2</span><span class="p">:</span>
-                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;Global variable </span><span class="si">{</span><span class="n">var_name</span><span class="si">}</span><span class="s2"> has value </span><span class="si">{</span><span class="n">v1</span><span class="si">}</span><span class="s2"> when compiling </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">, but inner kernel </span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> has conflicting value </span><span class="si">{</span><span class="n">v2</span><span class="si">}</span><span class="s2"> from when it was first compiled.  This is not allowed.&quot;</span>
-                <span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">used_global_vals</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">func</span><span class="o">.</span><span class="n">used_global_vals</span><span class="p">)</span>
-        <span class="c1"># update hash</span>
-        <span class="n">func_key</span> <span class="o">=</span> <span class="n">func</span><span class="o">.</span><span class="n">cache_key</span>
-        <span class="n">func_key</span> <span class="o">+=</span> <span class="nb">str</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="s2">&quot;noinline&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">hasher</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">func_key</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">))</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">record_reference</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">val</span><span class="p">,</span> <span class="n">var_dict</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-        <span class="kn">from</span><span class="w"> </span><span class="nn">..language.core</span><span class="w"> </span><span class="kn">import</span> <span class="n">constexpr</span>
-        <span class="c1"># Only keep track of &quot;interesting&quot; global variables, that non-evil users</span>
-        <span class="c1"># might change.  Don&#39;t consider functions, modules, builtins, etc.  This</span>
-        <span class="c1"># helps keep the list of vars we have to check small.</span>
-        <span class="k">if</span> <span class="n">val</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="nb">type</span><span class="p">(</span><span class="n">val</span><span class="p">)</span> <span class="ow">is</span> <span class="n">ModuleType</span><span class="p">:</span>
-            <span class="k">return</span>
-
-        <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="s2">&quot;__triton_builtin__&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
-            <span class="k">return</span>
-
-        <span class="c1"># Stubs that aren&#39;t real functions</span>
-        <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="s2">&quot;__module__&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;triton.language.extra.libdevice&quot;</span><span class="p">:</span>
-            <span class="k">return</span>
-
-        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">JITCallable</span><span class="p">):</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_update_hash</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>
-            <span class="k">return</span>
-
-        <span class="k">if</span> <span class="nb">callable</span><span class="p">(</span><span class="n">val</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="nb">type</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">constexpr</span><span class="p">):</span>
-            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unsupported function referenced: </span><span class="si">{</span><span class="n">val</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-
-        <span class="c1"># Python default arguments are resolved only once, when the</span>
-        <span class="c1"># function is defined.  So if you do `foo(a=A)` and the value of</span>
-        <span class="c1"># A changes, foo will still use the old value of A.</span>
-        <span class="c1"># It would be pretty evil if someone did `import x` and then</span>
-        <span class="c1"># `x = blah`.</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">visiting_arg_default_value</span><span class="p">:</span>
-            <span class="k">return</span>
-
-        <span class="k">if</span> <span class="n">var_dict</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">used_global_vals</span><span class="p">[(</span><span class="n">name</span><span class="p">,</span> <span class="nb">id</span><span class="p">(</span><span class="n">var_dict</span><span class="p">))]</span> <span class="o">=</span> <span class="p">(</span><span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">val</span><span class="p">),</span> <span class="n">var_dict</span><span class="p">)</span>
-        <span class="k">return</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">visit_Name</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
-        <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">ctx</span><span class="p">)</span> <span class="ow">is</span> <span class="n">ast</span><span class="o">.</span><span class="n">Store</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">node</span><span class="o">.</span><span class="n">id</span>
-
-        <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">local_names</span><span class="p">:</span>
-            <span class="c1"># The global name is hidden by the local name.</span>
-            <span class="k">return</span> <span class="kc">None</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">name_lookup</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
-            <span class="n">val</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">globals</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-            <span class="k">if</span> <span class="n">val</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="k">return</span> <span class="n">val</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">globals</span>
-            <span class="n">val</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">nonlocals</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-            <span class="k">if</span> <span class="n">val</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="k">return</span> <span class="n">val</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">nonlocals</span>
-            <span class="k">return</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span>
-
-        <span class="n">val</span><span class="p">,</span> <span class="n">var_dict</span> <span class="o">=</span> <span class="n">name_lookup</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">supported_python_builtins</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">val</span>
-
-        <span class="bp">self</span><span class="o">.</span><span class="n">record_reference</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">var_dict</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">val</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">visit_Tuple</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
-        <span class="c1"># We need to explicitly return the tuple values so that visit_Assign can</span>
-        <span class="c1"># access them in the case of `a, b = ...`.</span>
-        <span class="k">return</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">elt</span><span class="p">)</span> <span class="k">for</span> <span class="n">elt</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">elts</span><span class="p">]</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">visit_Attribute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
-        <span class="n">lhs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
-        <span class="k">while</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">lhs</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Attribute</span><span class="p">):</span>
-            <span class="n">lhs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">lhs</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
-        <span class="n">lhs_name</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">lhs</span><span class="p">,</span> <span class="s2">&quot;__name__&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">lhs</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">lhs_name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">supported_modules</span><span class="p">:</span>
-            <span class="k">return</span> <span class="kc">None</span>
-        <span class="n">ret</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">lhs</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">attr</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">record_reference</span><span class="p">(</span><span class="n">ret</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">ret</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">visit_FunctionDef</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
-        <span class="c1"># Save the local name, which may hide the global name.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">local_names</span> <span class="o">=</span> <span class="p">{</span><span class="n">arg</span><span class="o">.</span><span class="n">arg</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">args</span><span class="p">}</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">generic_visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">visit_arguments</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
-        <span class="c1"># The purpose of this function is to visit everything in `arguments`</span>
-        <span class="c1"># just like `generic_visit`, except when we&#39;re visiting default values</span>
-        <span class="c1"># (i.e. the `foo` part of `def fn(x = foo)`), we set</span>
-        <span class="c1"># self.visiting_arg_default_value = True.  This allows visit_Name to be</span>
-        <span class="c1"># aware that we&#39;re inside function default values, which have special</span>
-        <span class="c1"># semantics.</span>
-
-        <span class="c1"># According to the AST docs, the arguments node has the following structure.</span>
-        <span class="c1">#</span>
-        <span class="c1"># arguments = (arg* posonlyargs, arg* args, arg? vararg, arg* kwonlyargs,</span>
-        <span class="c1">#              expr* kw_defaults, arg? kwarg, expr* defaults)</span>
-        <span class="k">def</span><span class="w"> </span><span class="nf">visit_defaults</span><span class="p">(</span><span class="n">defaults</span><span class="p">):</span>
-            <span class="k">try</span><span class="p">:</span>
-                <span class="k">assert</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">visiting_arg_default_value</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">visiting_arg_default_value</span> <span class="o">=</span> <span class="kc">True</span>
-                <span class="k">for</span> <span class="n">expr</span> <span class="ow">in</span> <span class="n">defaults</span><span class="p">:</span>
-                    <span class="k">if</span> <span class="n">expr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                        <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">expr</span><span class="p">)</span>
-            <span class="k">finally</span><span class="p">:</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">visiting_arg_default_value</span> <span class="o">=</span> <span class="kc">False</span>
-
-        <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">itertools</span><span class="o">.</span><span class="n">chain</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">posonlyargs</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="p">[</span><span class="n">node</span><span class="o">.</span><span class="n">vararg</span><span class="p">]</span> <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">vararg</span> <span class="k">else</span> <span class="p">[],</span> <span class="n">node</span><span class="o">.</span><span class="n">kwonlyargs</span><span class="p">):</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span>
-
-        <span class="n">visit_defaults</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">kw_defaults</span><span class="p">)</span>
-
-        <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">kwarg</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">kwarg</span><span class="p">)</span>
-
-        <span class="n">visit_defaults</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">defaults</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">visitAssnTarget</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
-        <span class="c1"># Target is either a single string, or a list of strings (if the assn</span>
-        <span class="c1"># target is a tuple).</span>
-        <span class="n">target</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
-        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">local_names</span> <span class="o">|=</span> <span class="nb">set</span><span class="p">(</span><span class="n">target</span><span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">local_names</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">target</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">visit_Assign</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
-        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">targets</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
-            <span class="c1"># TODO(jlebar): I don&#39;t actually know how to hit this.  You don&#39;t</span>
-            <span class="c1"># get it from `a, b = ...` -- in that case, node.targets is a single</span>
-            <span class="c1"># Tuple, and in fact we *do* need to handle that case if we want</span>
-            <span class="c1"># existing code to work.</span>
-            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;Simultaneous multiple assignment is not supported.&quot;</span><span class="p">)</span>
-
-        <span class="bp">self</span><span class="o">.</span><span class="n">visitAssnTarget</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">targets</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-
-        <span class="c1"># This will re-visit the target, but that&#39;s OK.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">generic_visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">visit_AnnAssign</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">visitAssnTarget</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">target</span><span class="p">)</span>
-
-        <span class="c1"># This will re-visit the target, but that&#39;s OK.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">generic_visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">visit_For</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">visitAssnTarget</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">target</span><span class="p">)</span>
-
-        <span class="c1"># This will re-visit the target, but that&#39;s fine.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">generic_visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
-              </details>
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-
-
-
-
-
-  </div>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h4 id="txl.runtime.jit.KernelParam" class="doc doc-heading">
-            <code>KernelParam</code>
-
-
-</h4>
-
-
-    <div class="doc doc-contents ">
-
-
-
-        <p>Represents a parameter (name plus metadata) to a @jit'ed function.</p>
-
-
-
-
-
-
-
-
-              <details class="mkdocstrings-source">
-                <summary>Source code in <code>thirdparty/triton/python/txl/runtime/jit.py</code></summary>
-                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">299</span>
-<span class="normal">300</span>
-<span class="normal">301</span>
-<span class="normal">302</span>
-<span class="normal">303</span>
-<span class="normal">304</span>
-<span class="normal">305</span>
-<span class="normal">306</span>
-<span class="normal">307</span>
-<span class="normal">308</span>
-<span class="normal">309</span>
-<span class="normal">310</span>
-<span class="normal">311</span>
-<span class="normal">312</span>
-<span class="normal">313</span>
-<span class="normal">314</span>
-<span class="normal">315</span>
-<span class="normal">316</span>
-<span class="normal">317</span>
-<span class="normal">318</span>
-<span class="normal">319</span>
-<span class="normal">320</span>
-<span class="normal">321</span>
-<span class="normal">322</span>
-<span class="normal">323</span>
-<span class="normal">324</span>
-<span class="normal">325</span>
-<span class="normal">326</span>
-<span class="normal">327</span>
-<span class="normal">328</span>
-<span class="normal">329</span>
-<span class="normal">330</span>
-<span class="normal">331</span>
-<span class="normal">332</span>
-<span class="normal">333</span>
-<span class="normal">334</span>
-<span class="normal">335</span>
-<span class="normal">336</span>
-<span class="normal">337</span>
-<span class="normal">338</span>
-<span class="normal">339</span>
-<span class="normal">340</span>
-<span class="normal">341</span>
-<span class="normal">342</span>
-<span class="normal">343</span>
-<span class="normal">344</span>
-<span class="normal">345</span>
-<span class="normal">346</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">KernelParam</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Represents a parameter (name plus metadata) to a @jit&#39;ed function.&quot;&quot;&quot;</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">param</span><span class="p">:</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Parameter</span><span class="p">,</span> <span class="n">do_not_specialize</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
-                 <span class="n">do_not_specialize_on_alignment</span><span class="p">:</span> <span class="nb">bool</span><span class="p">):</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">num</span> <span class="o">=</span> <span class="n">num</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_param</span> <span class="o">=</span> <span class="n">param</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">do_not_specialize</span> <span class="o">=</span> <span class="n">do_not_specialize</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">do_not_specialize_on_alignment</span> <span class="o">=</span> <span class="n">do_not_specialize_on_alignment</span>
-
-    <span class="nd">@cached_property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_param</span><span class="o">.</span><span class="n">name</span>
-
-    <span class="nd">@cached_property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">annotation</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_param</span><span class="o">.</span><span class="n">annotation</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_param</span><span class="o">.</span><span class="n">annotation</span> <span class="o">==</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Parameter</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
-            <span class="k">return</span> <span class="s2">&quot;&quot;</span>
-        <span class="k">return</span> <span class="n">_normalize_ty</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_param</span><span class="o">.</span><span class="n">annotation</span><span class="p">)</span>
-
-    <span class="nd">@cached_property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">annotation_type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="n">a</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">annotation</span>
-        <span class="k">if</span> <span class="n">a</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;*k&quot;</span><span class="p">):</span>
-            <span class="n">a</span> <span class="o">=</span> <span class="n">a</span><span class="p">[</span><span class="mi">2</span><span class="p">:]</span>
-        <span class="k">elif</span> <span class="n">a</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;*&quot;</span><span class="p">):</span>
-            <span class="n">a</span> <span class="o">=</span> <span class="n">a</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
-        <span class="k">if</span> <span class="n">a</span> <span class="ow">in</span> <span class="nb">set</span><span class="p">(</span><span class="n">type_canonicalisation_dict</span><span class="o">.</span><span class="n">values</span><span class="p">()):</span>
-            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">annotation</span>
-        <span class="k">return</span> <span class="s2">&quot;&quot;</span>
-
-    <span class="nd">@cached_property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_constexpr</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">return</span> <span class="s2">&quot;constexpr&quot;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">annotation</span>
-
-    <span class="nd">@cached_property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_const</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_constexpr</span><span class="p">:</span>
-            <span class="k">return</span> <span class="kc">False</span>
-        <span class="k">return</span> <span class="s2">&quot;const&quot;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">annotation</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">annotation</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;*k&quot;</span><span class="p">)</span>
-
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">default</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_param</span><span class="o">.</span><span class="n">default</span>
-
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">has_default</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_param</span><span class="o">.</span><span class="n">default</span> <span class="o">!=</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Parameter</span><span class="o">.</span><span class="n">empty</span>
-</code></pre></div></td></tr></table></div>
-              </details>
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-
-
-
-
-
-  </div>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h4 id="txl.runtime.jit.KernelInterface" class="doc doc-heading">
-            <code>KernelInterface</code>
-
-
-</h4>
-
-
-    <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><span title="typing.Generic">Generic</span>[<span title="txl.runtime.jit.T">T</span>]</code></p>
-
-
-
-
-
-
-
-
-
-
-              <details class="mkdocstrings-source">
-                <summary>Source code in <code>thirdparty/triton/python/txl/runtime/jit.py</code></summary>
-                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">415</span>
-<span class="normal">416</span>
-<span class="normal">417</span>
-<span class="normal">418</span>
-<span class="normal">419</span>
-<span class="normal">420</span>
-<span class="normal">421</span>
-<span class="normal">422</span>
-<span class="normal">423</span>
-<span class="normal">424</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">KernelInterface</span><span class="p">(</span><span class="n">Generic</span><span class="p">[</span><span class="n">T</span><span class="p">]):</span>
-    <span class="n">run</span><span class="p">:</span> <span class="n">T</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">grid</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        A JIT function is launched with: fn[grid](*args, **kwargs).</span>
-<span class="sd">        Hence JITFunction.__getitem__ returns a callable proxy that</span>
-<span class="sd">        memorizes the grid.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="k">lambda</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">grid</span><span class="o">=</span><span class="n">grid</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
-              </details>
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-
-<h5 id="txl.runtime.jit.KernelInterface-functions">Functions</h5>
-
-<div class="doc doc-object doc-function">
-
-
-<h6 id="txl.runtime.jit.KernelInterface.__getitem__" class="doc doc-heading">
-            <code class="highlight language-python"><span class="fm">__getitem__</span><span class="p">(</span><span class="n">grid</span><span class="p">)</span></code>
-
-</h6>
-
-
-    <div class="doc doc-contents ">
-
-        <p>A JIT function is launched with: fn<a href="*args, **kwargs">grid</a>.
-Hence JITFunction.<strong>getitem</strong> returns a callable proxy that
-memorizes the grid.</p>
-
-
-            <details class="mkdocstrings-source">
-              <summary>Source code in <code>thirdparty/triton/python/txl/runtime/jit.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">418</span>
-<span class="normal">419</span>
-<span class="normal">420</span>
-<span class="normal">421</span>
-<span class="normal">422</span>
-<span class="normal">423</span>
-<span class="normal">424</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">grid</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">T</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    A JIT function is launched with: fn[grid](*args, **kwargs).</span>
-<span class="sd">    Hence JITFunction.__getitem__ returns a callable proxy that</span>
-<span class="sd">    memorizes the grid.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">return</span> <span class="k">lambda</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">grid</span><span class="o">=</span><span class="n">grid</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
-            </details>
-    </div>
-
-</div>
-
-
-
-  </div>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h4 id="txl.runtime.jit.JITCallable" class="doc doc-heading">
-            <code>JITCallable</code>
-
-
-</h4>
-
-
-    <div class="doc doc-contents ">
-
-
-
-
-
-
-
-
-
-
-              <details class="mkdocstrings-source">
-                <summary>Source code in <code>thirdparty/triton/python/txl/runtime/jit.py</code></summary>
-                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">502</span>
-<span class="normal">503</span>
-<span class="normal">504</span>
-<span class="normal">505</span>
-<span class="normal">506</span>
-<span class="normal">507</span>
-<span class="normal">508</span>
-<span class="normal">509</span>
-<span class="normal">510</span>
-<span class="normal">511</span>
-<span class="normal">512</span>
-<span class="normal">513</span>
-<span class="normal">514</span>
-<span class="normal">515</span>
-<span class="normal">516</span>
-<span class="normal">517</span>
-<span class="normal">518</span>
-<span class="normal">519</span>
-<span class="normal">520</span>
-<span class="normal">521</span>
-<span class="normal">522</span>
-<span class="normal">523</span>
-<span class="normal">524</span>
-<span class="normal">525</span>
-<span class="normal">526</span>
-<span class="normal">527</span>
-<span class="normal">528</span>
-<span class="normal">529</span>
-<span class="normal">530</span>
-<span class="normal">531</span>
-<span class="normal">532</span>
-<span class="normal">533</span>
-<span class="normal">534</span>
-<span class="normal">535</span>
-<span class="normal">536</span>
-<span class="normal">537</span>
-<span class="normal">538</span>
-<span class="normal">539</span>
-<span class="normal">540</span>
-<span class="normal">541</span>
-<span class="normal">542</span>
-<span class="normal">543</span>
-<span class="normal">544</span>
-<span class="normal">545</span>
-<span class="normal">546</span>
-<span class="normal">547</span>
-<span class="normal">548</span>
-<span class="normal">549</span>
-<span class="normal">550</span>
-<span class="normal">551</span>
-<span class="normal">552</span>
-<span class="normal">553</span>
-<span class="normal">554</span>
-<span class="normal">555</span>
-<span class="normal">556</span>
-<span class="normal">557</span>
-<span class="normal">558</span>
-<span class="normal">559</span>
-<span class="normal">560</span>
-<span class="normal">561</span>
-<span class="normal">562</span>
-<span class="normal">563</span>
-<span class="normal">564</span>
-<span class="normal">565</span>
-<span class="normal">566</span>
-<span class="normal">567</span>
-<span class="normal">568</span>
-<span class="normal">569</span>
-<span class="normal">570</span>
-<span class="normal">571</span>
-<span class="normal">572</span>
-<span class="normal">573</span>
-<span class="normal">574</span>
-<span class="normal">575</span>
-<span class="normal">576</span>
-<span class="normal">577</span>
-<span class="normal">578</span>
-<span class="normal">579</span>
-<span class="normal">580</span>
-<span class="normal">581</span>
-<span class="normal">582</span>
-<span class="normal">583</span>
-<span class="normal">584</span>
-<span class="normal">585</span>
-<span class="normal">586</span>
-<span class="normal">587</span>
-<span class="normal">588</span>
-<span class="normal">589</span>
-<span class="normal">590</span>
-<span class="normal">591</span>
-<span class="normal">592</span>
-<span class="normal">593</span>
-<span class="normal">594</span>
-<span class="normal">595</span>
-<span class="normal">596</span>
-<span class="normal">597</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">JITCallable</span><span class="p">:</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fn</span><span class="p">):</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">fn</span> <span class="o">=</span> <span class="n">fn</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">signature</span> <span class="o">=</span> <span class="n">inspect</span><span class="o">.</span><span class="n">signature</span><span class="p">(</span><span class="n">fn</span><span class="p">)</span>
-        <span class="k">try</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">raw_src</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">starting_line_number</span> <span class="o">=</span> <span class="n">inspect</span><span class="o">.</span><span class="n">getsourcelines</span><span class="p">(</span><span class="n">fn</span><span class="p">)</span>
-        <span class="k">except</span> <span class="ne">OSError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;@jit functions should be defined in a Python file&quot;</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_fn_name</span> <span class="o">=</span> <span class="n">get_full_name</span><span class="p">(</span><span class="n">fn</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_hash_lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">RLock</span><span class="p">()</span>
-
-        <span class="c1"># function source code (without decorators)</span>
-        <span class="n">src</span> <span class="o">=</span> <span class="n">textwrap</span><span class="o">.</span><span class="n">dedent</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">raw_src</span><span class="p">))</span>
-        <span class="n">src</span> <span class="o">=</span> <span class="n">src</span><span class="p">[</span><span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^def\s+\w+\s*\(&quot;</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">MULTILINE</span><span class="p">)</span><span class="o">.</span><span class="n">start</span><span class="p">():]</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_src</span> <span class="o">=</span> <span class="n">src</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">hash</span> <span class="o">=</span> <span class="kc">None</span>
-
-        <span class="c1"># Map of global variables used by the function and any functions it</span>
-        <span class="c1"># transitively calls, plus their values.  The values are collected when</span>
-        <span class="c1"># the function is first compiled.  Then every time we run the function,</span>
-        <span class="c1"># we check that the values of the globals match what&#39;s expected,</span>
-        <span class="c1"># otherwise we raise an error.</span>
-        <span class="c1">#</span>
-        <span class="c1"># Different functions can have different __globals__ maps, so the map</span>
-        <span class="c1"># key is actually (var name, id(__globals__)), and the map value is</span>
-        <span class="c1"># (value, __globals__).</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">used_global_vals</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="n">Tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">{}</span>
-
-        <span class="c1"># reuse docs of wrapped function</span>
-        <span class="bp">self</span><span class="o">.</span><span class="vm">__doc__</span> <span class="o">=</span> <span class="n">fn</span><span class="o">.</span><span class="vm">__doc__</span>
-        <span class="bp">self</span><span class="o">.</span><span class="vm">__name__</span> <span class="o">=</span> <span class="n">fn</span><span class="o">.</span><span class="vm">__name__</span>
-        <span class="bp">self</span><span class="o">.</span><span class="vm">__qualname__</span> <span class="o">=</span> <span class="n">fn</span><span class="o">.</span><span class="vm">__qualname__</span>
-        <span class="bp">self</span><span class="o">.</span><span class="vm">__globals__</span> <span class="o">=</span> <span class="n">fn</span><span class="o">.</span><span class="vm">__globals__</span>
-        <span class="bp">self</span><span class="o">.</span><span class="vm">__module__</span> <span class="o">=</span> <span class="n">fn</span><span class="o">.</span><span class="vm">__module__</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">get_capture_scope</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__globals__</span> <span class="o">|</span> <span class="n">inspect</span><span class="o">.</span><span class="n">getclosurevars</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">fn</span><span class="p">)</span><span class="o">.</span><span class="n">nonlocals</span>
-
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">cache_key</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="c1"># TODO : hash should be attribute of `self`</span>
-        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_hash_lock</span><span class="p">:</span>
-            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">hash</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">hash</span>
-            <span class="c1"># Set a placeholder hash to break recursion in case the function</span>
-            <span class="c1"># transitively calls itself. The full hash is set after.</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">hash</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;recursion:</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_fn_name</span><span class="si">}</span><span class="s2">&quot;</span>
-            <span class="n">nonlocals</span> <span class="o">=</span> <span class="n">inspect</span><span class="o">.</span><span class="n">getclosurevars</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">fn</span><span class="p">)</span><span class="o">.</span><span class="n">nonlocals</span>
-            <span class="n">dependencies_finder</span> <span class="o">=</span> <span class="n">DependenciesFinder</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_fn_name</span><span class="p">,</span> <span class="nb">globals</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="vm">__globals__</span><span class="p">,</span> <span class="n">nonlocals</span><span class="o">=</span><span class="n">nonlocals</span><span class="p">,</span>
-                                                     <span class="n">src</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">src</span><span class="p">)</span>
-            <span class="n">dependencies_finder</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">parse</span><span class="p">())</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">hash</span> <span class="o">=</span> <span class="n">dependencies_finder</span><span class="o">.</span><span class="n">ret</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">starting_line_number</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">used_global_vals</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">dependencies_finder</span><span class="o">.</span><span class="n">used_global_vals</span><span class="o">.</span><span class="n">items</span><span class="p">()))</span>
-
-            <span class="kn">from</span><span class="w"> </span><span class="nn">triton.language.core</span><span class="w"> </span><span class="kn">import</span> <span class="n">constexpr</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">hash</span> <span class="o">+=</span> <span class="nb">str</span><span class="p">([(</span><span class="n">name</span><span class="p">,</span> <span class="n">val</span><span class="p">)</span>
-                              <span class="k">for</span> <span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">_</span><span class="p">),</span> <span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">_</span><span class="p">)</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">used_global_vals</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
-                              <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">constexpr</span><span class="p">)])</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">hash</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">hash</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">hash</span>
-
-    <span class="c1"># we do not parse `src` in the constructor because</span>
-    <span class="c1"># the user might want to monkey-patch self.src dynamically.</span>
-    <span class="c1"># Our unit tests do this, for example.</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_src</span><span class="p">)</span>
-        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tree</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Module</span><span class="p">)</span>
-        <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">tree</span><span class="o">.</span><span class="n">body</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span>
-        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tree</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">ast</span><span class="o">.</span><span class="n">FunctionDef</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">tree</span>
-
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">type</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="kn">from</span><span class="w"> </span><span class="nn">triton.language.core</span><span class="w"> </span><span class="kn">import</span> <span class="n">constexpr_type</span>
-        <span class="k">return</span> <span class="n">constexpr_type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_unsafe_update_src</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_src</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        The only method allowed to modify src.</span>
-<span class="sd">        Bypasses the __setattr__ restriction by calling super().__setattr__ directly.</span>
-
-<span class="sd">        Note that it is the callers responsibility to make sure any triton functions that call this function have the `.hash` value reset to None.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">hash</span> <span class="o">=</span> <span class="kc">None</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_src</span> <span class="o">=</span> <span class="n">new_src</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_set_src</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;Cannot set attribute &#39;src&#39; directly. &quot;</span>
-                             <span class="s2">&quot;Use &#39;_unsafe_update_src()&#39; and manually clear `.hash` of all callers&quot;</span>
-                             <span class="s2">&quot;instead.&quot;</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_get_src</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_src</span>
-
-    <span class="n">src</span> <span class="o">=</span> <span class="nb">property</span><span class="p">(</span><span class="n">fget</span><span class="o">=</span><span class="n">_get_src</span><span class="p">,</span> <span class="n">fset</span><span class="o">=</span><span class="n">_set_src</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
-              </details>
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-
-
-
-
-
-  </div>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h4 id="txl.runtime.jit.TXLJITFunction" class="doc doc-heading">
-            <code>TXLJITFunction</code>
-
-
-</h4>
-
-
-    <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><span title="triton.runtime.JITFunction">JITFunction</span></code></p>
-
-
-
-
-
-
-
-
-
-
-              <details class="mkdocstrings-source">
-                <summary>Source code in <code>thirdparty/triton/python/txl/runtime/jit.py</code></summary>
-                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">608</span>
-<span class="normal">609</span>
-<span class="normal">610</span>
-<span class="normal">611</span>
-<span class="normal">612</span>
-<span class="normal">613</span>
-<span class="normal">614</span>
-<span class="normal">615</span>
-<span class="normal">616</span>
-<span class="normal">617</span>
-<span class="normal">618</span>
-<span class="normal">619</span>
-<span class="normal">620</span>
-<span class="normal">621</span>
-<span class="normal">622</span>
-<span class="normal">623</span>
-<span class="normal">624</span>
-<span class="normal">625</span>
-<span class="normal">626</span>
-<span class="normal">627</span>
-<span class="normal">628</span>
-<span class="normal">629</span>
-<span class="normal">630</span>
-<span class="normal">631</span>
-<span class="normal">632</span>
-<span class="normal">633</span>
-<span class="normal">634</span>
-<span class="normal">635</span>
-<span class="normal">636</span>
-<span class="normal">637</span>
-<span class="normal">638</span>
-<span class="normal">639</span>
-<span class="normal">640</span>
-<span class="normal">641</span>
-<span class="normal">642</span>
-<span class="normal">643</span>
-<span class="normal">644</span>
-<span class="normal">645</span>
-<span class="normal">646</span>
-<span class="normal">647</span>
-<span class="normal">648</span>
-<span class="normal">649</span>
-<span class="normal">650</span>
-<span class="normal">651</span>
-<span class="normal">652</span>
-<span class="normal">653</span>
-<span class="normal">654</span>
-<span class="normal">655</span>
-<span class="normal">656</span>
-<span class="normal">657</span>
-<span class="normal">658</span>
-<span class="normal">659</span>
-<span class="normal">660</span>
-<span class="normal">661</span>
-<span class="normal">662</span>
-<span class="normal">663</span>
-<span class="normal">664</span>
-<span class="normal">665</span>
-<span class="normal">666</span>
-<span class="normal">667</span>
-<span class="normal">668</span>
-<span class="normal">669</span>
-<span class="normal">670</span>
-<span class="normal">671</span>
-<span class="normal">672</span>
-<span class="normal">673</span>
-<span class="normal">674</span>
-<span class="normal">675</span>
-<span class="normal">676</span>
-<span class="normal">677</span>
-<span class="normal">678</span>
-<span class="normal">679</span>
-<span class="normal">680</span>
-<span class="normal">681</span>
-<span class="normal">682</span>
-<span class="normal">683</span>
-<span class="normal">684</span>
-<span class="normal">685</span>
-<span class="normal">686</span>
-<span class="normal">687</span>
-<span class="normal">688</span>
-<span class="normal">689</span>
-<span class="normal">690</span>
-<span class="normal">691</span>
-<span class="normal">692</span>
-<span class="normal">693</span>
-<span class="normal">694</span>
-<span class="normal">695</span>
-<span class="normal">696</span>
-<span class="normal">697</span>
-<span class="normal">698</span>
-<span class="normal">699</span>
-<span class="normal">700</span>
-<span class="normal">701</span>
-<span class="normal">702</span>
-<span class="normal">703</span>
-<span class="normal">704</span>
-<span class="normal">705</span>
-<span class="normal">706</span>
-<span class="normal">707</span>
-<span class="normal">708</span>
-<span class="normal">709</span>
-<span class="normal">710</span>
-<span class="normal">711</span>
-<span class="normal">712</span>
-<span class="normal">713</span>
-<span class="normal">714</span>
-<span class="normal">715</span>
-<span class="normal">716</span>
-<span class="normal">717</span>
-<span class="normal">718</span>
-<span class="normal">719</span>
-<span class="normal">720</span>
-<span class="normal">721</span>
-<span class="normal">722</span>
-<span class="normal">723</span>
-<span class="normal">724</span>
-<span class="normal">725</span>
-<span class="normal">726</span>
-<span class="normal">727</span>
-<span class="normal">728</span>
-<span class="normal">729</span>
-<span class="normal">730</span>
-<span class="normal">731</span>
-<span class="normal">732</span>
-<span class="normal">733</span>
-<span class="normal">734</span>
-<span class="normal">735</span>
-<span class="normal">736</span>
-<span class="normal">737</span>
-<span class="normal">738</span>
-<span class="normal">739</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TXLJITFunction</span><span class="p">(</span><span class="n">JITFunction</span><span class="p">):</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">is_gluon</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">return</span> <span class="kc">False</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">create_binder</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Precompute as much as possible.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="kn">from</span><span class="w"> </span><span class="nn">..compiler</span><span class="w"> </span><span class="kn">import</span> <span class="n">CompiledKernel</span><span class="p">,</span> <span class="nb">compile</span><span class="p">,</span> <span class="n">ASTSource</span><span class="p">,</span> <span class="n">make_backend</span>
-        <span class="n">target</span> <span class="o">=</span> <span class="n">driver</span><span class="o">.</span><span class="n">active</span><span class="o">.</span><span class="n">get_current_target</span><span class="p">()</span>
-        <span class="n">backend</span> <span class="o">=</span> <span class="n">make_backend</span><span class="p">(</span><span class="n">target</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">CompiledKernel</span> <span class="o">=</span> <span class="n">CompiledKernel</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">compile</span> <span class="o">=</span> <span class="nb">compile</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">ASTSource</span> <span class="o">=</span> <span class="n">ASTSource</span>
-        <span class="n">binder</span> <span class="o">=</span> <span class="n">create_function_from_signature</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">signature</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">,</span> <span class="n">backend</span><span class="p">)</span>
-        <span class="k">return</span> <span class="p">{},</span> <span class="p">{},</span> <span class="n">target</span><span class="p">,</span> <span class="n">backend</span><span class="p">,</span> <span class="n">binder</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="n">grid</span><span class="p">,</span> <span class="n">warmup</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-        <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;debug&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;debug&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">)</span> <span class="ow">or</span> <span class="n">knobs</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">debug</span>
-        <span class="c1"># NOTE: txl</span>
-        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">txl_options</span><span class="p">:</span>
-            <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">kwargs</span><span class="p">:</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">txl_options</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">kwargs</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
-                <span class="k">del</span> <span class="n">kwargs</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
-
-        <span class="c1"># parse options</span>
-        <span class="n">device</span> <span class="o">=</span> <span class="n">driver</span><span class="o">.</span><span class="n">active</span><span class="o">.</span><span class="n">get_current_device</span><span class="p">()</span>
-        <span class="n">stream</span> <span class="o">=</span> <span class="n">driver</span><span class="o">.</span><span class="n">active</span><span class="o">.</span><span class="n">get_current_stream</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
-
-        <span class="c1"># Execute pre run hooks with args and kwargs</span>
-        <span class="k">for</span> <span class="n">hook</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">pre_run_hooks</span><span class="p">:</span>
-            <span class="n">hook</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-
-        <span class="n">kernel_cache</span><span class="p">,</span> <span class="n">kernel_key_cache</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">backend</span><span class="p">,</span> <span class="n">binder</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">device_caches</span><span class="p">[</span><span class="n">device</span><span class="p">]</span>
-        <span class="c1"># specialization is list[tuple[str, Any]], where first element of tuple is</span>
-        <span class="c1"># the type and the second parameter is the &#39;specialization&#39; value.</span>
-        <span class="n">bound_args</span><span class="p">,</span> <span class="n">specialization</span><span class="p">,</span> <span class="n">options</span> <span class="o">=</span> <span class="n">binder</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-
-        <span class="n">key</span> <span class="o">=</span> <span class="n">compute_cache_key</span><span class="p">(</span><span class="n">kernel_key_cache</span><span class="p">,</span> <span class="n">specialization</span><span class="p">,</span> <span class="n">options</span><span class="p">)</span>
-        <span class="n">kernel</span> <span class="o">=</span> <span class="n">kernel_cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-
-        <span class="c1"># Kernel is not cached; we have to compile.</span>
-        <span class="k">if</span> <span class="n">kernel</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">options</span><span class="p">,</span> <span class="n">signature</span><span class="p">,</span> <span class="n">constexprs</span><span class="p">,</span> <span class="n">attrs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pack_args</span><span class="p">(</span><span class="n">backend</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">,</span> <span class="n">bound_args</span><span class="p">,</span> <span class="n">specialization</span><span class="p">,</span>
-                                                                    <span class="n">options</span><span class="p">)</span>
-
-            <span class="n">kernel</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_do_compile</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">signature</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">constexprs</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">attrs</span><span class="p">,</span> <span class="n">warmup</span><span class="p">)</span>
-            <span class="k">if</span> <span class="n">kernel</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="k">return</span> <span class="kc">None</span>
-
-        <span class="c1"># Check that used global values have not changed.</span>
-        <span class="n">not_present</span> <span class="o">=</span> <span class="nb">object</span><span class="p">()</span>
-        <span class="k">for</span> <span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">_</span><span class="p">),</span> <span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">globals_dict</span><span class="p">)</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">used_global_vals</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
-            <span class="k">if</span> <span class="p">(</span><span class="n">newVal</span> <span class="o">:=</span> <span class="n">globals_dict</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">not_present</span><span class="p">))</span> <span class="o">!=</span> <span class="n">val</span><span class="p">:</span>
-                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-                    <span class="sa">f</span><span class="s2">&quot;Global variable </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> has changed since we compiled this kernel, from </span><span class="si">{</span><span class="n">val</span><span class="si">}</span><span class="s2"> to </span><span class="si">{</span><span class="n">newVal</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-
-        <span class="k">if</span> <span class="ow">not</span> <span class="n">warmup</span><span class="p">:</span>
-            <span class="c1"># canonicalize grid</span>
-            <span class="k">assert</span> <span class="n">grid</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-            <span class="k">if</span> <span class="nb">callable</span><span class="p">(</span><span class="n">grid</span><span class="p">):</span>
-                <span class="n">grid</span> <span class="o">=</span> <span class="n">grid</span><span class="p">(</span><span class="n">bound_args</span><span class="p">)</span>
-            <span class="n">grid_size</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">grid</span><span class="p">)</span>
-            <span class="n">grid_0</span> <span class="o">=</span> <span class="n">grid</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-            <span class="n">grid_1</span> <span class="o">=</span> <span class="n">grid</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="n">grid_size</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="mi">1</span>
-            <span class="n">grid_2</span> <span class="o">=</span> <span class="n">grid</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="k">if</span> <span class="n">grid_size</span> <span class="o">&gt;</span> <span class="mi">2</span> <span class="k">else</span> <span class="mi">1</span>
-            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">kernel</span><span class="p">,</span> <span class="s2">&quot;result&quot;</span><span class="p">):</span>
-                <span class="n">kernel</span> <span class="o">=</span> <span class="n">kernel</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
-            <span class="c1"># launch kernel</span>
-            <span class="n">launch_metadata</span> <span class="o">=</span> <span class="n">kernel</span><span class="o">.</span><span class="n">launch_metadata</span><span class="p">(</span><span class="n">grid</span><span class="p">,</span> <span class="n">stream</span><span class="p">,</span> <span class="o">*</span><span class="n">bound_args</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
-            <span class="n">kernel</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">grid_0</span><span class="p">,</span> <span class="n">grid_1</span><span class="p">,</span> <span class="n">grid_2</span><span class="p">,</span> <span class="n">stream</span><span class="p">,</span> <span class="n">kernel</span><span class="o">.</span><span class="n">function</span><span class="p">,</span> <span class="n">kernel</span><span class="o">.</span><span class="n">packed_metadata</span><span class="p">,</span> <span class="n">launch_metadata</span><span class="p">,</span>
-                       <span class="n">knobs</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">launch_enter_hook</span><span class="p">,</span> <span class="n">knobs</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">launch_exit_hook</span><span class="p">,</span> <span class="o">*</span><span class="n">bound_args</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
-        <span class="k">return</span> <span class="n">kernel</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fn</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">do_not_specialize</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">do_not_specialize_on_alignment</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">debug</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-                 <span class="n">noinline</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">launch_metadata</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-                 <span class="c1"># NOTE: txl</span>
-                 <span class="n">diff_mode</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">diff_select</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">log_dir</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">src_file</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">use_txl</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
-        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">fn</span><span class="o">=</span><span class="n">fn</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span> <span class="n">do_not_specialize</span><span class="o">=</span><span class="n">do_not_specialize</span><span class="p">,</span> <span class="n">do_not_specialize_on_alignment</span><span class="o">=</span><span class="n">do_not_specialize_on_alignment</span><span class="p">,</span> <span class="n">debug</span><span class="o">=</span><span class="n">debug</span><span class="p">,</span> <span class="n">noinline</span><span class="o">=</span><span class="n">noinline</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="nb">repr</span><span class="p">,</span> <span class="n">launch_metadata</span><span class="o">=</span><span class="n">launch_metadata</span><span class="p">)</span>
-
-        <span class="c1"># NOTE: txl</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">diff_mode</span> <span class="o">=</span> <span class="n">diff_mode</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">diff_select</span> <span class="o">=</span> <span class="n">diff_select</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">log_dir</span> <span class="o">=</span> <span class="n">log_dir</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">src_file</span> <span class="o">=</span> <span class="n">src_file</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">use_txl</span> <span class="o">=</span> <span class="n">use_txl</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">txl_options</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;num_warpgroups&#39;</span><span class="p">:</span> <span class="mi">1</span><span class="p">}</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_do_compile</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">signature</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">constexprs</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">attrs</span><span class="p">,</span> <span class="n">warmup</span><span class="p">):</span>
-        <span class="n">kernel_cache</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">backend</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">device_caches</span><span class="p">[</span><span class="n">device</span><span class="p">]</span>
-
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_call_hook</span><span class="p">(</span><span class="n">knobs</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">jit_cache_hook</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">signature</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">constexprs</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="p">[</span><span class="n">attrs</span><span class="p">],</span> <span class="n">warmup</span><span class="p">):</span>
-            <span class="k">return</span> <span class="kc">None</span>
-        <span class="c1"># NOTE: txl</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">src_file</span><span class="p">:</span>
-            <span class="n">src</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">src_file</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">src</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ASTSource</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">signature</span><span class="p">,</span> <span class="n">constexprs</span><span class="p">,</span> <span class="n">attrs</span><span class="p">)</span>
-
-        <span class="n">async_mode</span> <span class="o">=</span> <span class="n">_async_compile</span><span class="o">.</span><span class="n">active_mode</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
-        <span class="k">if</span> <span class="n">async_mode</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-
-            <span class="n">env_vars</span> <span class="o">=</span> <span class="n">get_cache_invalidating_env_vars</span><span class="p">()</span>
-            <span class="n">cache_key</span> <span class="o">=</span> <span class="n">get_cache_key</span><span class="p">(</span><span class="n">src</span><span class="p">,</span> <span class="n">backend</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="n">env_vars</span><span class="p">)</span>
-
-            <span class="k">def</span><span class="w"> </span><span class="nf">async_compile</span><span class="p">():</span>
-                <span class="c1"># txl</span>
-                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">src</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">,</span> <span class="n">_env_vars</span><span class="o">=</span><span class="n">env_vars</span><span class="p">,</span>
-                        <span class="n">diff_mode</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">diff_mode</span><span class="p">,</span> <span class="n">diff_select</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">diff_select</span><span class="p">,</span> <span class="n">log_dir</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">log_dir</span><span class="p">,</span> <span class="n">use_txl</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">use_txl</span><span class="p">,</span> <span class="n">txl_options</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">txl_options</span><span class="p">)</span>
-
-            <span class="k">def</span><span class="w"> </span><span class="nf">finalize_compile</span><span class="p">(</span><span class="n">kernel</span><span class="p">):</span>
-                <span class="c1"># txl</span>
-                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">diff_mode</span><span class="p">:</span>
-                    <span class="n">exit</span><span class="p">()</span>
-
-                <span class="n">kernel_cache</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">kernel</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_call_hook</span><span class="p">(</span><span class="n">knobs</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">jit_post_compile_hook</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">signature</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">constexprs</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span>
-                                <span class="p">[</span><span class="n">attrs</span><span class="p">],</span> <span class="n">warmup</span><span class="p">)</span>
-
-            <span class="n">kernel</span> <span class="o">=</span> <span class="n">async_mode</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">cache_key</span><span class="p">,</span> <span class="n">async_compile</span><span class="p">,</span> <span class="n">finalize_compile</span><span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="c1"># txl</span>
-            <span class="n">kernel</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">src</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">,</span>
-                    <span class="n">diff_mode</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">diff_mode</span><span class="p">,</span> <span class="n">diff_select</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">diff_select</span><span class="p">,</span> <span class="n">log_dir</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">log_dir</span><span class="p">,</span> <span class="n">use_txl</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">use_txl</span><span class="p">,</span> <span class="n">txl_options</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">txl_options</span><span class="p">)</span>
-            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">diff_mode</span><span class="p">:</span>
-                <span class="n">exit</span><span class="p">()</span>
-
-            <span class="n">kernel_cache</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">kernel</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_call_hook</span><span class="p">(</span><span class="n">knobs</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">jit_post_compile_hook</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">signature</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">constexprs</span><span class="p">,</span> <span class="n">options</span><span class="p">,</span> <span class="p">[</span><span class="n">attrs</span><span class="p">],</span>
-                            <span class="n">warmup</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">kernel</span>
-</code></pre></div></td></tr></table></div>
-              </details>
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-
-<h5 id="txl.runtime.jit.TXLJITFunction-functions">Functions</h5>
-
-<div class="doc doc-object doc-function">
-
-
-<h6 id="txl.runtime.jit.TXLJITFunction.create_binder" class="doc doc-heading">
-            <code class="highlight language-python"><span class="n">create_binder</span><span class="p">()</span></code>
-
-</h6>
-
-
-    <div class="doc doc-contents ">
-
-        <p>Precompute as much as possible.</p>
-
-
-            <details class="mkdocstrings-source">
-              <summary>Source code in <code>thirdparty/triton/python/txl/runtime/jit.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">613</span>
-<span class="normal">614</span>
-<span class="normal">615</span>
-<span class="normal">616</span>
-<span class="normal">617</span>
-<span class="normal">618</span>
-<span class="normal">619</span>
-<span class="normal">620</span>
-<span class="normal">621</span>
-<span class="normal">622</span>
-<span class="normal">623</span>
-<span class="normal">624</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">create_binder</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Precompute as much as possible.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">..compiler</span><span class="w"> </span><span class="kn">import</span> <span class="n">CompiledKernel</span><span class="p">,</span> <span class="nb">compile</span><span class="p">,</span> <span class="n">ASTSource</span><span class="p">,</span> <span class="n">make_backend</span>
-    <span class="n">target</span> <span class="o">=</span> <span class="n">driver</span><span class="o">.</span><span class="n">active</span><span class="o">.</span><span class="n">get_current_target</span><span class="p">()</span>
-    <span class="n">backend</span> <span class="o">=</span> <span class="n">make_backend</span><span class="p">(</span><span class="n">target</span><span class="p">)</span>
-    <span class="bp">self</span><span class="o">.</span><span class="n">CompiledKernel</span> <span class="o">=</span> <span class="n">CompiledKernel</span>
-    <span class="bp">self</span><span class="o">.</span><span class="n">compile</span> <span class="o">=</span> <span class="nb">compile</span>
-    <span class="bp">self</span><span class="o">.</span><span class="n">ASTSource</span> <span class="o">=</span> <span class="n">ASTSource</span>
-    <span class="n">binder</span> <span class="o">=</span> <span class="n">create_function_from_signature</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">signature</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">,</span> <span class="n">backend</span><span class="p">)</span>
-    <span class="k">return</span> <span class="p">{},</span> <span class="p">{},</span> <span class="n">target</span><span class="p">,</span> <span class="n">backend</span><span class="p">,</span> <span class="n">binder</span>
-</code></pre></div></td></tr></table></div>
-            </details>
-    </div>
-
-</div>
-
-
-
-  </div>
-
-    </div>
-
-</div>
-<h3 id="txl.runtime.jit-functions">Functions</h3>
-
-<div class="doc doc-object doc-function">
-
-
-<h4 id="txl.runtime.jit.create_function_from_signature" class="doc doc-heading">
-            <code class="highlight language-python"><span class="n">create_function_from_signature</span><span class="p">(</span><span class="n">sig</span><span class="p">,</span> <span class="n">kparams</span><span class="p">,</span> <span class="n">backend</span><span class="p">)</span></code>
-
-</h4>
-
-
-    <div class="doc doc-contents ">
-
-        <p>Equivalent to sig.bind followed by apply_defaults. This generates a
-native Python function (using exec) which can be memoized on a per-kernel
-basis to avoid having to run these expensive functions -- which constitute
-much of the kernel launch overhead -- every time we run the kernel.</p>
-
-
-            <details class="mkdocstrings-source">
-              <summary>Source code in <code>thirdparty/triton/python/txl/runtime/jit.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">440</span>
-<span class="normal">441</span>
-<span class="normal">442</span>
-<span class="normal">443</span>
-<span class="normal">444</span>
-<span class="normal">445</span>
-<span class="normal">446</span>
-<span class="normal">447</span>
-<span class="normal">448</span>
-<span class="normal">449</span>
-<span class="normal">450</span>
-<span class="normal">451</span>
-<span class="normal">452</span>
-<span class="normal">453</span>
-<span class="normal">454</span>
-<span class="normal">455</span>
-<span class="normal">456</span>
-<span class="normal">457</span>
-<span class="normal">458</span>
-<span class="normal">459</span>
-<span class="normal">460</span>
-<span class="normal">461</span>
-<span class="normal">462</span>
-<span class="normal">463</span>
-<span class="normal">464</span>
-<span class="normal">465</span>
-<span class="normal">466</span>
-<span class="normal">467</span>
-<span class="normal">468</span>
-<span class="normal">469</span>
-<span class="normal">470</span>
-<span class="normal">471</span>
-<span class="normal">472</span>
-<span class="normal">473</span>
-<span class="normal">474</span>
-<span class="normal">475</span>
-<span class="normal">476</span>
-<span class="normal">477</span>
-<span class="normal">478</span>
-<span class="normal">479</span>
-<span class="normal">480</span>
-<span class="normal">481</span>
-<span class="normal">482</span>
-<span class="normal">483</span>
-<span class="normal">484</span>
-<span class="normal">485</span>
-<span class="normal">486</span>
-<span class="normal">487</span>
-<span class="normal">488</span>
-<span class="normal">489</span>
-<span class="normal">490</span>
-<span class="normal">491</span>
-<span class="normal">492</span>
-<span class="normal">493</span>
-<span class="normal">494</span>
-<span class="normal">495</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">create_function_from_signature</span><span class="p">(</span><span class="n">sig</span><span class="p">,</span> <span class="n">kparams</span><span class="p">,</span> <span class="n">backend</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Equivalent to sig.bind followed by apply_defaults. This generates a</span>
-<span class="sd">    native Python function (using exec) which can be memoized on a per-kernel</span>
-<span class="sd">    basis to avoid having to run these expensive functions -- which constitute</span>
-<span class="sd">    much of the kernel launch overhead -- every time we run the kernel.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">kparams</span><span class="p">)</span>
-    <span class="c1"># Create the function argument list and the dict entries for the return statement</span>
-    <span class="n">specialization</span> <span class="o">=</span> <span class="p">[]</span>
-    <span class="c1"># signature</span>
-    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">kp</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">keys</span><span class="p">(),</span> <span class="n">kparams</span><span class="p">):</span>
-        <span class="k">if</span> <span class="n">kp</span><span class="o">.</span><span class="n">is_constexpr</span><span class="p">:</span>
-            <span class="n">specialization</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;(&quot;constexpr&quot;, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s1">)&#39;</span><span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">is_const</span> <span class="o">=</span> <span class="s1">&#39;True&#39;</span> <span class="k">if</span> <span class="n">kp</span><span class="o">.</span><span class="n">is_const</span> <span class="k">else</span> <span class="s1">&#39;False&#39;</span>
-            <span class="n">specialize</span> <span class="o">=</span> <span class="s1">&#39;False&#39;</span> <span class="k">if</span> <span class="n">kp</span><span class="o">.</span><span class="n">do_not_specialize</span> <span class="k">else</span> <span class="s1">&#39;True&#39;</span>
-            <span class="n">align</span> <span class="o">=</span> <span class="s1">&#39;False&#39;</span> <span class="k">if</span> <span class="n">kp</span><span class="o">.</span><span class="n">do_not_specialize_on_alignment</span> <span class="k">else</span> <span class="s1">&#39;True&#39;</span>
-            <span class="n">ret</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;specialize_impl(</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">is_const</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">specialize</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">align</span><span class="si">}</span><span class="s2">)&quot;</span>
-            <span class="k">if</span> <span class="n">kp</span><span class="o">.</span><span class="n">annotation_type</span><span class="p">:</span>
-                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">kp</span><span class="o">.</span><span class="n">annotation_type</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-                    <span class="k">if</span> <span class="n">kp</span><span class="o">.</span><span class="n">annotation_type</span> <span class="o">==</span> <span class="s2">&quot;u1&quot;</span> <span class="ow">or</span> <span class="n">kp</span><span class="o">.</span><span class="n">annotation_type</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;fp&quot;</span><span class="p">,</span> <span class="s2">&quot;bf&quot;</span><span class="p">]:</span>
-                        <span class="c1"># we do not specialize non-constexpr floats and bools:</span>
-                        <span class="n">specialize</span> <span class="o">=</span> <span class="kc">False</span>
-                <span class="k">if</span> <span class="n">specialize</span><span class="p">:</span>
-                    <span class="n">specialization</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;(&quot;</span><span class="si">{</span><span class="n">kp</span><span class="o">.</span><span class="n">annotation_type</span><span class="si">}</span><span class="s1">&quot;,) + </span><span class="si">{</span><span class="n">ret</span><span class="si">}</span><span class="s1">[1:]&#39;</span><span class="p">)</span>
-                <span class="k">else</span><span class="p">:</span>
-                    <span class="c1"># skip runtime specialization:</span>
-                    <span class="n">specialization</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;(&quot;</span><span class="si">{</span><span class="n">kp</span><span class="o">.</span><span class="n">annotation_type</span><span class="si">}</span><span class="s1">&quot;, None)&#39;</span><span class="p">)</span>
-            <span class="k">else</span><span class="p">:</span>
-                <span class="n">specialization</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">ret</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-
-    <span class="c1"># compute argument string for a given parameter</span>
-    <span class="n">arg</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">default</span> <span class="ow">is</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Parameter</span><span class="o">.</span><span class="n">empty</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">=default_</span><span class="si">{</span><span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="c1"># Join all arguments into a function definition string</span>
-    <span class="n">func_body</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;&quot;&quot;</span>
-<span class="s2">def dynamic_func(</span><span class="si">{</span><span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="nb">map</span><span class="p">(</span><span class="n">arg</span><span class="p">,</span><span class="w"> </span><span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">items</span><span class="p">()))</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;**options&quot;</span><span class="p">])</span><span class="si">}</span><span class="s2">):</span>
-<span class="s2">    params = </span><span class="se">{{</span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;: </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">keys</span><span class="p">()])</span><span class="si">}</span><span class="se">}}</span>
-<span class="s2">    specialization = [</span><span class="si">{</span><span class="s1">&#39;,&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">specialization</span><span class="p">)</span><span class="si">}</span><span class="s2">]</span>
-<span class="s2">    return params, specialization, options</span>
-<span class="s2">&quot;&quot;&quot;</span>
-    <span class="c1"># Prepare defaults to be inserted into function namespace</span>
-    <span class="n">func_namespace</span> <span class="o">=</span> <span class="p">{</span>
-        <span class="sa">f</span><span class="s2">&quot;default_</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">:</span> <span class="n">param</span><span class="o">.</span><span class="n">default</span>
-        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
-        <span class="k">if</span> <span class="n">param</span><span class="o">.</span><span class="n">default</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Parameter</span><span class="o">.</span><span class="n">empty</span>
-    <span class="p">}</span>
-
-    <span class="n">func_namespace</span><span class="p">[</span><span class="s2">&quot;JITCallable&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">JITCallable</span>
-    <span class="n">func_namespace</span><span class="p">[</span><span class="s2">&quot;specialize_impl&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">create_specialize_impl</span><span class="p">(</span><span class="n">backend</span><span class="o">.</span><span class="n">get_arg_specialization</span><span class="p">)</span>
-
-    <span class="c1"># Execute the function string in func_namespace to create the function</span>
-    <span class="n">exec</span><span class="p">(</span><span class="n">func_body</span><span class="p">,</span> <span class="n">func_namespace</span><span class="p">)</span>
-
-    <span class="c1"># Extract the newly created function from the namespace</span>
-    <span class="k">return</span> <span class="n">func_namespace</span><span class="p">[</span><span class="s1">&#39;dynamic_func&#39;</span><span class="p">]</span>
-</code></pre></div></td></tr></table></div>
-            </details>
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-function">
-
-
-<h4 id="txl.runtime.jit.jit" class="doc doc-heading">
-            <code class="highlight language-python"><span class="n">jit</span><span class="p">(</span><span class="n">fn</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">launch_metadata</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">do_not_specialize</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">do_not_specialize_on_alignment</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">debug</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">noinline</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">diff_mode</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">diff_select</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">log_dir</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">src_file</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">use_txl</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></code>
-
-</h4>
-          <div class="doc-overloads">
-<div class="doc-signature highlight"><pre><span></span><code><span class="nf">jit</span><span class="p">(</span><span class="n">fn</span><span class="p">:</span> <span class="n">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">JITFunction</span><span class="p">[</span><span class="n">T</span><span class="p">]</span>
-</code></pre></div><div class="doc-signature highlight"><pre><span></span><code><span class="nf">jit</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="nb">repr</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">launch_metadata</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">do_not_specialize</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Iterable</span><span class="p">[</span><span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">do_not_specialize_on_alignment</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Iterable</span><span class="p">[</span><span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">debug</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">noinline</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">T</span><span class="p">],</span> <span class="n">JITFunction</span><span class="p">[</span><span class="n">T</span><span class="p">]]</span>
-</code></pre></div>          </div>
-
-
-    <div class="doc doc-contents ">
-
-        <p>Decorator for JIT-compiling a function using the Triton compiler.</p>
-<p>:note: When a jit'd function is called, arguments are
-    implicitly converted to pointers if they have a :code:<code>.data_ptr()</code> method
-    and a <code>.dtype</code> attribute.</p>
-<p>:note: This function will be compiled and run on the GPU. It will only have access to:</p>
-<pre><code>   * python primitives,
-   * builtins within the triton package,
-   * arguments to this function,
-   * other jit'd functions
+<h2 id="jit-decorator"><code>@jit</code> Decorator</h2>
+<p>The <code>@jit</code> decorator compiles Triton kernels with TeraXLang extensions.</p>
+<pre><code class="language-python">from teraxlang import jit
+
+@jit
+def kernel(X, Y, Z, **kwargs):
+    # Your kernel code here
+    pass
 </code></pre>
-<p>:param fn: the function to be jit-compiled
-:type fn: Callable</p>
+<h2 id="config"><code>Config</code></h2>
+<p>Configuration for kernel autotuning.</p>
+<pre><code class="language-python">from teraxlang import Config
 
+config = Config(
+    {&quot;BLOCK_M&quot;: 128, &quot;BLOCK_N&quot;: 256},
+    {&quot;BLOCK_M&quot;: 256, &quot;BLOCK_N&quot;: 128},
+)
+</code></pre>
+<h2 id="autotune-decorator"><code>@autotune</code> Decorator</h2>
+<p>Automatically tune kernel configurations.</p>
+<pre><code class="language-python">from teraxlang import autotune, Config
 
-            <details class="mkdocstrings-source">
-              <summary>Source code in <code>thirdparty/triton/python/txl/runtime/jit.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">766</span>
-<span class="normal">767</span>
-<span class="normal">768</span>
-<span class="normal">769</span>
-<span class="normal">770</span>
-<span class="normal">771</span>
-<span class="normal">772</span>
-<span class="normal">773</span>
-<span class="normal">774</span>
-<span class="normal">775</span>
-<span class="normal">776</span>
-<span class="normal">777</span>
-<span class="normal">778</span>
-<span class="normal">779</span>
-<span class="normal">780</span>
-<span class="normal">781</span>
-<span class="normal">782</span>
-<span class="normal">783</span>
-<span class="normal">784</span>
-<span class="normal">785</span>
-<span class="normal">786</span>
-<span class="normal">787</span>
-<span class="normal">788</span>
-<span class="normal">789</span>
-<span class="normal">790</span>
-<span class="normal">791</span>
-<span class="normal">792</span>
-<span class="normal">793</span>
-<span class="normal">794</span>
-<span class="normal">795</span>
-<span class="normal">796</span>
-<span class="normal">797</span>
-<span class="normal">798</span>
-<span class="normal">799</span>
-<span class="normal">800</span>
-<span class="normal">801</span>
-<span class="normal">802</span>
-<span class="normal">803</span>
-<span class="normal">804</span>
-<span class="normal">805</span>
-<span class="normal">806</span>
-<span class="normal">807</span>
-<span class="normal">808</span>
-<span class="normal">809</span>
-<span class="normal">810</span>
-<span class="normal">811</span>
-<span class="normal">812</span>
-<span class="normal">813</span>
-<span class="normal">814</span>
-<span class="normal">815</span>
-<span class="normal">816</span>
-<span class="normal">817</span>
-<span class="normal">818</span>
-<span class="normal">819</span>
-<span class="normal">820</span>
-<span class="normal">821</span>
-<span class="normal">822</span>
-<span class="normal">823</span>
-<span class="normal">824</span>
-<span class="normal">825</span>
-<span class="normal">826</span>
-<span class="normal">827</span>
-<span class="normal">828</span>
-<span class="normal">829</span>
-<span class="normal">830</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">jit</span><span class="p">(</span>
-    <span class="n">fn</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">T</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="o">*</span><span class="p">,</span>
-    <span class="n">version</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-    <span class="nb">repr</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">launch_metadata</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">do_not_specialize</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Iterable</span><span class="p">[</span><span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">do_not_specialize_on_alignment</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Iterable</span><span class="p">[</span><span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">debug</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">noinline</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="c1"># NOTE: txl</span>
-    <span class="n">diff_mode</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="c1"># diff the passes</span>
-    <span class="n">diff_select</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="n">log_dir</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="c1"># log the intermediate ir</span>
-    <span class="n">src_file</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="c1"># use the src file directly for compilation</span>
-    <span class="n">use_txl</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="c1"># use txl passes</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">JITFunction</span><span class="p">[</span><span class="n">T</span><span class="p">],</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">T</span><span class="p">],</span> <span class="n">JITFunction</span><span class="p">[</span><span class="n">T</span><span class="p">]]]:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Decorator for JIT-compiling a function using the Triton compiler.</span>
+@autotune(
+    configs=[
+        Config({&quot;BLOCK_M&quot;: 128, &quot;BLOCK_N&quot;: 256}),
+        Config({&quot;BLOCK_M&quot;: 256, &quot;BLOCK_N&quot;: 128}),
+    ],
+    key=&quot;M * N&quot;,
+)
+def kernel(X, Y, Z, **kwargs):
+    ...
+</code></pre>
+<h2 id="heuristics-decorator"><code>@heuristics</code> Decorator</h2>
+<p>Apply heuristics to choose configurations.</p>
+<pre><code class="language-python">from teraxlang import heuristics
 
-<span class="sd">    :note: When a jit&#39;d function is called, arguments are</span>
-<span class="sd">        implicitly converted to pointers if they have a :code:`.data_ptr()` method</span>
-<span class="sd">        and a `.dtype` attribute.</span>
-
-<span class="sd">    :note: This function will be compiled and run on the GPU. It will only have access to:</span>
-
-<span class="sd">           * python primitives,</span>
-<span class="sd">           * builtins within the triton package,</span>
-<span class="sd">           * arguments to this function,</span>
-<span class="sd">           * other jit&#39;d functions</span>
-
-<span class="sd">    :param fn: the function to be jit-compiled</span>
-<span class="sd">    :type fn: Callable</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">decorator</span><span class="p">(</span><span class="n">fn</span><span class="p">:</span> <span class="n">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">JITFunction</span><span class="p">[</span><span class="n">T</span><span class="p">]:</span>
-        <span class="k">assert</span> <span class="nb">callable</span><span class="p">(</span><span class="n">fn</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">knobs</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">interpret</span><span class="p">:</span>
-            <span class="kn">from</span><span class="w"> </span><span class="nn">.interpreter</span><span class="w"> </span><span class="kn">import</span> <span class="n">InterpretedFunction</span>
-            <span class="k">return</span> <span class="n">InterpretedFunction</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span> <span class="n">do_not_specialize</span><span class="o">=</span><span class="n">do_not_specialize</span><span class="p">,</span>
-                                       <span class="n">do_not_specialize_on_alignment</span><span class="o">=</span><span class="n">do_not_specialize_on_alignment</span><span class="p">,</span> <span class="n">debug</span><span class="o">=</span><span class="n">debug</span><span class="p">,</span>
-                                       <span class="n">noinline</span><span class="o">=</span><span class="n">noinline</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="nb">repr</span><span class="p">,</span> <span class="n">launch_metadata</span><span class="o">=</span><span class="n">launch_metadata</span><span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">TXLJITFunction</span><span class="p">(</span>
-                <span class="n">fn</span><span class="p">,</span>
-                <span class="n">version</span><span class="o">=</span><span class="n">version</span><span class="p">,</span>
-                <span class="n">do_not_specialize</span><span class="o">=</span><span class="n">do_not_specialize</span><span class="p">,</span>
-                <span class="n">do_not_specialize_on_alignment</span><span class="o">=</span><span class="n">do_not_specialize_on_alignment</span><span class="p">,</span>
-                <span class="n">debug</span><span class="o">=</span><span class="n">debug</span><span class="p">,</span>
-                <span class="n">noinline</span><span class="o">=</span><span class="n">noinline</span><span class="p">,</span>
-                <span class="nb">repr</span><span class="o">=</span><span class="nb">repr</span><span class="p">,</span>
-                <span class="n">launch_metadata</span><span class="o">=</span><span class="n">launch_metadata</span><span class="p">,</span>
-                <span class="c1"># NOTE: txl</span>
-                <span class="n">diff_mode</span><span class="o">=</span><span class="n">diff_mode</span><span class="p">,</span>
-                <span class="n">diff_select</span><span class="o">=</span><span class="n">diff_select</span><span class="p">,</span>
-                <span class="n">log_dir</span><span class="o">=</span><span class="n">log_dir</span><span class="p">,</span>
-                <span class="n">src_file</span><span class="o">=</span><span class="n">src_file</span><span class="p">,</span>
-                <span class="n">use_txl</span><span class="o">=</span><span class="n">use_txl</span><span class="p">,</span>
-            <span class="p">)</span>
-
-    <span class="k">if</span> <span class="n">fn</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">decorator</span><span class="p">(</span><span class="n">fn</span><span class="p">)</span>
-
-    <span class="k">else</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">decorator</span>
-</code></pre></div></td></tr></table></div>
-            </details>
-    </div>
-
-</div>
-
-
-
-  </div>
-
-    </div>
-
-</div><p>members_order: source</p>
+@heuristics({
+    &quot;BLOCK_M&quot;: lambda M: 128 if M &lt; 1024 else 256,
+})
+def kernel(X, Y, Z, **kwargs):
+    ...
+</code></pre>
 
 
 

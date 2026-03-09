@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
-         <loc>https://deciding.github.io/txl/</loc>
-         <lastmod>2026-03-08</lastmod>
+         <loc>https://deciding.github.io/teraxlang/</loc>
+         <lastmod>2026-03-09</lastmod>
     </url>
     <url>
-         <loc>https://deciding.github.io/txl/api/core/</loc>
-         <lastmod>2026-03-08</lastmod>
+         <loc>https://deciding.github.io/teraxlang/api/core/</loc>
+         <lastmod>2026-03-09</lastmod>
     </url>
     <url>
-         <loc>https://deciding.github.io/txl/api/jit/</loc>
-         <lastmod>2026-03-08</lastmod>
+         <loc>https://deciding.github.io/teraxlang/api/jit/</loc>
+         <lastmod>2026-03-09</lastmod>
     </url>
 </urlset>

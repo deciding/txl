@@ -4,6 +4,7 @@ from triton.tools.tensor_descriptor import TensorDescriptor
 import teraxlang as txl
 from typing import Optional, Tuple
 import torch
+
 GROUP_SIZE = tl.constexpr(8)
 wg0_bunch_0_ready = tl.constexpr(8)
 wg1_bunch_0_ready = tl.constexpr(9)
@@ -13,8 +14,29 @@ sL_ready = tl.constexpr(12)
 warpgroup0_sync = tl.constexpr(13)
 warpgroup1_sync = tl.constexpr(14)
 
+
 @txl.jit
-def txl_mla0(q_nope_desc, q_pe_desc, kv_nope_ptr, kv_pe_ptr, o_desc, max_logits_desc, lse_desc, indices_ptr, SCALE_LOG2: tl.constexpr, S_Q: tl.constexpr, S_KV: tl.constexpr, B_H: tl.constexpr, D_Q: tl.constexpr, D_V: tl.constexpr, NUM_HEAD_BLOCKS: tl.constexpr, TOPK: tl.constexpr, B_TOPK: tl.constexpr, STRIDE_KV_NOPE_0: tl.constexpr, STRIDE_KV_PE_0: tl.constexpr):
+def txl_mla0(
+    q_nope_desc,
+    q_pe_desc,
+    kv_nope_ptr,
+    kv_pe_ptr,
+    o_desc,
+    max_logits_desc,
+    lse_desc,
+    indices_ptr,
+    SCALE_LOG2: tl.constexpr,
+    S_Q: tl.constexpr,
+    S_KV: tl.constexpr,
+    B_H: tl.constexpr,
+    D_Q: tl.constexpr,
+    D_V: tl.constexpr,
+    NUM_HEAD_BLOCKS: tl.constexpr,
+    TOPK: tl.constexpr,
+    B_TOPK: tl.constexpr,
+    STRIDE_KV_NOPE_0: tl.constexpr,
+    STRIDE_KV_PE_0: tl.constexpr,
+):
     tid = txl.tid(0)
     idx_in_warpgroup = tid % 128
     pid = tl.program_id(0)
@@ -41,8 +63,12 @@ def txl_mla0(q_nope_desc, q_pe_desc, kv_nope_ptr, kv_pe_ptr, o_desc, max_logits_
     sS1_buf = txl.smem_alloc([B_H, B_TOPK], dtype=tl.bfloat16, num_stages=1)
     sS1 = txl.get_buffer(sS1_buf, 0)
     sO = txl.get_buffer(q_nope_buf, 0)
-    is_kv_valid_layout0: tl.constexpr = txl.BlockedLayout([1, 1], [4, 8], [4, 1], [1, 0])
-    is_kv_valid_layout: tl.constexpr = txl.SliceLayout(dim=1, parent=is_kv_valid_layout0)
+    is_kv_valid_layout0: tl.constexpr = txl.BlockedLayout(
+        [1, 1], [4, 8], [4, 1], [1, 0]
+    )
+    is_kv_valid_layout: tl.constexpr = txl.SliceLayout(
+        dim=1, parent=is_kv_valid_layout0
+    )
     is_kv_valid_buf = txl.smem_alloc([B_TOPK], dtype=tl.int8, num_stages=2)
     is_kv_valid0 = txl.get_buffer(is_kv_valid_buf, 0)
     is_kv_valid1 = txl.get_buffer(is_kv_valid_buf, 1)
@@ -66,7 +92,7 @@ def txl_mla0(q_nope_desc, q_pe_desc, kv_nope_ptr, kv_pe_ptr, o_desc, max_logits_
     mbar_k1_ready = txl.mbar_alloc(128, num_stages=2)
     mbar_k1_ready0 = txl.get_buffer(mbar_k1_ready, 0)
     mbar_k1_ready1 = txl.get_buffer(mbar_k1_ready, 1)
-    mbar_is_kv_valid_ready_buf = txl.mbar_alloc(16, num_stages=1)
+    mbar_is_kv_valid_ready_buf = txl.mbar_alloc(128, num_stages=1)
     mbar_is_kv_valid_ready = txl.get_buffer(mbar_is_kv_valid_ready_buf, 0)
     if txl.is_warpgroup([0, 1]):
         txl.reg_alloc(216)
@@ -77,7 +103,7 @@ def txl_mla0(q_nope_desc, q_pe_desc, kv_nope_ptr, kv_pe_ptr, o_desc, max_logits_
             txl.tma_load(sQpe, q_pe_desc, [offs_q, 0], mbar_q_pe)
         txl.mbar_wait(mbar_q_nope, 0)
         txl.mbar_wait(mbar_q_pe, 0)
-        rM = tl.zeros([B_H], dtype=tl.float32) - float('inf')
+        rM = tl.zeros([B_H], dtype=tl.float32) - float("inf")
         rL = tl.zeros([B_H], dtype=tl.float32)
         rO = tl.zeros([B_H, 256], dtype=tl.float32)
         cur_bar_wait_phase = 0
@@ -123,7 +149,7 @@ def txl_mla0(q_nope_desc, q_pe_desc, kv_nope_ptr, kv_pe_ptr, o_desc, max_logits_
                 reg_is_kv_valid = txl.smem_load(is_kv_valid0, layout_row)
             else:
                 reg_is_kv_valid = txl.smem_load(is_kv_valid1, layout_row)
-            rP = tl.where(reg_is_kv_valid, rP, float('-inf'))
+            rP = tl.where(reg_is_kv_valid, rP, float("-inf"))
             if txl.is_warpgroup([1]):
                 txl.bar_wait(wg0_bunch_0_ready, 256)
             cur_max: tl.tensor = tl.max(rP, axis=1)
@@ -214,8 +240,8 @@ def txl_mla0(q_nope_desc, q_pe_desc, kv_nope_ptr, kv_pe_ptr, o_desc, max_logits_
             txl.bar_wait(warpgroup1_sync, 128)
             txl.tma_store(cur_sO, o_desc, [offs_q, 256])
         if txl.is_warpgroup([1]):
-            final_max_logits = tl.where(rL == 0.0, float('-inf'), rM)
-            final_lse = tl.where(rL == 0.0, float('-inf'), tl.log2(rL) + rM)
+            final_max_logits = tl.where(rL == 0.0, float("-inf"), rM)
+            final_lse = tl.where(rL == 0.0, float("-inf"), tl.log2(rL) + rM)
             max_logits_desc.store([offs_q], final_max_logits)
             lse_desc.store([offs_q], final_lse)
     if txl.is_warpgroup([2]):
@@ -236,7 +262,9 @@ def txl_mla0(q_nope_desc, q_pe_desc, kv_nope_ptr, kv_pe_ptr, o_desc, max_logits_
                 cur_index_pe0 = cur_index * STRIDE_KV_PE_0
                 cur_index_nope0 = tl.broadcast_to(cur_index_nope0[:, None], (512, 8))
                 cur_index_nope0 = tl.reshape(cur_index_nope0, (64, 64))
-                cur_index_nope0 = txl.relayout(cur_index_nope0, (64, 64), index_layout2d)
+                cur_index_nope0 = txl.relayout(
+                    cur_index_nope0, (64, 64), index_layout2d
+                )
                 cur_index_nope0 = cur_index_nope0 + inc_index_offs
                 cur_index_pe0 = tl.broadcast_to(cur_index_pe0[:, None], (512, 8))
                 cur_index_pe0 = tl.reshape(cur_index_pe0, (64, 64))
@@ -245,7 +273,9 @@ def txl_mla0(q_nope_desc, q_pe_desc, kv_nope_ptr, kv_pe_ptr, o_desc, max_logits_
                 is_token_valid = (cur_index >= 0) & (cur_index < S_KV)
                 is_token_valid0 = tl.broadcast_to(is_token_valid[:, None], (512, 8))
                 is_token_valid0 = tl.reshape(is_token_valid0, (64, 64))
-                is_token_valid0 = txl.relayout(is_token_valid0, (64, 64), index_layout2d)
+                is_token_valid0 = txl.relayout(
+                    is_token_valid0, (64, 64), index_layout2d
+                )
                 cur_index_nope_arr = cur_index_nope_arr + (cur_index_nope0,)
                 cur_index_pe_arr = cur_index_pe_arr + (cur_index_pe0,)
                 is_token_valid_arr = is_token_valid_arr + (is_token_valid0,)
@@ -254,42 +284,74 @@ def txl_mla0(q_nope_desc, q_pe_desc, kv_nope_ptr, kv_pe_ptr, o_desc, max_logits_
             for tile_index in tl.static_range(0, 256, 64):
                 cur_sKnope = txl.smem_slice(sKnope0, tile_index, 64, dim=1)
                 offs_kv = cur_index_nope_arr[0] + tile_index
-                txl.async_load(cur_sKnope, kv_nope_ptr + offs_kv, mask=is_token_valid, contiguity=8)
+                txl.async_load(
+                    cur_sKnope, kv_nope_ptr + offs_kv, mask=is_token_valid, contiguity=8
+                )
             txl.mbar_arrive(mbar_k0_ready0, track_async_op=True)
             txl.mbar_wait(mbar_k1_free1, cur_bar_wait_phase)
             is_token_valid = is_token_valid_arr[1]
             for tile_index in tl.static_range(256, 512, 64):
                 cur_sKnope = txl.smem_slice(sKnope1, tile_index, 64, dim=1)
                 offs_kv = cur_index_nope_arr[1] + tile_index
-                txl.async_load(cur_sKnope, kv_nope_ptr + offs_kv, mask=is_token_valid, contiguity=8)
+                txl.async_load(
+                    cur_sKnope, kv_nope_ptr + offs_kv, mask=is_token_valid, contiguity=8
+                )
             offs_kv = cur_index_pe_arr[1]
-            txl.async_load(sKpe1, kv_pe_ptr + offs_kv, mask=is_token_valid, contiguity=8)
+            txl.async_load(
+                sKpe1, kv_pe_ptr + offs_kv, mask=is_token_valid, contiguity=8
+            )
             txl.mbar_arrive(mbar_k1_ready1, track_async_op=True)
             txl.mbar_wait(mbar_k0_free1, cur_bar_wait_phase)
             is_token_valid = is_token_valid_arr[0]
             for tile_index in tl.static_range(256, 512, 64):
                 cur_sKnope = txl.smem_slice(sKnope0, tile_index, 64, dim=1)
                 offs_kv = cur_index_nope_arr[0] + tile_index
-                txl.async_load(cur_sKnope, kv_nope_ptr + offs_kv, mask=is_token_valid, contiguity=8)
+                txl.async_load(
+                    cur_sKnope, kv_nope_ptr + offs_kv, mask=is_token_valid, contiguity=8
+                )
             offs_kv = cur_index_pe_arr[0]
-            txl.async_load(sKpe0, kv_pe_ptr + offs_kv, mask=is_token_valid, contiguity=8)
+            txl.async_load(
+                sKpe0, kv_pe_ptr + offs_kv, mask=is_token_valid, contiguity=8
+            )
             txl.mbar_arrive(mbar_k0_ready1, track_async_op=True)
             txl.mbar_wait(mbar_k1_free0, cur_bar_wait_phase)
             is_token_valid = is_token_valid_arr[1]
             for tile_index in tl.static_range(0, 256, 64):
                 cur_sKnope = txl.smem_slice(sKnope1, tile_index, 64, dim=1)
                 offs_kv = cur_index_nope_arr[1] + tile_index
-                txl.async_load(cur_sKnope, kv_nope_ptr + offs_kv, mask=is_token_valid, contiguity=8)
+                txl.async_load(
+                    cur_sKnope, kv_nope_ptr + offs_kv, mask=is_token_valid, contiguity=8
+                )
             txl.mbar_arrive(mbar_k1_ready0, track_async_op=True)
-            if tid % 8 == 0:
-                is_token_valid0 = is_token_valid_arr[0]
-                is_token_valid1 = is_token_valid_arr[1]
-                txl.frag_smem_store(is_kv_valid0, is_token_valid0.to(tl.int8), is_kv_valid_layout)
-                txl.frag_smem_store(is_kv_valid1, is_token_valid1.to(tl.int8), is_kv_valid_layout)
-                txl.mbar_arrive(mbar_is_kv_valid_ready)
+            is_token_valid0 = is_token_valid_arr[0]
+            is_token_valid1 = is_token_valid_arr[1]
+            txl.frag_smem_store(
+                is_kv_valid0,
+                is_token_valid0.to(tl.int8),
+                is_kv_valid_layout,
+                pred=(tid % 8 == 0),
+                predStr="slice:1",
+            )
+            txl.frag_smem_store(
+                is_kv_valid1,
+                is_token_valid1.to(tl.int8),
+                is_kv_valid_layout,
+                pred=(tid % 8 == 0),
+                predStr="slice:1",
+            )
+            txl.mbar_arrive(mbar_is_kv_valid_ready)
             cur_bar_wait_phase ^= 1
 
-def nsa_test(q_nope: torch.Tensor, q_pe: torch.Tensor, kv_nope: torch.Tensor, kv_pe: torch.Tensor, indices: torch.Tensor, sm_scale: float, d_v: int=512):
+
+def nsa_test(
+    q_nope: torch.Tensor,
+    q_pe: torch.Tensor,
+    kv_nope: torch.Tensor,
+    kv_pe: torch.Tensor,
+    indices: torch.Tensor,
+    sm_scale: float,
+    d_v: int = 512,
+):
     """
     Sparse attention prefill kernel
 
@@ -307,11 +369,12 @@ def nsa_test(q_nope: torch.Tensor, q_pe: torch.Tensor, kv_nope: torch.Tensor, kv
         - max_logits:  [s_q, h_q], float
         - lse: [s_q, h_q], float, 2-based log-sum-exp
     """
-    dump_dir = 'dump/smem/'
+    dump_dir = "dump/smem/"
     dump_dir = None
     from triton import knobs
     import os
-    knobs.runtime.override_arch = 'sm90'
+
+    knobs.runtime.override_arch = "sm90"
     knobs.compilation.always_compile = True
     if dump_dir:
         knobs.compilation.dump_ir = True
@@ -339,5 +402,27 @@ def nsa_test(q_nope: torch.Tensor, q_pe: torch.Tensor, kv_nope: torch.Tensor, kv
     max_logits_desc = TensorDescriptor(max_logits, (s_q * h_q,), (1,), [B_H])
     lse_desc = TensorDescriptor(lse, (s_q * h_q,), (1,), [B_H])
     NUM_HEAD_BLOCKS = h_q // B_H
-    txl_mla0[NUM_HEAD_BLOCKS * s_q,](q_nope_desc, q_pe_desc, kv_nope, kv_pe, o_desc, max_logits_desc, lse_desc, indices, qk_scale, s_q, s_kv, B_H, D_Q, D_V, NUM_HEAD_BLOCKS, top_k, B_TOPK, kv_nope.stride(0), kv_pe.stride(0), num_warps=4, num_warpgroups=3)
+    txl_mla0[NUM_HEAD_BLOCKS * s_q,](
+        q_nope_desc,
+        q_pe_desc,
+        kv_nope,
+        kv_pe,
+        o_desc,
+        max_logits_desc,
+        lse_desc,
+        indices,
+        qk_scale,
+        s_q,
+        s_kv,
+        B_H,
+        D_Q,
+        D_V,
+        NUM_HEAD_BLOCKS,
+        top_k,
+        B_TOPK,
+        kv_nope.stride(0),
+        kv_pe.stride(0),
+        num_warps=4,
+        num_warpgroups=3,
+    )
     return (out, max_logits, lse)

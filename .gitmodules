@@ -1,3 +1,9 @@
 [submodule "thirdparty/triton"]
 	path = thirdparty/triton
 	url = https://github.com/triton-lang/triton.git
+[submodule "thirdparty/FlashMLA"]
+	path = thirdparty/FlashMLA
+	url = https://github.com/deepseek-ai/FlashMLA
+[submodule "thirdparty/cutlass"]
+	path = thirdparty/cutlass
+	url = https://github.com/NVIDIA/cutlass

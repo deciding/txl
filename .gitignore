@@ -178,7 +178,6 @@ log/
 *.csv
 *.png
 !logo.png
-*.html
 *.hatchet
 *.nvcudmp
 tmp.*

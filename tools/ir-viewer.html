@@ -18,13 +18,37 @@
         
         .upload-section {
             background: #f5f5f5; padding: 20px; border-bottom: 1px solid #ddd;
-            display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+            display: flex; gap: 20px; align-items: stretch; flex-wrap: wrap;
         }
-        .upload-group { display: flex; flex-direction: column; gap: 5px; }
-        .upload-group label { font-weight: 600; font-size: 13px; color: #333; }
-        .upload-group input[type="file"] { font-size: 13px; }
+        .upload-group { display: flex; flex-direction: column; flex: 1; min-width: 200px; }
+        .upload-group label { font-weight: 600; font-size: 13px; color: #333; margin-bottom: 8px; }
         
-        .container { display: flex; height: calc(100vh - 120px); overflow: hidden; }
+        .drop-zone {
+            border: 2px dashed #ccc; border-radius: 8px;
+            padding: 20px 15px; text-align: center; cursor: pointer;
+            transition: all 0.2s; background: white; flex: 1;
+            display: flex; flex-direction: column; justify-content: center;
+            min-height: 80px;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: #4caf50; background: #e8f5e9;
+        }
+        .drop-zone.has-file { border-color: #4caf50; border-style: solid; }
+        .drop-zone .drop-text { font-size: 12px; color: #666; }
+        .drop-zone .filename { 
+            font-size: 12px; color: #333; margin-top: 8px; 
+            word-break: break-all; font-weight: 500;
+        }
+        .drop-zone .file-type { 
+            font-size: 11px; color: #888; margin-top: 4px; 
+        }
+        
+        .load-btn {
+            display: flex; align-items: center; justify-content: center;
+            padding: 0 30px;
+        }
+        
+        .container { display: flex; height: calc(100vh - 140px); overflow: hidden; }
         .panel {
             flex: 1; display: flex; flex-direction: column;
             border-right: 1px solid #ddd; overflow: hidden;
@@ -115,13 +139,23 @@
     <div class="upload-section">
         <div class="upload-group">
             <label>IR File (TTIR / TTGIR / PTX)</label>
-            <input type="file" id="ir-file" accept=".ttir,.ttgir,.ptx">
+            <div class="drop-zone" id="ir-drop-zone" data-input-id="ir-file">
+                <span class="drop-text">Drop IR file here or click to browse</span>
+                <span class="file-type">.ttir, .ttgir, .ptx</span>
+                <span class="filename" style="display: none;"></span>
+            </div>
+            <input type="file" id="ir-file" accept=".ttir,.ttgir,.ptx" style="display: none;">
         </div>
         <div class="upload-group">
             <label>Python Source File</label>
-            <input type="file" id="py-file" accept=".py">
+            <div class="drop-zone" id="py-drop-zone" data-input-id="py-file">
+                <span class="drop-text">Drop Python file here or click to browse</span>
+                <span class="file-type">.py</span>
+                <span class="filename" style="display: none;"></span>
+            </div>
+            <input type="file" id="py-file" accept=".py" style="display: none;">
         </div>
-        <button class="help-btn" onclick="processFiles()">Load & View</button>
+        <button class="help-btn load-btn" onclick="processFiles()">Load & View</button>
     </div>
     
     <div id="loading" class="loading">Processing files...</div>
@@ -148,7 +182,13 @@
         <div class="help-content">
             <h2>TeraXLang IR Viewer Help</h2>
             <h3>Overview</h3>
-            <p>This tool shows the binding between IR code and Python source. Upload both files and click "Load & View".</p>
+            <p>This tool shows the binding between IR code and Python source. Drag & drop files or click to browse, then click "Load & View".</p>
+            <h3>Upload</h3>
+            <ul>
+                <li><strong>Drag & drop</strong> files into the drop zones</li>
+                <li><strong>Click</strong> drop zones to browse for files</li>
+                <li>Or use the original <strong>file input</strong> method</li>
+            </ul>
             <h3>Navigation</h3>
             <ul>
                 <li><strong>Click IR line</strong> → Highlights bound Python lines</li>
@@ -249,7 +289,7 @@
                 }
                 
                 // Match: .loc 1 69 16 // vector_add.py:69:16
-                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)/);
+                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)/);
                 if (match) {
                     const filename = match[4];
                     const srcLine = parseInt(match[5]);
@@ -259,7 +299,7 @@
                 }
                 
                 // Check for callsite (ends with @)
-                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)\s*@/);
+                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)\s*@/);
                 if (match) {
                     const filename = match[4];
                     const srcLine = parseInt(match[5]);
@@ -483,6 +523,80 @@
                 }
             });
         }
+        
+        // Drag and drop handlers
+        function initDragDrop() {
+            const dropZones = document.querySelectorAll('.drop-zone');
+            
+            dropZones.forEach(zone => {
+                const inputId = zone.dataset.inputId;
+                const input = document.getElementById(inputId);
+                const filenameSpan = zone.querySelector('.filename');
+                
+                // Click to browse
+                zone.addEventListener('click', () => input.click());
+                
+                // Drag over
+                zone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    zone.classList.add('dragover');
+                });
+                
+                // Drag leave
+                zone.addEventListener('dragleave', (e) => {
+                    e.preventDefault();
+                    zone.classList.remove('dragover');
+                });
+                
+                // Drop
+                zone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    zone.classList.remove('dragover');
+                    
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        handleFileSelect(files[0], input, zone);
+                    }
+                });
+                
+                // File input change
+                input.addEventListener('change', () => {
+                    if (input.files.length > 0) {
+                        handleFileSelect(input.files[0], input, zone);
+                    }
+                });
+            });
+        }
+        
+        function handleFileSelect(file, input, zone) {
+            const filenameSpan = zone.querySelector('.filename');
+            const dropText = zone.querySelector('.drop-text');
+            const fileType = zone.querySelector('.file-type');
+            
+            // Validate file type
+            const accept = input.accept.split(',').map(a => a.trim());
+            const ext = '.' + file.name.split('.').pop().toLowerCase();
+            
+            if (!accept.includes(ext)) {
+                alert(`Invalid file type. Expected: ${input.accept}`);
+                return;
+            }
+            
+            // Set file to input
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            input.files = dt.files;
+            
+            // Update UI
+            zone.classList.add('has-file');
+            dropText.style.display = 'none';
+            fileType.style.display = 'none';
+            filenameSpan.style.display = 'block';
+            filenameSpan.textContent = file.name;
+        }
+        
+        // Initialize drag and drop on page load
+        document.addEventListener('DOMContentLoaded', initDragDrop);
         
         // Escape key to clear highlights
         document.addEventListener('keydown', (e) => {

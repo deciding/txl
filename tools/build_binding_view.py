@@ -249,8 +249,21 @@ def read_file(path):
         return f.readlines()
 
 
-def generate_html(ir_path, py_path, output_path, file_type, verbose=False):
+def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=True):
     """Generate the HTML comparison view"""
+    import os
+
+    # Auto-detect file type if not specified
+    if file_type is None:
+        file_type = detect_file_type(ir_path)
+        if file_type == "unknown":
+            raise ValueError(f"Unknown file type. Supported: .ttir, .ttgir, .ptx")
+
+    # Auto-generate output_path if not specified
+    if output_path is None:
+        ir_dir = os.path.dirname(os.path.abspath(ir_path))
+        ir_name = os.path.splitext(os.path.basename(ir_path))[0]
+        output_path = os.path.join(ir_dir, f"{ir_name}_viewer.html")
 
     # Parse based on file type
     if file_type == "ptx":
@@ -537,9 +550,9 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  %(prog)s kernel.ttir kernel.py
   %(prog)s kernel.ttir kernel.py viewer.html
-  %(prog)s kernel.ttgir kernel.py viewer.html  
-  %(prog)s kernel.ptx kernel.py viewer.html
+  %(prog)s kernel.ptx kernel.py
 
 Supported IR formats:
   .ttir  - Triton TTIR (Triton Intermediate Representation)
@@ -552,20 +565,28 @@ Click on any line to navigate between related code.
     )
     parser.add_argument("ir_file", help="Path to IR file (.ttir, .ttgir, or .ptx)")
     parser.add_argument("py_file", help="Path to Python source file")
-    parser.add_argument("output_html", help="Output path for HTML viewer")
     parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Show detailed binding info"
+        "output_html",
+        nargs="?",
+        help="Output path for HTML viewer (default: same dir as ir_file)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=True,
+        help="Show detailed binding info (default: True)",
+    )
+    parser.add_argument(
+        "-t",
+        "--type",
+        choices=["ttir", "ttgir", "ptx"],
+        help="IR file type (auto-detected if not specified)",
     )
 
     args = parser.parse_args()
 
     ir_path = args.ir_file
     py_path = args.py_file
-    output_path = args.output_html
 
-    file_type = detect_file_type(ir_path)
-    if file_type == "unknown":
-        print(f"Error: Unknown file type. Supported: .ttir, .ttgir, .ptx")
-        sys.exit(1)
-
-    generate_html(ir_path, py_path, output_path, file_type, args.verbose)
+    generate_html(ir_path, py_path, args.output_html, args.type, args.verbose)

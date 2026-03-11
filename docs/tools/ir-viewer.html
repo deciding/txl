@@ -249,7 +249,7 @@
                 }
                 
                 // Match: .loc 1 69 16 // vector_add.py:69:16
-                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)/);
+                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)/);
                 if (match) {
                     const filename = match[4];
                     const srcLine = parseInt(match[5]);
@@ -259,7 +259,7 @@
                 }
                 
                 // Check for callsite (ends with @)
-                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)\s*@/);
+                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)\s*@/);
                 if (match) {
                     const filename = match[4];
                     const srcLine = parseInt(match[5]);

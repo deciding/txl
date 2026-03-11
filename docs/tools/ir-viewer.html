@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TeraXLang IR Viewer</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/material@1.0.0/dist/css/material.min.css">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        
+        header {
+            background: #1a1a2e; color: white; padding: 15px 20px;
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 15px;
+        }
+        .title { font-size: 22px; font-weight: bold; }
+        
+        .upload-section {
+            background: #f5f5f5; padding: 20px; border-bottom: 1px solid #ddd;
+            display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+        }
+        .upload-group { display: flex; flex-direction: column; gap: 5px; }
+        .upload-group label { font-weight: 600; font-size: 13px; color: #333; }
+        .upload-group input[type="file"] { font-size: 13px; }
+        
+        .container { display: flex; height: calc(100vh - 120px); overflow: hidden; }
+        .panel {
+            flex: 1; display: flex; flex-direction: column;
+            border-right: 1px solid #ddd; overflow: hidden;
+        }
+        .panel:last-child { border-right: none; }
+        .panel-header {
+            background: #f5f5f5; padding: 8px 12px; font-weight: 600;
+            font-size: 13px; border-bottom: 1px solid #ddd;
+            display: flex; justify-content: space-between;
+        }
+        .panel-content {
+            flex: 1; overflow: auto;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px; line-height: 1.5;
+        }
+        
+        .line { display: flex; white-space: pre; }
+        .line-num {
+            width: 50px; text-align: right; padding-right: 12px;
+            color: #999; user-select: none;
+            border-right: 1px solid #eee; flex-shrink: 0;
+        }
+        .line-content { flex: 1; padding-left: 12px; }
+        .line:hover { background: #f0f0f0; cursor: pointer; }
+        
+        .line.linked:hover { background: #e3f2fd; }
+        .line.linked.ir-linked { background: #e8f5e9; }
+        .line.linked.py-linked { background: #fff3e0; }
+        
+        .line.highlight-ir { background: #4caf50 !important; color: white; }
+        .line.highlight-py { background: #ff9800 !important; color: white; }
+        .line.highlight-ir.highlight-py { background: #9c27b0 !important; }
+        
+        .legend {
+            font-size: 13px; display: flex; gap: 20px; align-items: center;
+        }
+        .legend span { display: inline-flex; align-items: center; gap: 5px; }
+        .legend .ir-linked { color: #81c784; }
+        .legend .py-linked { color: #ffb74d; }
+        
+        .help-btn {
+            background: #4caf50; color: white; border: none;
+            padding: 8px 16px; border-radius: 4px; cursor: pointer;
+        }
+        
+        .help-modal {
+            display: none; position: fixed; top: 0; left: 0;
+            width: 100%; height: 100%; background: rgba(0,0,0,0.5);
+            z-index: 1000; align-items: center; justify-content: center;
+        }
+        .help-modal.show { display: flex; }
+        .help-content {
+            background: white; padding: 25px; border-radius: 8px;
+            max-width: 500px; max-height: 80vh; overflow: auto;
+        }
+        .help-content h2 { margin-top: 0; color: #1a1a2e; }
+        .help-content h3 { color: #333; margin-top: 15px; }
+        .help-content ul { padding-left: 20px; }
+        .help-content li { margin: 8px 0; }
+        .help-close {
+            background: #1a1a2e; color: white; border: none;
+            padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-top: 15px;
+        }
+        
+        .stats {
+            padding: 10px 20px; background: #e8f5e9; border-bottom: 1px solid #ddd;
+            font-size: 13px; color: #333;
+        }
+        .stats.error { background: #ffebee; color: #c62828; }
+        
+        .loading {
+            display: none; padding: 20px; text-align: center; color: #666;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <span class="title">TeraXLang IR Viewer</span>
+        <div style="display: flex; align-items: center; gap: 20px;">
+            <span class="legend">
+                <span class="ir-linked">■ IR → Python</span>
+                <span class="py-linked">■ Python → IR</span>
+            </span>
+            <button class="help-btn" onclick="document.getElementById('help-modal').classList.add('show')">Help</button>
+        </div>
+    </header>
+    
+    <div class="upload-section">
+        <div class="upload-group">
+            <label>IR File (TTIR / TTGIR / PTX)</label>
+            <input type="file" id="ir-file" accept=".ttir,.ttgir,.ptx">
+        </div>
+        <div class="upload-group">
+            <label>Python Source File</label>
+            <input type="file" id="py-file" accept=".py">
+        </div>
+        <button class="help-btn" onclick="processFiles()">Load & View</button>
+    </div>
+    
+    <div id="loading" class="loading">Processing files...</div>
+    <div id="stats" class="stats" style="display: none;"></div>
+    
+    <div class="container" id="viewer-container" style="display: none;">
+        <div class="panel">
+            <div class="panel-header">
+                <span id="ir-panel-name">IR</span>
+                <span id="ir-filename"></span>
+            </div>
+            <div class="panel-content" id="ir-panel"></div>
+        </div>
+        <div class="panel">
+            <div class="panel-header">
+                <span>Python</span>
+                <span id="py-filename"></span>
+            </div>
+            <div class="panel-content" id="py-panel"></div>
+        </div>
+    </div>
+    
+    <div id="help-modal" class="help-modal" onclick="if(event.target === this) this.classList.remove('show')">
+        <div class="help-content">
+            <h2>TeraXLang IR Viewer Help</h2>
+            <h3>Overview</h3>
+            <p>This tool shows the binding between IR code and Python source. Upload both files and click "Load & View".</p>
+            <h3>Navigation</h3>
+            <ul>
+                <li><strong>Click IR line</strong> → Highlights bound Python lines</li>
+                <li><strong>Click Python line</strong> → Highlights bound IR lines</li>
+            </ul>
+            <h3>Supported Formats</h3>
+            <ul>
+                <li>.ttir - Triton TTIR</li>
+                <li>.ttgir - Triton TTGIR</li>
+                <li>.ptx - NVIDIA PTX</li>
+            </ul>
+            <button class="help-close" onclick="document.getElementById('help-modal').classList.remove('show')">Close</button>
+        </div>
+    </div>
+    
+    <script>
+        // Detect file type from filename
+        function detectFileType(filename) {
+            const ext = filename.toLowerCase().split('.').pop();
+            if (ext === 'ttir' || ext === 'ttgir') return 'ttir';
+            if (ext === 'ptx') return 'ptx';
+            return 'unknown';
+        }
+        
+        // Parse TTIR/TTGIR locations
+        function parseTtirLocations(lines) {
+            const locDefs = {};
+            const irLineToLoc = {};
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const lineNum = i + 1;
+                
+                // Match: #loc = loc("/path/to/file":line:col)
+                let match = line.match(/^(#loc\d*)\s*=\s*loc\("([^"]+)":(\d+):(\d+)\)/);
+                if (match) {
+                    locDefs[match[1]] = [match[2], parseInt(match[3]), parseInt(match[4])];
+                    continue;
+                }
+                
+                // Match: #loc19 = loc("x_ptr"(#loc))
+                match = line.match(/^(#loc\d+)\s*=\s*loc\("([^"]+)"\(#loc\)\)/);
+                if (match) {
+                    if (locDefs['#loc']) {
+                        locDefs[match[1]] = locDefs['#loc'];
+                    }
+                    continue;
+                }
+                
+                // Match: #loc23 = loc("bid"(#loc2))
+                match = line.match(/^(#loc\d+)\s*=\s*loc\("([^"]+)"\(#loc(\d+)\)\)/);
+                if (match) {
+                    const refLoc = '#loc' + match[3];
+                    if (locDefs[refLoc]) {
+                        locDefs[match[1]] = locDefs[refLoc];
+                    }
+                    continue;
+                }
+                
+                // Match: #loc36 = loc(callsite(#loc1 at #loc33))
+                match = line.match(/^(#loc\d+)\s*=\s*loc\(callsite\(#loc\d+ at #loc(\d+)\)\)/);
+                if (match) {
+                    const refLoc = '#loc' + match[2];
+                    if (locDefs[refLoc]) {
+                        locDefs[match[1]] = locDefs[refLoc];
+                    }
+                    continue;
+                }
+                
+                // Ignore unknown
+                if (line.match(/^#loc\d+\s*=\s*loc\(unknown\)/)) continue;
+                
+                // This is an IR line - check for location reference
+                match = line.match(/loc\(#loc(\d+)\)/);
+                if (match) {
+                    irLineToLoc[lineNum] = '#loc' + match[1];
+                }
+            }
+            
+            return { locDefs, irLineToLoc };
+        }
+        
+        // Parse PTX locations
+        function parsePtxLocations(lines) {
+            const fileIdToName = {};
+            const irLineToLoc = {};
+            let prevLocInfo = null;
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const lineNum = i + 1;
+                
+                // Match: .file 1 "vector_add.py"
+                let match = line.match(/^\s*\.file\s+(\d+)\s+"([^"]+)"/);
+                if (match) {
+                    fileIdToName[parseInt(match[1])] = match[2];
+                    continue;
+                }
+                
+                // Match: .loc 1 69 16 // vector_add.py:69:16
+                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)/);
+                if (match) {
+                    const filename = match[4];
+                    const srcLine = parseInt(match[5]);
+                    prevLocInfo = [filename, srcLine, 0];
+                    irLineToLoc[lineNum] = [filename, srcLine, 0];
+                    continue;
+                }
+                
+                // Check for callsite (ends with @)
+                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)\s*@/);
+                if (match) {
+                    const filename = match[4];
+                    const srcLine = parseInt(match[5]);
+                    if (prevLocInfo) {
+                        irLineToLoc[lineNum] = prevLocInfo;
+                    } else {
+                        irLineToLoc[lineNum] = [filename, srcLine, 0];
+                    }
+                }
+            }
+            
+            return { locDefs: {}, irLineToLoc };
+        }
+        
+        // Resolve location
+        function resolveLocation(locVar, locDefs) {
+            if (!locVar) return null;
+            if (!locDefs[locVar]) return null;
+            return locDefs[locVar];
+        }
+        
+        // Build line bindings
+        function buildLineBindings(irLineToLoc, locDefs, pyLines, fileType) {
+            const binding = {};
+            const pyLineToIr = {};
+            const pyFilename = pyLines.filename;
+            
+            for (const [irLine, locInfo] of Object.entries(irLineToLoc)) {
+                let filepath, pyLine;
+                
+                if (fileType === 'ptx') {
+                    if (!locInfo) continue;
+                    [filepath, pyLine] = locInfo;
+                } else {
+                    const resolved = resolveLocation(locInfo, locDefs);
+                    if (!resolved) continue;
+                    [filepath, pyLine] = resolved;
+                }
+                
+                // Match by filename
+                if (filepath && (filepath.endsWith(pyFilename) || filepath.includes(pyFilename))) {
+                    if (!binding[irLine]) binding[irLine] = [];
+                    binding[irLine].push(pyLine);
+                    
+                    if (!pyLineToIr[pyLine]) pyLineToIr[pyLine] = [];
+                    pyLineToIr[pyLine].push(parseInt(irLine));
+                }
+            }
+            
+            return { binding, pyLineToIr };
+        }
+        
+        // Process files
+        async function processFiles() {
+            const irFileInput = document.getElementById('ir-file');
+            const pyFileInput = document.getElementById('py-file');
+            
+            if (!irFileInput.files[0] || !pyFileInput.files[0]) {
+                alert('Please select both IR and Python files');
+                return;
+            }
+            
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('viewer-container').style.display = 'none';
+            document.getElementById('stats').style.display = 'none';
+            
+            try {
+                const [irContent, pyContent] = await Promise.all([
+                    readFile(irFileInput.files[0]),
+                    readFile(pyFileInput.files[0])
+                ]);
+                
+                const irLines = irContent.split('\n');
+                const pyLines = pyContent.split('\n');
+                const irFilename = irFileInput.files[0].name;
+                const pyFilename = pyFileInput.files[0].name;
+                const fileType = detectFileType(irFilename);
+                
+                // Parse based on file type
+                let irLineToLoc, locDefs;
+                if (fileType === 'ptx') {
+                    ({ locDefs, irLineToLoc } = parsePtxLocations(irLines));
+                } else {
+                    ({ locDefs, irLineToLoc } = parseTtirLocations(irLines));
+                }
+                
+                // Build bindings
+                const { binding, pyLineToIr } = buildLineBindings(
+                    irLineToLoc, locDefs, { filename: pyFilename }, fileType
+                );
+                
+                // Update stats
+                const statsEl = document.getElementById('stats');
+                statsEl.textContent = `IR lines: ${irLines.length}, Python lines: ${pyLines.length} | Bindings: IR→Py: ${Object.keys(binding).length}, Py→IR: ${Object.keys(pyLineToIr).length}`;
+                statsEl.style.display = 'block';
+                
+                // Render panels
+                renderIrPanel(irLines, binding, fileType);
+                renderPyPanel(pyLines, pyLineToIr);
+                
+                document.getElementById('ir-filename').textContent = irFilename;
+                document.getElementById('py-filename').textContent = pyFilename;
+                document.getElementById('ir-panel-name').textContent = fileType === 'ptx' ? 'PTX' : 'TTIR';
+                
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('viewer-container').style.display = 'flex';
+                
+            } catch (error) {
+                document.getElementById('loading').style.display = 'none';
+                const statsEl = document.getElementById('stats');
+                statsEl.textContent = 'Error: ' + error.message;
+                statsEl.classList.add('error');
+                statsEl.style.display = 'block';
+            }
+        }
+        
+        function readFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = e => resolve(e.target.result);
+                reader.onerror = e => reject(new Error('Failed to read file'));
+                reader.readAsText(file);
+            });
+        }
+        
+        function renderIrPanel(lines, binding, fileType) {
+            const panel = document.getElementById('ir-panel');
+            panel.innerHTML = '';
+            
+            lines.forEach((line, i) => {
+                const lineNum = i + 1;
+                const hasBinding = binding[lineNum] !== undefined;
+                const bindingPyLines = binding[lineNum] || [];
+                
+                const div = document.createElement('div');
+                div.className = 'line' + (hasBinding ? ' linked ir-linked' : '');
+                div.dataset.irLine = lineNum;
+                div.dataset.pyLines = bindingPyLines.join(',');
+                
+                div.innerHTML = `
+                    <span class="line-num">${lineNum}</span>
+                    <span class="line-content">${escapeHtml(line)}</span>
+                `;
+                
+                div.addEventListener('click', () => highlightIrLine(lineNum, bindingPyLines));
+                panel.appendChild(div);
+            });
+        }
+        
+        function renderPyPanel(lines, pyLineToIr) {
+            const panel = document.getElementById('py-panel');
+            panel.innerHTML = '';
+            
+            lines.forEach((line, i) => {
+                const lineNum = i + 1;
+                const hasBinding = pyLineToIr[lineNum] !== undefined;
+                const bindingIrLines = pyLineToIr[lineNum] || [];
+                
+                const div = document.createElement('div');
+                div.className = 'line' + (hasBinding ? ' linked py-linked' : '');
+                div.dataset.pyLine = lineNum;
+                div.dataset.irLines = bindingIrLines.join(',');
+                
+                div.innerHTML = `
+                    <span class="line-num">${lineNum}</span>
+                    <span class="line-content">${escapeHtml(line)}</span>
+                `;
+                
+                div.addEventListener('click', () => highlightPyLine(lineNum, bindingIrLines));
+                panel.appendChild(div);
+            });
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function highlightIrLine(irLine, pyLines) {
+            // Clear previous
+            document.querySelectorAll('.highlight-ir').forEach(el => el.classList.remove('highlight-ir'));
+            document.querySelectorAll('.highlight-py').forEach(el => el.classList.remove('highlight-py'));
+            
+            // Highlight clicked IR line
+            const irEl = document.querySelector(`[data-ir-line="${irLine}"]`);
+            if (irEl) {
+                irEl.classList.add('highlight-ir');
+                irEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            
+            // Highlight bound Python lines
+            pyLines.forEach(pyLine => {
+                const pyEl = document.querySelector(`[data-py-line="${pyLine}"]`);
+                if (pyEl) {
+                    pyEl.classList.add('highlight-py');
+                }
+            });
+        }
+        
+        function highlightPyLine(pyLine, irLines) {
+            // Clear previous
+            document.querySelectorAll('.highlight-ir').forEach(el => el.classList.remove('highlight-ir'));
+            document.querySelectorAll('.highlight-py').forEach(el => el.classList.remove('highlight-py'));
+            
+            // Highlight clicked Python line
+            const pyEl = document.querySelector(`[data-py-line="${pyLine}"]`);
+            if (pyEl) {
+                pyEl.classList.add('highlight-py');
+                pyEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            
+            // Highlight bound IR lines
+            irLines.forEach((irLine, idx) => {
+                const irEl = document.querySelector(`[data-ir-line="${irLine}"]`);
+                if (irEl) {
+                    irEl.classList.add('highlight-ir');
+                    if (idx === 0) {
+                        irEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }
+            });
+        }
+        
+        // Escape key to clear highlights
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.highlight-ir').forEach(el => el.classList.remove('highlight-ir'));
+                document.querySelectorAll('.highlight-py').forEach(el => el.classList.remove('highlight-py'));
+                document.getElementById('help-modal').classList.remove('show');
+            }
+        });
+    </script>
+</body>
+</html>

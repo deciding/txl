@@ -165,8 +165,7 @@ def txl_mla0(
             cur_sum = tl.sum(rP, axis=1)
             rL = rL * scale_for_o + cur_sum
             rS = rP.to(tl.bfloat16)
-            if idx_in_warpgroup % 4 == 0:
-                txl.smem_store(sM, new_maxs)
+            txl.smem_store(sM, new_maxs)
             rM = new_maxs
             if txl.is_warpgroup([0]):
                 txl.bar_arrive(wg0_bunch_0_ready, 256)
@@ -179,6 +178,7 @@ def txl_mla0(
                 rM = new_rM
                 rS = (rP * scale_factors[:, None]).to(tl.bfloat16)
                 txl.smem_store(sS0, rS)
+                txl.fence_proxy_async()
                 txl.bar_arrive(wg0_s0_ready, 256)
                 txl.bar_wait(wg1_s1_ready, 256)
                 rO *= scale_factors[:, None]
@@ -190,6 +190,7 @@ def txl_mla0(
                 txl.smem_store(sS1, rS)
                 txl.bar_wait(wg0_s0_ready, 256)
                 rO = tl.dot(sS0, sV0r, rO)
+                txl.fence_proxy_async()
                 txl.bar_arrive(wg1_s1_ready, 256)
                 txl.dot_wait(1)
                 txl.mbar_arrive(mbar_k1_free1)
@@ -216,27 +217,27 @@ def txl_mla0(
                     txl.dot_wait(0)
                     txl.mbar_arrive(mbar_k1_free0)
         if txl.is_warpgroup([0]):
-            if idx_in_warpgroup % 4 == 0:
-                txl.smem_store(sL0, rL)
+            txl.smem_store(sL0, rL)
         if txl.is_warpgroup([1]):
-            if idx_in_warpgroup % 4 == 0:
-                txl.smem_store(sL1, rL)
+            txl.smem_store(sL1, rL)
         txl.bar_wait(sL_ready, 256)
         if txl.is_warpgroup([0]):
             peer_L = txl.frag_smem_load(sL1, (64,), layout_sM)
         else:
             peer_L = txl.frag_smem_load(sL0, (64,), layout_sM)
         rL += peer_L
-        scale_factors = tl.where(rL == 0.0, 1.0, 1.0 / rL)
+        scale_factors = tl.where(rL == 0.0, 0.0, 1.0 / rL)
         cur_rO = (rO * scale_factors[:, None]).to(tl.bfloat16)
         if txl.is_warpgroup([0]):
             cur_sO = txl.smem_slice(sO, 0, 256, 1)
             txl.smem_store(cur_sO, cur_rO)
+            txl.fence_proxy_async()
             txl.bar_wait(warpgroup0_sync, 128)
             txl.tma_store(cur_sO, o_desc, [offs_q, 0])
         else:
             cur_sO = txl.smem_slice(sO, 256, 256, 1)
             txl.smem_store(cur_sO, cur_rO)
+            txl.fence_proxy_async()
             txl.bar_wait(warpgroup1_sync, 128)
             txl.tma_store(cur_sO, o_desc, [offs_q, 256])
         if txl.is_warpgroup([1]):

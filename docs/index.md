@@ -11,3 +11,7 @@ TeraXLang is a Triton-based language extension that provides additional features
 
 - [Core API](api/core.md) - Low-level TeraXLang primitives
 - [JIT API](api/jit.md) - JIT compilation utilities
+
+## Tools
+
+- [IR Viewer](tools/ir-viewer.html) - Interactive binding viewer for TTIR/TTGIR/PTX and Python source

@@ -162,16 +162,20 @@ def parse_ptx_locations(ptx_path):
                 ir_line_to_loc[line_num] = (filename, src_line, src_col)
             continue
 
-        # Also handle .loc without comment (just store the directive info)
-        # .loc 1 58 0
-        simple_loc_match = re.match(r"^\.loc\s+(\d+)\s+(\d+)\s+(\d+)$", line.strip())
-        if simple_loc_match and simple_loc_match.group(1) in file_id_to_name:
+        # Also handle .loc without comment (file_id, line, col only)
+        # .loc 1 799 16
+        # Skip if line is 0 (invalid)
+        simple_loc_match = re.match(r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*$", line)
+        if simple_loc_match:
             file_id = int(simple_loc_match.group(1))
             ptx_line = int(simple_loc_match.group(2))
             ptx_col = int(simple_loc_match.group(3))
-            filename = file_id_to_name[file_id]
-            prev_loc_info = (filename, ptx_line, ptx_col)
-            # Don't add to ir_line_to_loc, just track prev_loc_info
+            # Skip if line is 0 (invalid)
+            if ptx_line > 0 and file_id in file_id_to_name:
+                filename = file_id_to_name[file_id]
+                prev_loc_info = (filename, ptx_line, ptx_col)
+                ir_line_to_loc[line_num] = (filename, ptx_line, ptx_col)
+            continue
 
         # Check if this line has a reference to a callsite (ends with @)
         # Pattern: .loc 2 261 15 // standard.py:261:15 @

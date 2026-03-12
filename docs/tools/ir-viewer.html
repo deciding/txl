@@ -298,6 +298,22 @@
                     continue;
                 }
                 
+                // Match: .loc 1 799 16 (no comment - file_id, line, col)
+                // Skip if line is 0 (invalid)
+                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*$/);
+                if (match) {
+                    const fileId = parseInt(match[1]);
+                    const srcLine = parseInt(match[2]);
+                    const srcCol = parseInt(match[3]);
+                    // Skip if line is 0 (invalid)
+                    if (srcLine > 0 && fileIdToName[fileId]) {
+                        const filename = fileIdToName[fileId];
+                        prevLocInfo = [filename, srcLine, srcCol];
+                        irLineToLoc[lineNum] = [filename, srcLine, srcCol];
+                    }
+                    continue;
+                }
+                
                 // Check for callsite (ends with @)
                 match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)\s*@/);
                 if (match) {

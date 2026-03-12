@@ -96,31 +96,34 @@ def parse_ptx_locations(ptx_path):
     Patterns:
     1. .loc 1 69 16 // vector_add.py:69:16 - direct location
     2. .loc 2 261 15 // standard.py:261:15 @ - callsite (need to find caller location)
+    3. .loc 1 799 16 - without comment (file_id, line, col only)
+
+    Uses two-pass parsing: first collect all .file directives, then parse .loc
     """
     with open(ptx_path, "r") as f:
         lines = f.readlines()
 
-    # Track file id to filename mapping
+    # First pass: collect all .file directives
     file_id_to_name = {}
-    ir_line_to_loc = {}
-
-    # Track previous .loc directive for callsite resolution
-    prev_loc_info = None
-
-    for i, line in enumerate(lines):
-        line_num = i + 1
-
-        # Match: .file 1 "vector_add.py"
-        # Note: line may have leading whitespace (tabs)
+    for line in lines:
         file_match = re.match(r'^\s*\.file\s+(\d+)\s+"([^"]+)"', line)
         if file_match:
             file_id = int(file_match.group(1))
             filename = file_match.group(2)
             file_id_to_name[file_id] = filename
+
+    # Second pass: parse .loc directives
+    ir_line_to_loc = {}
+    prev_loc_info = None
+
+    for i, line in enumerate(lines):
+        line_num = i + 1
+
+        # Skip .file directives (already processed in first pass)
+        if re.match(r"^\s*\.file\s+", line):
             continue
 
         # Match: .loc 1 69 16 // vector_add.py:69:16
-        # Note: line may have leading whitespace (tabs)
         loc_match = re.match(
             r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)", line
         )
@@ -138,7 +141,6 @@ def parse_ptx_locations(ptx_path):
 
         # Check if this line has a reference to a callsite (ends with @)
         # Pattern: .loc 2 261 15 // standard.py:261:15 @
-        # Note: line may have leading whitespace (tabs)
         callsite_match = re.match(
             r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)\s*@", line
         )
@@ -150,20 +152,14 @@ def parse_ptx_locations(ptx_path):
             src_line = int(callsite_match.group(5))
             src_col = int(callsite_match.group(6))
 
-            # For callsite, we need to find the caller's location
-            # The actual source location should be from the caller, not the callee
-            # Look for previous .loc that points to the actual python file
-            # For now, use the previous loc as fallback
+            # For callsite, use previous loc as fallback
             if prev_loc_info:
-                # prev_loc_info is (filename, src_line, src_col) of previous .loc
-                # which should be the caller location
                 ir_line_to_loc[line_num] = prev_loc_info
             else:
                 ir_line_to_loc[line_num] = (filename, src_line, src_col)
             continue
 
-        # Also handle .loc without comment (file_id, line, col only)
-        # .loc 1 799 16
+        # Match: .loc 1 799 16 (no comment - file_id, line, col)
         # Skip if line is 0 (invalid)
         simple_loc_match = re.match(r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*$", line)
         if simple_loc_match:
@@ -175,31 +171,6 @@ def parse_ptx_locations(ptx_path):
                 filename = file_id_to_name[file_id]
                 prev_loc_info = (filename, ptx_line, ptx_col)
                 ir_line_to_loc[line_num] = (filename, ptx_line, ptx_col)
-            continue
-
-        # Check if this line has a reference to a callsite (ends with @)
-        # Pattern: .loc 2 261 15 // standard.py:261:15 @
-        callsite_match = re.match(
-            r"^\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)\s*@", line
-        )
-        if callsite_match:
-            file_id = int(callsite_match.group(1))
-            ptx_line = int(callsite_match.group(2))
-            ptx_col = int(callsite_match.group(3))
-            filename = callsite_match.group(4)
-            src_line = int(callsite_match.group(5))
-            src_col = int(callsite_match.group(6))
-
-            # For callsite, we need to find the caller's location
-            # The actual source location should be from the caller, not the callee
-            # Look for previous .loc that points to the actual python file
-            # For now, use the previous loc as fallback
-            if prev_loc_info:
-                # prev_loc_info is (filename, src_line, src_col) of previous .loc
-                # which should be the caller location
-                ir_line_to_loc[line_num] = prev_loc_info
-            else:
-                ir_line_to_loc[line_num] = (filename, src_line, src_col)
             continue
 
     return ir_line_to_loc, {}
@@ -252,6 +223,7 @@ def read_file(path):
     with open(path, "r") as f:
         return f.readlines()
 
+
 def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=True):
     """Generate the HTML comparison view"""
     import os
@@ -260,7 +232,9 @@ def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=Tr
     if file_type is None:
         file_type = detect_file_type(ir_path)
         if file_type == "unknown":
-            raise ValueError(f"Unknown file type for {ir_path}. Supported: .ttir, .ttgir, .ptx")
+            raise ValueError(
+                f"Unknown file type for {ir_path}. Supported: .ttir, .ttgir, .ptx"
+            )
 
     # Auto-generate output_path if not specified
     if output_path is None:
@@ -544,9 +518,10 @@ def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=Tr
         f"Bindings found: {panel_name}->Python: {len(binding)}, Python->{panel_name}: {len(py_line_to_ir)}"
     )
 
+
 def get_file_paths_array(base_path):
     # 定义严格的顺序
-    target_exts = ['.ttir', '.ttgir', '.ptx']
+    target_exts = [".ttir", ".ttgir", ".ptx"]
     # 初始化结果字典，初始值为 None
     found_files = {ext: None for ext in target_exts}
 
@@ -563,6 +538,7 @@ def get_file_paths_array(base_path):
 
     # 按照指定的 target_exts 顺序转换为数组（未找到的会显示为 None）
     return [found_files[ext] for ext in target_exts]
+
 
 def generate_htmls(ir_path, py_path, verbose=True):
     base_path = Path(ir_path)
@@ -623,5 +599,5 @@ Click on any line to navigate between related code.
     ir_path = args.ir_file
     py_path = args.py_file
 
-    #generate_html(ir_path, py_path, args.output_html, args.type, args.verbose)
+    # generate_html(ir_path, py_path, args.output_html, args.type, args.verbose)
     generate_htmls(ir_path, py_path, args.verbose)

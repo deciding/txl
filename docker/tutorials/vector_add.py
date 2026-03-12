@@ -12,7 +12,7 @@ GPU_model = "H100"
 APP_NAME = "txl-vector-add"
 VOLUME_NAME = "txl-dump"
 DUMP_VOL = "/workspace/dump"
-DUMP_DIR = APP_NAME + "".join(str(datetime.now()).replace(':', '.').split())
+DUMP_DIR = APP_NAME + "".join(str(datetime.now()).replace(":", ".").split())
 
 app = App(name=APP_NAME)
 
@@ -23,6 +23,7 @@ txl_image = (
     .workdir("/workspace")
     .pip_install("torch", "pytest")
     .pip_install("teraxlang")
+    .add_local_dir(root_dir / "tutorials", remote_path="/workspace/tutorials")
 )
 
 
@@ -38,9 +39,11 @@ def run_vector_add():
     import triton
     import triton.language as tl
     import teraxlang as txl
+    from teraxlang.tools.build_binding_view import generate_htmls
 
     # TeraXLang Settings
     from triton import knobs
+
     knobs.autotuning.print = True
     knobs.compilation.always_compile = True
     if DUMP_DIR:
@@ -77,7 +80,7 @@ def run_vector_add():
         output = torch.empty_like(x, device=DEVICE)
         assert x.device == DEVICE and y.device == DEVICE and output.device == DEVICE
         n_elements = output.numel()
-        grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']), )
+        grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
         add_kernel[grid](x, y, output, n_elements, BLOCK_SIZE=1024)
         return output
 
@@ -101,7 +104,18 @@ def run_vector_add():
         max_diff = (output - result).abs().max()
         print(f"Max diff: {max_diff}")
 
-    print("Done!")
+    # Generate HTML viewers for IR files
+    dump_path = f"{DUMP_VOL}/{DUMP_DIR}"
+    print(f"\n=== Generating HTML viewers for IR files ===")
+    print(f"IR dump directory: {dump_path}")
+
+    # Python source file is mounted at /workspace/tutorials/vector_add.py
+    py_file = "/workspace/tutorials/vector_add.py"
+
+    # Generate HTML viewers for all IR files in the dump directory
+    generate_htmls(dump_path, py_file, verbose=True)
+
+    print(f"\nHTML viewers generated!")
     print(f"to download and view: modal volume get {VOLUME_NAME} {DUMP_DIR}")
 
 

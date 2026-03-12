@@ -34,18 +34,19 @@ fa4_image = (
     .pip_install("torch-c-dlpack-ext")
     .pip_install("triton==3.5.1")
     .pip_install("flash-attn-4==4.0.0b4")
-    .add_local_file(
-        root_dir
-        / "thirdparty"
-        / "triton"
-        / "dist"
-        / "teraxlang-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl",
-        remote_path="/workspace/teraxlang-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl",
-        copy=True,
-    )
-    .run_commands(
-        "pip install /workspace/teraxlang-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl"
-    )
+    .pip_install("teraxlang==3.5.1.dev1")
+    #.add_local_file(
+    #    root_dir
+    #    / "thirdparty"
+    #    / "triton"
+    #    / "dist"
+    #    / "teraxlang-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl",
+    #    remote_path="/workspace/teraxlang-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl",
+    #    copy=True,
+    #)
+    #.run_commands(
+    #    "pip install /workspace/teraxlang-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl"
+    #)
     .add_local_dir(root_dir / "docker" / "fa4", remote_path="/workspace/fa4")
 )
 

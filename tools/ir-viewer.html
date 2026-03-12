@@ -272,29 +272,52 @@
         }
         
         // Parse PTX locations
+        // Two-pass parsing: first collect all .file directives, then parse .loc
         function parsePtxLocations(lines) {
             const fileIdToName = {};
             const irLineToLoc = {};
             let prevLocInfo = null;
             
+            // First pass: collect all .file directives
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const match = line.match(/^\s*\.file\s+(\d+)\s+"([^"]+)"/);
+                if (match) {
+                    fileIdToName[parseInt(match[1])] = match[2];
+                }
+            }
+            
+            // Second pass: parse .loc directives
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i];
                 const lineNum = i + 1;
                 
-                // Match: .file 1 "vector_add.py"
-                let match = line.match(/^\s*\.file\s+(\d+)\s+"([^"]+)"/);
-                if (match) {
-                    fileIdToName[parseInt(match[1])] = match[2];
-                    continue;
-                }
+                // Skip .file directives (already processed)
+                if (line.match(/^\s*\.file\s+/)) continue;
                 
                 // Match: .loc 1 69 16 // vector_add.py:69:16
-                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)/);
+                let match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)/);
                 if (match) {
                     const filename = match[4];
                     const srcLine = parseInt(match[5]);
                     prevLocInfo = [filename, srcLine, 0];
                     irLineToLoc[lineNum] = [filename, srcLine, 0];
+                    continue;
+                }
+                
+                // Match: .loc 1 799 16 (no comment - file_id, line, col)
+                // Skip if line is 0 (invalid)
+                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*$/);
+                if (match) {
+                    const fileId = parseInt(match[1]);
+                    const srcLine = parseInt(match[2]);
+                    const srcCol = parseInt(match[3]);
+                    // Skip if line is 0 (invalid)
+                    if (srcLine > 0 && fileIdToName[fileId]) {
+                        const filename = fileIdToName[fileId];
+                        prevLocInfo = [filename, srcLine, srcCol];
+                        irLineToLoc[lineNum] = [filename, srcLine, srcCol];
+                    }
                     continue;
                 }
                 

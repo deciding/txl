@@ -35,7 +35,7 @@ fa4_image = (
     .pip_install("triton==3.5.1")
     .pip_install("flash-attn-4==4.0.0b4")
     .add_local_dir(
-        root_dir / "docker" / "flash_attn", remote_path="/workspace/flash_attention"
+        root_dir / "docker" / "fa4", remote_path="/workspace/fa4"
     )
 )
 
@@ -96,12 +96,12 @@ def run_fa4_benchmark():
     causal = False
     repeats = 30
 
-    batch_size = 1
-    nheads = 16
-    seqlen_q = 128
-    seqlen_k = 128
-    head_dim = 128
-    repeats = 1
+    #batch_size = 1
+    #nheads = 16
+    #seqlen_q = 128
+    #seqlen_k = 128
+    #head_dim = 128
+    #repeats = 1
 
     print(
         f"\nConfig: batch={batch_size}, heads={nheads}, seq_len={seqlen_q}, head_dim={head_dim}, causal={causal}"
@@ -118,8 +118,8 @@ def run_fa4_benchmark():
     print("=== Local (Mounted) FA4 ===")
     print("=" * 60)
 
-    sys.path.insert(0, "/workspace/flash_attn")
-    from flash_attn.cute import interface as interface_local
+    sys.path.insert(0, "/workspace/fa4")
+    from flash_attn_local.cute import interface as interface_local
 
     flash_attn_func_local = interface_local.flash_attn_func
 
@@ -137,26 +137,24 @@ def run_fa4_benchmark():
     print(f"Mean time: {m_local.mean * 1e3:.3f} ms")
     print(f"TFLOPS: {tflops_local:.2f}")
 
+
     # ===== Import Pip (Official) Version =====
     print("\n" + "=" * 60)
     print("=== Pip (Official) FA4 ===")
     print("=" * 60)
 
     # Remove local path temporarily to import pip version
-    sys.path.remove("/workspace/flash_attn")
+    sys.path.remove("/workspace/fa4")
 
-    # Force reimport
-    if "flash_attn" in sys.modules:
-        del sys.modules["flash_attn"]
-    if "flash_attn.cute" in sys.modules:
-        del sys.modules["flash_attn.cute"]
-    if "flash_attn.cute.interface" in sys.modules:
-        del sys.modules["flash_attn.cute.interface"]
+    ## Force reimport
+    #if "flash_attn" in sys.modules:
+    #    del sys.modules["flash_attn"]
+    #if "flash_attn.cute" in sys.modules:
+    #    del sys.modules["flash_attn.cute"]
+    #if "flash_attn.cute.interface" in sys.modules:
+    #    del sys.modules["flash_attn.cute.interface"]
 
     from flash_attn.cute.interface import flash_attn_func as flash_attn_func_pip
-
-    # Restore local path
-    sys.path.insert(0, "/workspace/flash_attn")
 
     # Warmup
     for _ in range(5):

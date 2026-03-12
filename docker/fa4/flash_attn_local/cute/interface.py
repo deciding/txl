@@ -26,7 +26,6 @@ from typing import Optional, Tuple, Callable
 
 import torch
 
-
 import cuda.bindings.driver as cuda
 
 import cutlass
@@ -47,7 +46,7 @@ from flash_attn.cute.cute_dsl_utils import (
     to_cute_tensor, to_cute_aux_tensor, get_aux_tensor_metadata, get_broadcast_dims,
 )
 from flash_attn.cute.flash_fwd import FlashAttentionForwardSm90
-from flash_attn.cute.flash_fwd_sm100 import FlashAttentionForwardSm100
+from .flash_fwd_sm100 import FlashAttentionForwardSm100
 from flash_attn.cute.flash_bwd_preprocess import FlashAttentionBackwardPreprocess
 from flash_attn.cute.flash_bwd import FlashAttentionBackwardSm80
 from flash_attn.cute.flash_bwd_sm90 import FlashAttentionBackwardSm90

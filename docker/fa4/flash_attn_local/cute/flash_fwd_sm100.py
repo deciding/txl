@@ -384,6 +384,7 @@ class FlashAttentionForwardSm100:
         6. Kernel launch with appropriate parameters
         """
         # setup static attributes before smem/grid/tma computation
+        print("Local called")
         self.q_dtype = mQ.element_type
         self.k_dtype = mK.element_type
         self.v_dtype = mV.element_type

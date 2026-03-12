@@ -520,24 +520,15 @@ def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=Tr
 
 
 def get_file_paths_array(base_path):
-    # 定义严格的顺序
+    """Returns ALL IR files (not just one of each type)"""
     target_exts = [".ttir", ".ttgir", ".ptx"]
-    # 初始化结果字典，初始值为 None
-    found_files = {ext: None for ext in target_exts}
+    found_files = []
 
-    # 遍历目录
     for file in base_path.rglob("*"):
-        if file.is_file() and file.suffix in found_files:
-            # 只记录该后缀第一次发现的文件
-            if found_files[file.suffix] is None:
-                found_files[file.suffix] = str(file.resolve())
+        if file.is_file() and file.suffix in target_exts:
+            found_files.append(str(file.resolve()))
 
-        # 如果全部找齐，提前结束遍历
-        if all(found_files.values()):
-            break
-
-    # 按照指定的 target_exts 顺序转换为数组（未找到的会显示为 None）
-    return [found_files[ext] for ext in target_exts]
+    return found_files
 
 
 def generate_htmls(ir_path, py_path, verbose=True):
@@ -546,10 +537,12 @@ def generate_htmls(ir_path, py_path, verbose=True):
         print(f"FILE: {ir_path}")
         generate_html(ir_path, py_path, verbose=verbose)
         return
-    for f in get_file_paths_array(base_path):
-        print(f"f: {f}")
-        if f is not None:
-            generate_html(f, py_path, verbose=verbose)
+
+    ir_files = get_file_paths_array(base_path)
+    print(f"Found {len(ir_files)} IR files")
+    for f in ir_files:
+        print(f"Processing: {f}")
+        generate_html(f, py_path, verbose=verbose)
 
 
 if __name__ == "__main__":

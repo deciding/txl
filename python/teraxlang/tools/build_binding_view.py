@@ -248,7 +248,6 @@ def read_file(path):
     with open(path, "r") as f:
         return f.readlines()
 
-
 def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=True):
     """Generate the HTML comparison view"""
     import os
@@ -257,13 +256,13 @@ def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=Tr
     if file_type is None:
         file_type = detect_file_type(ir_path)
         if file_type == "unknown":
-            raise ValueError(f"Unknown file type. Supported: .ttir, .ttgir, .ptx")
+            raise ValueError(f"Unknown file type for {ir_path}. Supported: .ttir, .ttgir, .ptx")
 
     # Auto-generate output_path if not specified
     if output_path is None:
         ir_dir = os.path.dirname(os.path.abspath(ir_path))
         ir_name = os.path.splitext(os.path.basename(ir_path))[0]
-        output_path = os.path.join(ir_dir, f"{ir_name}_viewer.html")
+        output_path = os.path.join(ir_dir, f"{ir_name}_viewer_{file_type}.html")
 
     # Parse based on file type
     if file_type == "ptx":
@@ -541,6 +540,37 @@ def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=Tr
         f"Bindings found: {panel_name}->Python: {len(binding)}, Python->{panel_name}: {len(py_line_to_ir)}"
     )
 
+def get_file_paths_array(base_path):
+    # 定义严格的顺序
+    target_exts = ['.ttir', '.ttgir', '.ptx']
+    # 初始化结果字典，初始值为 None
+    found_files = {ext: None for ext in target_exts}
+
+    # 遍历目录
+    for file in base_path.rglob("*"):
+        if file.is_file() and file.suffix in found_files:
+            # 只记录该后缀第一次发现的文件
+            if found_files[file.suffix] is None:
+                found_files[file.suffix] = str(file.resolve())
+
+        # 如果全部找齐，提前结束遍历
+        if all(found_files.values()):
+            break
+
+    # 按照指定的 target_exts 顺序转换为数组（未找到的会显示为 None）
+    return [found_files[ext] for ext in target_exts]
+
+def generate_htmls(ir_path, py_path, verbose=True):
+    base_path = Path(ir_path)
+    if base_path.is_file():
+        print(f"FILE: {ir_path}")
+        generate_html(ir_path, py_path, verbose=verbose)
+        return
+    for f in get_file_paths_array(base_path):
+        print(f"f: {f}")
+        if f is not None:
+            generate_html(f, py_path, verbose=verbose)
+
 
 if __name__ == "__main__":
     import argparse
@@ -589,4 +619,5 @@ Click on any line to navigate between related code.
     ir_path = args.ir_file
     py_path = args.py_file
 
-    generate_html(ir_path, py_path, args.output_html, args.type, args.verbose)
+    #generate_html(ir_path, py_path, args.output_html, args.type, args.verbose)
+    generate_htmls(ir_path, py_path, args.verbose)

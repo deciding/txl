@@ -219,8 +219,11 @@ def test_flash_attention():
 
     from test_txl import test_matmul
 
+    from datetime import datetime
+    dump_name = app_name + "".join(str(datetime.now()).replace(':', '.').split())
+    DUMP_DIR = "/workspace/dump/" + dump_name
     # test_matmul("/workspace/dump", "hopper_triton_ws_persistent")
-    test_matmul("/workspace/dump", "hopper_txl_ws_persistent")
+    test_matmul(DUMP_DIR, "hopper_txl_ws_persistent")
     # test_matmul('/workspace/dump', "blackwell_txl_ws_persistent")
     # import subprocess
     # p = subprocess.Popen(
@@ -228,3 +231,12 @@ def test_flash_attention():
     #        #stdout=subprocess.PIPE, stderr=subprocess.PIPE
     # )
     # p.wait()
+
+    import os
+    full_path = os.path.abspath(__file__)
+    print(full_path)
+
+    from teraxlang.tools import generate_htmls
+    generate_htmls(DUMP_DIR, "/workspace/test_txl.py", verbose=True)
+    VOLUME_NAME = f"{app_name}-matmul-dump"
+    print(f"to download and view: modal volume get {VOLUME_NAME} {dump_name}")

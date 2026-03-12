@@ -11,7 +11,8 @@ GPU_model = "B200"
 
 app = App(name="fa4-sm100-benchmark")
 
-volume = Volume.from_name("fa4-dump", create_if_missing=True)
+VOLUME_NAME = "fa4-dump"
+volume = Volume.from_name(VOLUME_NAME, create_if_missing=True)
 
 fa4_image = (
     Image.debian_slim(python_version="3.12")
@@ -50,6 +51,17 @@ def run_fa4_benchmark():
     import sys
     from typing import NamedTuple
     from triton.testing import do_bench
+    import os
+
+    from datetime import datetime
+    dump_name = "fa4" + "".join(str(datetime.now()).replace(':', '.').split())
+    DUMP_DIR = "/workspace/dump/" + dump_name
+    os.makedirs(DUMP_DIR, exist_ok=True)
+    os.environ["CUTE_DSL_DUMP_DIR"] = DUMP_DIR
+    os.environ["CUTE_DSL_KEEP_PTX"] = "1"
+    os.environ["CUTE_DSL_LINEINFO"] = "1"
+
+
 
     class Timing(NamedTuple):
         mean: float
@@ -83,6 +95,13 @@ def run_fa4_benchmark():
     dtype = torch.bfloat16
     causal = False
     repeats = 30
+
+    batch_size = 1
+    nheads = 16
+    seqlen_q = 128
+    seqlen_k = 128
+    head_dim = 128
+    repeats = 1
 
     print(
         f"\nConfig: batch={batch_size}, heads={nheads}, seq_len={seqlen_q}, head_dim={head_dim}, causal={causal}"
@@ -179,6 +198,7 @@ def run_fa4_benchmark():
 
     print(f"\nResults saved to {results_file}")
     print("Done!")
+    print(f"to download and view: modal volume get {VOLUME_NAME} {dump_name}")
 
 
 @app.local_entrypoint()

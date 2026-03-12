@@ -496,6 +496,7 @@
                 const pyEl = document.querySelector(`[data-py-line="${pyLine}"]`);
                 if (pyEl) {
                     pyEl.classList.add('highlight-py');
+                    pyEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
             });
         }

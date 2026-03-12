@@ -34,9 +34,19 @@ fa4_image = (
     .pip_install("torch-c-dlpack-ext")
     .pip_install("triton==3.5.1")
     .pip_install("flash-attn-4==4.0.0b4")
-    .add_local_dir(
-        root_dir / "docker" / "fa4", remote_path="/workspace/fa4"
+    .add_local_file(
+        root_dir
+        / "thirdparty"
+        / "triton"
+        / "dist"
+        / "teraxlang-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl",
+        remote_path="/workspace/teraxlang-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl",
+        copy=True,
     )
+    .run_commands(
+        "pip install /workspace/teraxlang-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl"
+    )
+    .add_local_dir(root_dir / "docker" / "fa4", remote_path="/workspace/fa4")
 )
 
 
@@ -54,14 +64,13 @@ def run_fa4_benchmark():
     import os
 
     from datetime import datetime
-    dump_name = "fa4" + "".join(str(datetime.now()).replace(':', '.').split())
+
+    dump_name = "fa4" + "".join(str(datetime.now()).replace(":", ".").split())
     DUMP_DIR = "/workspace/dump/" + dump_name
     os.makedirs(DUMP_DIR, exist_ok=True)
     os.environ["CUTE_DSL_DUMP_DIR"] = DUMP_DIR
     os.environ["CUTE_DSL_KEEP_PTX"] = "1"
     os.environ["CUTE_DSL_LINEINFO"] = "1"
-
-
 
     class Timing(NamedTuple):
         mean: float
@@ -96,12 +105,12 @@ def run_fa4_benchmark():
     causal = False
     repeats = 30
 
-    #batch_size = 1
-    #nheads = 16
-    #seqlen_q = 128
-    #seqlen_k = 128
-    #head_dim = 128
-    #repeats = 1
+    # batch_size = 1
+    # nheads = 16
+    # seqlen_q = 128
+    # seqlen_k = 128
+    # head_dim = 128
+    # repeats = 1
 
     print(
         f"\nConfig: batch={batch_size}, heads={nheads}, seq_len={seqlen_q}, head_dim={head_dim}, causal={causal}"
@@ -137,7 +146,6 @@ def run_fa4_benchmark():
     print(f"Mean time: {m_local.mean * 1e3:.3f} ms")
     print(f"TFLOPS: {tflops_local:.2f}")
 
-
     # ===== Import Pip (Official) Version =====
     print("\n" + "=" * 60)
     print("=== Pip (Official) FA4 ===")
@@ -147,11 +155,11 @@ def run_fa4_benchmark():
     sys.path.remove("/workspace/fa4")
 
     ## Force reimport
-    #if "flash_attn" in sys.modules:
+    # if "flash_attn" in sys.modules:
     #    del sys.modules["flash_attn"]
-    #if "flash_attn.cute" in sys.modules:
+    # if "flash_attn.cute" in sys.modules:
     #    del sys.modules["flash_attn.cute"]
-    #if "flash_attn.cute.interface" in sys.modules:
+    # if "flash_attn.cute.interface" in sys.modules:
     #    del sys.modules["flash_attn.cute.interface"]
 
     from flash_attn.cute.interface import flash_attn_func as flash_attn_func_pip
@@ -195,6 +203,14 @@ def run_fa4_benchmark():
         f.write(f"Difference:      {diff:+.2f} TFLOPS ({diff_pct:+.2f}%)\n")
 
     print(f"\nResults saved to {results_file}")
+
+    # Generate HTML viewers for PTX files
+    from teraxlang.tools import generate_htmls
+
+    print("\nGenerating HTML viewers for PTX files...")
+    generate_htmls(DUMP_DIR, "/workspace/fa4/flash_attn_local/cute/flash_fwd_sm100.py")
+    print("HTML generation complete!")
+
     print("Done!")
     print(f"to download and view: modal volume get {VOLUME_NAME} {dump_name}")
 

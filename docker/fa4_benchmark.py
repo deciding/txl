@@ -105,13 +105,6 @@ def run_fa4_benchmark():
     causal = False
     repeats = 30
 
-    # batch_size = 1
-    # nheads = 16
-    # seqlen_q = 128
-    # seqlen_k = 128
-    # head_dim = 128
-    # repeats = 1
-
     print(
         f"\nConfig: batch={batch_size}, heads={nheads}, seq_len={seqlen_q}, head_dim={head_dim}, causal={causal}"
     )
@@ -153,14 +146,6 @@ def run_fa4_benchmark():
 
     # Remove local path temporarily to import pip version
     sys.path.remove("/workspace/fa4")
-
-    ## Force reimport
-    # if "flash_attn" in sys.modules:
-    #    del sys.modules["flash_attn"]
-    # if "flash_attn.cute" in sys.modules:
-    #    del sys.modules["flash_attn.cute"]
-    # if "flash_attn.cute.interface" in sys.modules:
-    #    del sys.modules["flash_attn.cute.interface"]
 
     from flash_attn.cute.interface import flash_attn_func as flash_attn_func_pip
 

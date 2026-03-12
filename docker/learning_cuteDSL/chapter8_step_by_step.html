@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 8: Step-by-Step Kernel Development</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; border-bottom: 3px solid #76b900; padding-bottom: 10px; }
+        h2 { color: #555; margin-top: 30px; }
+        .section { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }
+        pre { background: #263238; color: #aed581; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        a { color: #76b900; }
+        .nav { display: flex; justify-content: space-between; margin: 20px 0; }
+        .nav a { padding: 10px 20px; background: #76b900; color: white; text-decoration: none; border-radius: 5px; }
+        .step { border-left: 4px solid #76b900; padding-left: 15px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <h1>Chapter 8: Step-by-Step Kernel Development Guide</h1>
+    
+    <div class="nav">
+        <a href="chapter7_grouped_gemm.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter9_architecture_specific.html">Next: Architecture &rarr;</a>
+    </div>
+
+    <div class="section">
+        <h2>Development Workflow</h2>
+        
+        <div class="step">
+            <h3>Step 1: Define Problem and Requirements</h3>
+            <ul>
+                <li>What operation? (GEMM, Attention, Norm, etc.)</li>
+                <li>Input/output shapes and data types</li>
+                <li>Target architecture (SM80, SM90, SM100)</li>
+                <li>Performance targets</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <h3>Step 2: Choose Kernel Type</h3>
+            <pre><code># Based on problem size and architecture
+- Tiling strategy: CTA tile, warp tile, thread tile
+- Persistent vs non-persistent
+- Cluster-based (for large problems)</code></pre>
+        </div>
+
+        <div class="step">
+            <h3>Step 3: Design Memory Hierarchy</h3>
+            <pre><code># GMEM -> SMEM -> RMEM -> TMEM (Hopper+)
+# Decide:
+- What stays in registers vs shared memory
+- Number of pipeline stages
+- TMA usage (SM90+)
+- TMEM usage (SM100)</code></pre>
+        </div>
+
+        <div class="step">
+            <h3>Step 4: Configure MMA and Copy Atoms</h3>
+            <pre><code># MMA Atom Selection
+tiled_mma = cute.make_tiled_mma(
+    cute.MmaAtom.F16F16F16_TN,  # Based on dtype
+    layout_a,
+    layout_b
+)
+
+# Copy Atom Selection
+copy_atom = cute.make_copy_atom(
+    cute.nvgpu.CopyUniversalOp(),
+    dtype
+)</code></pre>
+        </div>
+
+        <div class="step">
+            <h3>Step 5: Implement Kernel Structure</h3>
+            <pre><code>@cute.kernel
+def kernel(self, ...):
+    # 1. Get coordinates
+    tid = cute.arch.thread_idx()
+    bid = cute.arch.block_idx()
+    
+    # 2. Initialize
+    accumulator = tiled_mma.make_fragment_C(shape)
+    
+    # 3. Main loop
+    for k in range(k_tiles):
+        # Load
+        cute.copy(tma_atom, gmem, smem)
+        # Compute
+        cute.gemm(tiled_mma, acc, fragA, fragB, acc)
+    
+    # 4. Store
+    cute.copy(tma_atom_c, acc, gmem)</code></pre>
+        </div>
+
+        <div class="step">
+            <h3>Step 6: Add Pipeline and Synchronization</h3>
+            <pre><code># For overlapping loads and compute
+pipeline = pipeline.PipelineTmaUmma.create(...)
+producer_handle = pipeline.producer_acquire()
+consumer_handle = pipeline.consumer_wait()</code></pre>
+        </div>
+
+        <div class="step">
+            <h3>Step 7: Tune Performance</h3>
+            <ul>
+                <li>Adjust tile sizes</li>
+                <li>Adjust cluster shape</li>
+                <li>Adjust pipeline stages</li>
+                <li>Profile with Nsight Compute</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Code Template</h2>
+        <pre><code>import cutlass.cute as cute
+import cutlass.utils as utils
+
+class MyKernel:
+    def __init__(self, ...):
+        # Configuration
+        self.threads_per_cta = 128
+    
+    @cute.jit
+    def __call__(self, input_tensor, output_tensor, ...):
+        # Setup
+        self._setup_attributes()
+        
+        # Compute grid
+        grid = self._compute_grid(...)
+        
+        # Launch
+        self.kernel(...).launch(grid=grid, block=[128,1,1], ...)
+    
+    @cute.kernel
+    def kernel(self, ...):
+        # Kernel implementation
+        pass</code></pre>
+    </div>
+
+    <div class="nav">
+        <a href="chapter7_grouped_gemm.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter9_architecture_specific.html">Next: Architecture &rarr;</a>
+    </div>
+</body>
+</html>

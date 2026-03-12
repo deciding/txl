@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 3: Most Used APIs</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; border-bottom: 3px solid #76b900; padding-bottom: 10px; }
+        h2 { color: #555; margin-top: 30px; }
+        h3 { color: #666; }
+        .section { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; }
+        pre { background: #263238; color: #aed581; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        a { color: #76b900; }
+        .nav { display: flex; justify-content: space-between; margin: 20px 0; }
+        .nav a { padding: 10px 20px; background: #76b900; color: white; text-decoration: none; border-radius: 5px; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #f5f5f5; }
+    </style>
+</head>
+<body>
+    <h1>Chapter 3: Most Used APIs</h1>
+    
+    <div class="nav">
+        <a href="chapter2_core_concepts.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter4_gemm.html">Next: GEMM &rarr;</a>
+    </div>
+
+    <div class="section">
+        <h2>Core Functions</h2>
+        <table>
+            <tr><th>Function</th><th>Description</th><th>Example</th></tr>
+            <tr><td><code>make_tensor()</code></td><td>Create tensor from array</td><td><code>cute.make_tensor(arr)</code></td></tr>
+            <tr><td><code>make_layout()</code></td><td>Create layout</td><td><code>cute.make_layout((M,N))</code></td></tr>
+            <tr><td><code>slice_()</code></td><td>Slice tensor/layout</td><td><code>cute.slice_(t, (None,0))</code></td></tr>
+            <tr><td><code>size()</code></td><td>Get total size</td><td><code>cute.size(tensor)</code></td></tr>
+            <tr><td><code>rank()</code></td><td>Get rank/dimensions</td><td><code>cute.rank(tensor)</code></td></tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>MMA (Matrix Multiply) APIs</h2>
+        <pre><code># Create MMA atom
+mma_atom = cute.MmaAtom.F16F16F16_TN
+
+# Create tiled MMA (thread-level)
+tiled_mma = cute.make_tiled_mma(
+    mma_atom,
+    cute.LayoutType.RowMajor,
+    cute.LayoutType.ColMajor
+)
+
+# Get thread slice
+thr_mma = tiled_mma.get_slice(thread_id)
+
+# Partition tensors for MMA
+tCgA = thr_mma.partition_A(gA)  # A partition
+tCgB = thr_mma.partition_B(gB)  # B partition
+tCgC = thr_mma.partition_C(gC)  # C partition
+
+# Create accumulator fragment
+acc = tiled_mma.make_fragment_C(shape)
+
+# Perform GEMM
+cute.gemm(tiled_mma, acc, tCrA, tCrB, acc)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Copy APIs</h2>
+        <pre><code># Create copy atom
+copy_atom = cute.make_copy_atom(
+    cute.nvgpu.CopyUniversalOp(),
+    cutlass.Float16
+)
+
+# Create tiled copy
+tiled_copy = cute.make_tiled_copy(copy_atom)
+
+# Get thread slice
+thr_copy = tiled_copy.get_slice(thread_id)
+
+# Partition for copy
+tCsS = thr_copy.partition_S(smem)  # Source
+tCsD = thr_copy.partition_D(gmem)   # Destination
+
+# Perform copy
+cute.copy(tiled_copy, tCsS, tCsD)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>TMA (Tensor Memory Access) - Hopper/Blackwell</h2>
+        <pre><code>import cute.nvgpu as nvgpu
+
+# Create TMA atom for A matrix
+tma_atom_a, tma_tensor_a = nvgpu.make_tiled_tma_atom_A(
+    cluster_shape,     # Cluster layout
+    tensor_a,          # Global tensor
+    smem_layout,       # Shared memory layout
+    tile_shape,        # Tile shape
+    tiled_mma,         # Tiled MMA
+    cluster_layout
+)
+
+# Prefetch descriptor
+cpasync.prefetch_descriptor(tma_atom_a)
+
+# TMA load
+cute.copy(
+    tma_atom_a,
+    gA_tile,      # Global address
+    sA_tile,     # Shared memory address
+    tma_barrier
+)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Pipeline APIs (for async operations)</h2>
+        <pre><code>import cutlass.pipeline as pipeline
+
+# Create pipeline
+pipeline = pipeline.PipelineTmaUmma.create(
+    barrier_storage=storage.barrier_ptr,
+    num_stages=3,
+    producer_group=producer_group,
+    consumer_group=consumer_group,
+    cta_layout=cluster_layout
+)
+
+# Producer operations
+handle = pipeline.producer_acquire()
+pipeline.producer_commit(handle)
+
+# Consumer operations  
+pipeline.consumer_wait(handle)
+pipeline.consumer_release()</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Arch APIs</h2>
+        <pre><code>import cute.arch as arch
+
+# Thread/block indices
+tid = arch.thread_idx()
+bid = arch.block_idx()
+
+# Warp info
+warp_id = arch.warp_idx()
+warp_size = arch.warp_size()
+
+# Cluster info
+cta_in_cluster = arch.block_idx_in_cluster()
+
+# Synchronization
+arch.fence_proxy("async.shared", space="cta")
+arch.sync()  # Full barrier
+
+# Memory operations
+arch.warpgroup_arrive()
+arch.warpgroup_commit()</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>JIT and Kernel</h2>
+        <pre><code>@cute.jit
+def my_function(tensor_a, tensor_b):
+    """JIT-compiled function"""
+    result = tensor_a + tensor_b
+    return result
+
+@cute.kernel
+def my_kernel(tiled_mma, ptr_a, ptr_b, ptr_c):
+    """CUDA kernel"""
+    # Kernel implementation
+    pass
+
+# Launch kernel
+my_kernel(
+    grid=(grid_x, grid_y, grid_z),
+    block=(128, 1, 1),
+    args=(arg1, arg2, arg3)
+)</code></pre>
+    </div>
+
+    <div class="nav">
+        <a href="chapter2_core_concepts.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter4_gemm.html">Next: GEMM &rarr;</a>
+    </div>
+</body>
+</html>

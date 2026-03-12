@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 10: Best Practices and Tips</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; border-bottom: 3px solid #76b900; padding-bottom: 10px; }
+        .section { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; }
+        pre { background: #263238; color: #aed581; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        ul { padding-left: 20px; }
+        li { margin: 10px 0; }
+        a { color: #76b900; }
+        .nav { display: flex; justify-content: space-between; margin: 20px 0; }
+        .nav a { padding: 10px 20px; background: #76b900; color: white; text-decoration: none; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Chapter 10: Best Practices and Tips</h1>
+    
+    <div class="nav">
+        <a href="chapter9_architecture_specific.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+    </div>
+
+    <div class="section">
+        <h2>Performance Tips</h2>
+        
+        <h3>1. Memory Access</h3>
+        <ul>
+            <li>Use 128-bit vectorized loads/stores</li>
+            <li>Align data to 16-byte boundaries</li>
+            <li>Leverage TMA for global memory access (SM90+)</li>
+            <li>Use multicast to reduce L2 traffic</li>
+        </ul>
+
+        <h3>2. Computation</h3>
+        <ul>
+            <li>Use Tensor Core operations</li>
+            <li>Keep MMA busy - overlap with memory</li>
+            <li>Use appropriate tile sizes</li>
+            <li>Persistent kernels for large problems</li>
+        </ul>
+
+        <h3>3. Pipeline</h3>
+        <ul>
+            <li>Use multiple stages to hide latency</li>
+            <li>Balance compute and memory bandwidth</li>
+            <li>Use async copy for shared memory</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Common Pitfalls</h2>
+        
+        <ul>
+            <li><strong>Incorrect strides</strong>: Always verify tensor layouts</li>
+            <li><strong>Out-of-bounds access</strong>: Add bounds checking for edge cases</li>
+            <li><strong>Missing sync</strong>: Ensure proper synchronization before using data</li>
+            <li><strong>Wrong dtype</strong>: Match MMA atom with data types</li>
+            <li><strong>Register pressure</strong>: Too many register can reduce occupancy</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Debugging</h2>
+        
+        <pre><code># Print tensor for debugging
+cute.print_tensor(tensor)
+
+# Check tensor properties
+print(f"Shape: {tensor.shape}")
+print(f"Layout: {tensor.layout}")
+
+# Print layout image
+cute.print_latex(layout)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Profiling</h2>
+        
+        <pre><code># Nsight Compute
+ncu --metrics sm__throughput.avg.pct_of_peak_sustained \
+    python your_kernel.py
+
+# Common metrics
+- sm__throughput.avg.pct_of_peak_sustained
+- sm__warps_active.avg.pct_of_peak_sustained
+- l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum
+- l2__t_sectors_pipe_tex_sum.sum</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Code Organization</h2>
+        <pre><code># Follow the pattern from examples:
+# 1. Configuration class (__init__)
+# 2. Attribute setup (_setup_attributes)
+# 3. Kernel launch (__call__)
+# 4. Device kernel (@cute.kernel)
+# 5. Helper methods (epilogue, etc.)</code></pre>
+    </div>
+
+    <div class="nav">
+        <a href="chapter9_architecture_specific.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+    </div>
+</body>
+</html>

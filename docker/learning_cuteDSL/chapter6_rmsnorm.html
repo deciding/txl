@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 6: RMSNorm and Reduction</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; border-bottom: 3px solid #76b900; padding-bottom: 10px; }
+        h2 { color: #555; margin-top: 30px; }
+        .section { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }
+        pre { background: #263238; color: #aed581; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        a { color: #76b900; }
+        .nav { display: flex; justify-content: space-between; margin: 20px 0; }
+        .nav a { padding: 10px 20px; background: #76b900; color: white; text-decoration: none; border-radius: 5px; }
+        .note { background: #e8f5e9; border-left: 4px solid #388e3c; padding: 10px 15px; margin: 15px 0; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    </style>
+</head>
+<body>
+    <h1>Chapter 6: RMSNorm and Reduction</h1>
+    
+    <div class="nav">
+        <a href="chapter5_fmha.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter7_grouped_gemm.html">Next: Grouped GEMM &rarr;</a>
+    </div>
+
+    <div class="section">
+        <h2>RMSNorm Formula</h2>
+        <pre><code>y = x / sqrt(mean(x²) + eps) * weight
+
+# Equivalent to LayerNorm without mean
+# 1. Compute RMS = sqrt(mean(x²) + eps)
+# 2. Normalize: y = x / RMS * weight</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Cluster-Based Reduction</h2>
+        <p>For large hidden dimensions, multiple CTAs cooperate using clusters:</p>
+        
+        <table>
+            <tr><th>N Dimension</th><th>Cluster Size</th></tr>
+            <tr><td>N &le; 16K</td><td>1 (single CTA)</td></tr>
+            <tr><td>N &le; 32K</td><td>2</td></tr>
+            <tr><td>N &le; 64K</td><td>4</td></tr>
+            <tr><td>N &le; 128K</td><td>8</td></tr>
+            <tr><td>Larger</td><td>16</td></tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Configuration Class</h2>
+        <pre><code>class RMSNormConfig:
+    def __init__(self, dtype, N, has_weight=True, sm_version=None):
+        self.dtype = dtype
+        self.N = N
+        self.cluster_n = self._compute_cluster_n(N, dtype, sm_version)
+        self.N_per_cta = N // self.cluster_n
+        self.threads_per_row = self._compute_threads_per_row(N_per_cta)
+        self.num_threads = self._compute_num_threads(N_per_cta)
+        
+        # Vector size for 128-bit loads
+        self.vec_size = 128 // dtype.width</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Reduce Helper</h2>
+        <pre><code># From reduce.py
+from reduce import row_reduce
+
+# Row reduction across threads
+reduced = row_reduce(
+    tensor,           # Input tensor
+    reduction_op,    # Reduction operation
+    num_threads,      # Number of participating threads
+)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Running RMSNorm</h2>
+        <pre><code>config = RMSNormConfig(
+    dtype=cutlass.BFloat16,
+    N=4096,
+    has_weight=True
+)
+
+# Execute
+rmsnorm(input_tensor, weight_tensor, output_tensor, stream)</code></pre>
+
+        <div class="note">
+            <strong>Example command:</strong><br>
+            <code>python rmsnorm.py --M 2048 --N 4096 --dtype BFloat16</code>
+        </div>
+    </div>
+
+    <div class="nav">
+        <a href="chapter5_fmha.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter7_grouped_gemm.html">Next: Grouped GEMM &rarr;</a>
+    </div>
+</body>
+</html>

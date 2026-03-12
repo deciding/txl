@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Example Files Summary</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; border-bottom: 3px solid #76b900; padding-bottom: 10px; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; background: white; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background: #76b900; color: white; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        a { color: #76b900; }
+    </style>
+</head>
+<body>
+    <h1>Example Files Summary</h1>
+    <p><a href="index.html">&larr; Back to Index</a></p>
+    
+    <p>Based on files in <code>thirdparty/cutlass/examples/python/CuTeDSL/blackwell/</code></p>
+
+    <table>
+        <tr><th>File</th><th>Category</th><th>Key Concepts</th><th>Difficulty</th></tr>
+        <tr>
+            <td>dense_gemm.py</td>
+            <td>GEMM</td>
+            <td>TMA, MMA, TMEM, Pipeline</td>
+            <td>Intermediate</td>
+        </tr>
+        <tr>
+            <td>dense_gemm_persistent.py</td>
+            <td>GEMM</td>
+            <td>Persistent kernel, large matrices</td>
+            <td>Intermediate</td>
+        </tr>
+        <tr>
+            <td>dense_gemm_persistent_prefetch.py</td>
+            <td>GEMM</td>
+            <td>Prefetch, software pipeline</td>
+            <td>Advanced</td>
+        </tr>
+        <tr>
+            <td>dense_gemm_software_pipeline.py</td>
+            <td>GEMM</td>
+            <td>Explicit software pipeline</td>
+            <td>Advanced</td>
+        </tr>
+        <tr>
+            <td>dense_gemm_persistent_dynamic.py</td>
+            <td>GEMM</td>
+            <td>Dynamic tile scheduling</td>
+            <td>Advanced</td>
+        </tr>
+        <tr>
+            <td>dense_blockscaled_gemm_persistent.py</td>
+            <td>GEMM</td>
+            <td>Block-scaled quantization</td>
+            <td>Advanced</td>
+        </tr>
+        <tr>
+            <td>grouped_gemm.py</td>
+            <td>GEMM</td>
+            <td>Variable-sized matrices</td>
+            <td>Intermediate</td>
+        </tr>
+        <tr>
+            <td>fmha.py</td>
+            <td>Attention</td>
+            <td>Warp specialization, softmax, TMEM</td>
+            <td>Advanced</td>
+        </tr>
+        <tr>
+            <td>fmha_bwd.py</td>
+            <td>Attention</td>
+            <td>Backward pass, gradient computation</td>
+            <td>Advanced</td>
+        </tr>
+        <tr>
+            <td>rmsnorm.py</td>
+            <td>Normalization</td>
+            <td>Cluster reduction, row reduce</td>
+            <td>Intermediate</td>
+        </tr>
+        <tr>
+            <td>reduce.py</td>
+            <td>Reduction</td>
+            <td>Warp-level reduction, cluster sync</td>
+            <td>Intermediate</td>
+        </tr>
+        <tr>
+            <td>programmatic_dependent_launch.py</td>
+            <td>Advanced</td>
+            <td>Dependent kernel launch</td>
+            <td>Expert</td>
+        </tr>
+    </table>
+
+    <h2>Learning Path</h2>
+    <ol>
+        <li><strong>Start with:</strong> dense_gemm.py - Basic GEMM structure</li>
+        <li><strong>Next:</strong> rmsnorm.py - Simpler kernel with reductions</li>
+        <li><strong>Then:</strong> dense_gemm_persistent.py - Persistent execution</li>
+        <li><strong>Advanced:</strong> fmha.py - Complex multi-phase kernel</li>
+    </ol>
+
+    <h2>Common Patterns Across Examples</h2>
+    <ul>
+        <li>Configuration class in <code>__init__</code></li>
+        <li>Attribute setup in <code>_setup_attributes</code></li>
+        <li>JIT-compiled <code>__call__</code> method</li>
+        <li>Device kernel with <code>@cute.kernel</code></li>
+        <li>TMA/MMA atom creation</li>
+        <li>Pipeline for async operations</li>
+    </ul>
+
+    <p><a href="index.html">&larr; Back to Index</a></p>
+</body>
+</html>

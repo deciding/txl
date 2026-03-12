@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dense Blockscaled GEMM Persistent - Comprehensive Analysis</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.7; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; }
+        h1 { color: #1a1a1a; border-bottom: 4px solid #76b900; padding-bottom: 15px; }
+        h2 { color: #2d2d2d; margin-top: 40px; border-left: 5px solid #76b900; padding-left: 15px; }
+        .section { background: white; padding: 25px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        pre { background: #282c34; color: #abb2bf; padding: 20px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
+        pre code { background: none; padding: 0; color: inherit; }
+        .keyword { color: #c678dd; }
+        .number { color: #d19a66; }
+        .analysis { background: #f0f7ff; border-left: 4px solid #4a90d9; padding: 15px; margin: 15px 0; }
+        .nav { display: flex; justify-content: space-between; margin: 30px 0; }
+        .nav a { padding: 12px 25px; background: #76b900; color: white; text-decoration: none; border-radius: 6px; }
+    </style>
+</head>
+<body>
+    <h1>Dense Blockscaled GEMM Persistent: Analysis</h1>
+    <p><strong>File:</strong> <code>dense_blockscaled_gemm_persistent.py</code></p>
+    
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+
+    <div class="section">
+        <h2>1. Overview</h2>
+        <p>Blockscaled GEMM adds per-block scaling factors for activation quantization.</p>
+        <ul>
+            <li><strong>Block Scales</strong>: Per-tile scaling factors</li>
+            <li><strong>Mixed Precision</strong>: INT8 input, FP16 output</li>
+            <li><strong>Scale Tensor</strong>: Separate tensor for scales</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>2. Scale Tensor Layout</h2>
+        <pre><code>scale_m_tiler = cta_tile_m // block_size
+scale_layout = cute.make_layout((scale_m_tiler, num_ctas_n, batch))</code></pre>
+        <div class="analysis">
+            <h4>Scale Layout</h4>
+            <p>Scales stored per block in M dimension, matching CTA tile distribution.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>3. Scale Loading</h2>
+        <pre><code>scale_atom = cute.make_copy_atom(...)
+tScaleS, tScaleG = cpasync.tma_partition(...)
+tScaleR = cute.make_fragment_like(tScaleS)
+
+cute.copy(scale_atom, tScaleG, tScaleR)</code></pre>
+        <div class="analysis">
+            <h4>Scale Loading</h4>
+            <p>Scales loaded via TMA alongside main operands, partitioned per thread.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>4. MMA with Scaling</h2>
+        <pre><code>cute.gemm(tiled_mma, tCtAcc, tCrA, tCrB, tCtAcc, scale=tScaleR)</code></pre>
+        <div class="analysis">
+            <h4>Scaled MMA</h4>
+            <p>tcgen05.mma accepts scale parameter to multiply accumulator by block scale.</p>
+        </div>
+    </div>
+
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+</body>
+</html>

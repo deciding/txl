@@ -1,0 +1,1331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FMHA Forward - Comprehensive Analysis</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; }
+        h1 { color: #1a1a1a; border-bottom: 4px solid #76b900; padding-bottom: 15px; }
+        h2 { color: #2d2d2d; margin-top: 40px; border-left: 5px solid #76b900; padding-left: 15px; }
+        h3 { color: #444; margin-top: 30px; }
+        .section { background: white; padding: 25px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        code { background: #f4f4f4; padding: 3px 8px; border-radius: 4px; font-family: 'Fira Code', monospace; font-size: 0.9em; color: #c7254e; }
+        pre { background: #282c34; color: #abb2bf; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.4; }
+        pre code { background: none; padding: 0; color: inherit; }
+        .keyword { color: #c678dd; }
+        .function { color: #61afef; }
+        .string { color: #98c379; }
+        .number { color: #d19a66; }
+        .comment { color: #5c6370; font-style: italic; }
+        .analysis { background: #f0f7ff; border-left: 4px solid #4a90d9; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+        .analysis h4 { margin-top: 0; color: #4a90d9; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background: #f8f8f8; }
+        .nav { display: flex; justify-content: space-between; margin: 30px 0; }
+        .nav a { padding: 12px 25px; background: #76b900; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; }
+        .nav a:hover { background: #5a8f00; }
+    </style>
+</head>
+<body>
+    <h1>FMHA Forward: Comprehensive Code Analysis</h1>
+    <p><strong>File:</strong> <code>fmha.py</code> (3246 lines) | <strong>Architecture:</strong> Blackwell (SM100)</p>
+    
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+
+    <div class="section">
+        <h2>1. Imports</h2>
+        <pre><code><span class="keyword">import</span> argparse
+<span class="keyword">import</span> math
+<span class="keyword">import</span> os
+<span class="keyword">import</span> sys
+<span class="keyword">import</span> time
+<span class="keyword">from</span> typing <span class="keyword">import</span> Type, Tuple, Union, Optional
+
+<span class="keyword">import</span> cuda.bindings.driver <span class="keyword">as</span> cuda
+<span class="keyword">import</span> torch
+
+<span class="keyword">import</span> cutlass
+<span class="keyword">import</span> cutlass.cute <span class="keyword">as</span> cute
+<span class="keyword">import</span> cutlass.cute.nvgpu.tcgen05 <span class="keyword">as</span> tcgen05
+<span class="keyword">import</span> cutlass.utils <span class="keyword">as</span> utils
+<span class="keyword">import</span> cutlass.pipeline <span class="keyword">as</span> pipeline
+<span class="keyword">import</span> cutlass.utils.blackwell_helpers <span class="keyword">as</span> sm100_utils
+<span class="keyword">import</span> cutlass.cute.testing <span class="keyword">as</span> testing
+<span class="keyword">from</span> cutlass.cute.runtime <span class="keyword">import</span> from_dlpack
+<span class="keyword">from</span> cutlass.cute.typing <span class="keyword">import</span> Int32, Int64, Float32
+
+<span class="keyword">if</span> __name__ == <span class="string">"__main__"</span>:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(<span class="number">0</span>, os.path.join(current_dir, <span class="string">".."</span>))
+
+<span class="keyword">from</span> helpers <span class="keyword">import</span> fmha_helpers <span class="keyword">as</span> fmha_utils</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <ul>
+                <li><code>cutlass.cute</code> - Core CuTeDSL for tensor operations</li>
+                <li><code>tcgen05</code> - Blackwell tensor core operations</li>
+                <li><code>cutlass.pipeline</code> - Pipeline abstractions</li>
+                <li><code>fmha_helpers</code> - FMHA-specific utilities</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>2. Helper Function</h2>
+        <pre><code><span class="keyword">def</span> make_thread_cooperative_group(size: int):
+    <span class="keyword">return</span> pipeline.CooperativeGroup(pipeline.Agent.Thread, size)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>3. Class Definition - __init__</h2>
+        <pre><code><span class="keyword">class</span> <span class="function">BlackwellFusedMultiHeadAttentionForward</span>:
+    <span class="keyword">def</span> <span class="function">__init__</span>(
+        self,
+        qk_acc_dtype: Type[cutlass.Numeric],
+        pv_acc_dtype: Type[cutlass.Numeric],
+        mma_tiler: Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>, <span class="keyword">int</span>],
+        is_persistent: bool,
+        mask_type: fmha_utils.MaskEnum,
+    ):
+        self.qk_acc_dtype = qk_acc_dtype
+        self.pv_acc_dtype = pv_acc_dtype
+        self.cta_tiler = (
+            <span class="number">2</span> * mma_tiler[<span class="number">0</span>],
+            mma_tiler[<span class="number">1</span>],
+            mma_tiler[<span class="number">2</span>],
+        )
+        self.qk_mma_tiler = mma_tiler
+        self.pv_mma_tiler = (
+            mma_tiler[<span class="number">0</span>],
+            mma_tiler[<span class="number">2</span>],
+            mma_tiler[<span class="number">1</span>],
+        )
+        self.cluster_shape_mn = (<span class="number">1</span>, <span class="number">1</span>)
+        self.is_persistent = is_persistent
+        self.mask_type = mask_type
+
+        self.softmax0_warp_ids = (<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>)
+        self.softmax1_warp_ids = (<span class="number">4</span>, <span class="number">5</span>, <span class="number">6</span>, <span class="number">7</span>)
+        self.correction_warp_ids = (<span class="number">8</span>, <span class="number">9</span>, <span class="number">10</span>, <span class="number">11</span>)
+        self.mma_warp_id = <span class="number">12</span>
+        self.load_warp_id = <span class="number">13</span>
+        self.epilogue_warp_id = <span class="number">14</span>
+        self.empty_warp_id = <span class="number">15</span>
+        self.tmem_alloc_cols = cute.arch.get_max_tmem_alloc_cols(<span class="string">"sm_100"</span>)
+
+        self.threads_per_warp = <span class="number">32</span>
+        self.threads_per_cta = self.threads_per_warp * len(
+            (
+                *self.softmax0_warp_ids,
+                *self.softmax1_warp_ids,
+                *self.correction_warp_ids,
+                self.mma_warp_id,
+                self.load_warp_id,
+                self.epilogue_warp_id,
+                self.empty_warp_id,
+            )
+        )
+
+        self.cta_sync_barrier = pipeline.NamedBarrier(
+            barrier_id=<span class="number">1</span>,
+            num_threads=self.threads_per_cta,
+        )
+        self.tmem_alloc_barrier = pipeline.NamedBarrier(
+            barrier_id=<span class="number">2</span>,
+            num_threads=self.threads_per_warp,
+        )
+
+        self.tmem_s0_offset = <span class="number">0</span>
+        self.tmem_s1_offset = <span class="number">128</span>
+        self.tmem_o0_offset = <span class="number">256</span>
+        self.tmem_o1_offset = <span class="number">384</span>
+        self.tmem_p0_offset = <span class="number">32</span>
+        self.tmem_p1_offset = <span class="number">160</span>
+
+        self.tmem_vec0_offset = <span class="number">0</span>
+        self.tmem_vec1_offset = <span class="number">128</span>
+
+        self.num_regs_softmax = <span class="number">192</span>
+        self.num_regs_correction = <span class="number">96</span>
+        self.num_regs_other = <span class="number">32</span>
+
+        self.buffer_align_bytes = <span class="number">1024</span></code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Initializes FMHA kernel configuration with warp specialization. 16 warps total:
+            - Warps 0-3: Softmax0
+            - Warps 4-7: Softmax1  
+            - Warps 8-11: Correction
+            - Warp 12: MMA
+            - Warp 13: Load
+            - Warp 14: Epilogue
+            - Warp 15: Empty/auxiliary</p>
+            <h4>TMEM Offsets</h4>
+            <ul>
+                <li>S0: 0-127, S1: 128-255</li>
+                <li>O0: 256-383, O1: 384-511</li>
+                <li>P0: 32-159, P1: 160-287</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>4. _setup_attributes Method</h2>
+        <pre><code><span class="keyword">def</span> <span class="function">_setup_attributes</span>(self):
+        self.q_stage = <span class="number">2</span>
+        self.kv_stage = <span class="number">4</span> <span class="keyword">if</span> self.q_dtype.width == <span class="number">8</span> <span class="keyword">else</span> <span class="number">3</span>
+        self.acc_stage = <span class="number">1</span>
+        self.softmax_corr_stage = <span class="number">1</span>
+        self.mma_corr_stage = <span class="number">2</span>
+        self.mma_softmax_stage = <span class="number">1</span>
+        self.epi_stage = <span class="number">2</span></code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Sets up pipeline stages for different phases of FMHA computation.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>5. __call__ Method - Part 1 (Tensor Setup)</h2>
+        <pre><code><span class="keyword">@cute.jit</span>
+    <span class="keyword">def</span> <span class="function">__call__</span>(
+        self,
+        q_iter: cute.Pointer,
+        k_iter: cute.Pointer,
+        v_iter: cute.Pointer,
+        o_iter: cute.Pointer,
+        problem_size: Tuple[Int32, Int32, Int32, Int32, Int32, Int32, Int32],
+        cum_seqlen_q: Optional[cute.Tensor],
+        cum_seqlen_k: Optional[cute.Tensor],
+        lse_iter: Optional[cute.Pointer],
+        scale_softmax_log2: Float32,
+        scale_softmax: Float32,
+        scale_output: Float32,
+        window_size_left: Optional[Int32],
+        window_size_right: Optional[Int32],
+        stream: cuda.CUstream,
+    ):
+        b, s_q, s_lse, s_k, h_q, h_k, d = problem_size
+        h_r = h_q // h_k
+        qo_offset = <span class="number">0</span> <span class="keyword">if</span> cum_seqlen_q <span class="keyword">is None</span> <span class="keyword">else</span> -s_q * d * h_r * h_k
+        kv_offset = <span class="number">0</span> <span class="keyword">if</span> cum_seqlen_k <span class="keyword">is None</span> <span class="keyword">else</span> -s_k * d * h_k
+        b_qo = b <span class="keyword">if</span> cum_seqlen_q <span class="keyword">is None</span> <span class="keyword">else</span> s_q * (<span class="number">1</span> + b)
+        b_kv = b <span class="keyword">if</span> cum_seqlen_k <span class="keyword">is None</span> <span class="keyword">else</span> s_k * (<span class="number">1</span> + b)
+        stride_b_qo = h_r * h_k * s_q * d <span class="keyword">if</span> cum_seqlen_q <span class="keyword">is None</span> <span class="keyword">else</span> d * h_r * h_k
+        stride_b_kv = h_k * s_k * d <span class="keyword">if</span> cum_seqlen_k <span class="keyword">is None</span> <span class="keyword">else</span> d * h_k
+        b_lse = b <span class="keyword">if</span> cum_seqlen_q <span class="keyword">is None</span> <span class="keyword">else</span> <span class="number">1</span>
+        stride_b_lse = h_r * h_k * s_lse <span class="keyword">if</span> cum_seqlen_q <span class="keyword">is None</span> <span class="keyword">else</span> <span class="number">0</span></code></pre>
+    </div>
+
+    <div class="section">
+        <h2>5. __call__ Method - Part 2 (Tensor Layouts)</h2>
+        <pre><code>        q_layout = cute.make_layout(
+            (s_q, d, ((h_r, h_k), b_qo)),
+            stride=(d * h_r * h_k, <span class="number">1</span>, ((d, d * h_r), stride_b_qo)),
+        )
+        q = cute.make_tensor(q_iter + qo_offset, q_layout)
+        k_layout = cute.make_layout(
+            (s_k, d, ((h_r, h_k), b_kv)),
+            stride=(d * h_k, <span class="number">1</span>, ((<span class="number">0</span>, d), stride_b_kv)),
+        )
+        k = cute.make_tensor(k_iter + kv_offset, k_layout)
+        v_layout = cute.make_layout(
+            (d, s_k, ((h_r, h_k), b_kv)),
+            stride=(<span class="number">1</span>, d * h_k, ((<span class="number">0</span>, d), stride_b_kv)),
+        )
+        v = cute.make_tensor(v_iter + kv_offset, v_layout)
+        o_layout = cute.make_layout(
+            (s_q, d, ((h_r, h_k), b_qo)),
+            stride=(d * h_r * h_k, <span class="number">1</span>, ((d, d * h_r), stride_b_qo)),
+        )
+        o = cute.make_tensor(o_iter + qo_offset, o_layout)
+        <span class="keyword">if</span> cutlass.const_expr(lse_iter <span class="keyword">is not None</span>):
+            lse_layout = cute.make_layout(
+                (s_lse, ((h_r, h_k), b_lse)),
+                stride=(<span class="number">1</span>, ((s_lse, h_r * s_lse), stride_b_lse)),
+            )
+            lse = cute.make_tensor(lse_iter, lse_layout)
+        <span class="keyword">else</span>:
+            lse = <span class="keyword">None</span></code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Creates tensor layouts with proper strides for Q, K, V, O. Handles both fixed and variable sequence lengths.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>5. __call__ Method - Part 3 (MMA Setup)</h2>
+        <pre><code>        self.q_dtype = q.element_type
+        self.k_dtype = k.element_type
+        self.v_dtype = v.element_type
+        self.o_dtype = o.element_type
+
+        self.tile_sched_params, grid = fmha_utils.compute_grid(
+            cute.shape((s_q, d, ((h_r, h_k), b))),
+            self.cta_tiler,
+            self.is_persistent,
+        )
+
+        self.q_major_mode = utils.LayoutEnum.from_tensor(q).mma_major_mode()
+        self.k_major_mode = utils.LayoutEnum.from_tensor(k).mma_major_mode()
+        self.v_major_mode = utils.LayoutEnum.from_tensor(v).mma_major_mode()
+        self.o_layout = utils.LayoutEnum.from_tensor(o)
+
+        <span class="keyword">if</span> cutlass.const_expr(self.q_major_mode != tcgen05.OperandMajorMode.K):
+            raise RuntimeError(<span class="string">"The layout of q is not supported"</span>)
+        <span class="keyword">if</span> cutlass.const_expr(self.k_major_mode != tcgen05.OperandMajorMode.K):
+            raise RuntimeError(<span class="string">"The layout of k is not supported"</span>)
+        <span class="keyword">if</span> cutlass.const_expr(self.v_major_mode != tcgen05.OperandMajorMode.MN):
+            raise RuntimeError(<span class="string">"The layout of v is not supported"</span>)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>5. __call__ Method - Part 4 (Tiled MMA Creation)</h2>
+        <pre><code>        cta_group = tcgen05.CtaGroup.ONE
+        p_source = tcgen05.OperandSource.TMEM
+        p_major_mode = tcgen05.OperandMajorMode.K
+        qk_tiled_mma = sm100_utils.make_trivial_tiled_mma(
+            self.q_dtype,
+            self.q_major_mode,
+            self.k_major_mode,
+            self.qk_acc_dtype,
+            cta_group,
+            self.qk_mma_tiler[:<span class="number">2</span>],
+        )
+        pv_tiled_mma = sm100_utils.make_trivial_tiled_mma(
+            self.v_dtype,
+            p_major_mode,
+            self.v_major_mode,
+            self.pv_acc_dtype,
+            cta_group,
+            self.pv_mma_tiler[:<span class="number">2</span>],
+            p_source,
+        )
+
+        self.cluster_shape_mnk = (*self.cluster_shape_mn, <span class="number">1</span>)
+        self.cluster_layout_vmnk = cute.tiled_divide(
+            cute.make_layout(self.cluster_shape_mnk),
+            (qk_tiled_mma.thr_id.shape,),
+        )
+
+        self.epi_tile = self.pv_mma_tiler[:<span class="number">2</span>]</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Creates two TiledMMA objects: one for Q*K^T and one for P*V operations.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>5. __call__ Method - Part 5 (Shared Memory Layouts)</h2>
+        <pre><code>        q_smem_layout_staged = sm100_utils.make_smem_layout_a(
+            qk_tiled_mma,
+            self.qk_mma_tiler,
+            self.q_dtype,
+            self.q_stage,
+        )
+        k_smem_layout_staged = sm100_utils.make_smem_layout_b(
+            qk_tiled_mma,
+            self.qk_mma_tiler,
+            self.k_dtype,
+            self.kv_stage,
+        )
+        p_tmem_layout_staged = sm100_utils.make_smem_layout_a(
+            pv_tiled_mma,
+            self.pv_mma_tiler,
+            self.q_dtype,
+            self.acc_stage,
+        )
+        v_smem_layout_staged = sm100_utils.make_smem_layout_b(
+            pv_tiled_mma,
+            self.pv_mma_tiler,
+            self.v_dtype,
+            self.kv_stage,
+        )
+        o_smem_layout_staged = sm100_utils.make_smem_layout_epi(
+            self.o_dtype,
+            self.o_layout,
+            self.epi_tile,
+            self.epi_stage,
+        )</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>5. __call__ Method - Part 6 (TMA Atoms)</h2>
+        <pre><code>        tma_load_op = cute.nvgpu.cpasync.CopyBulkTensorTileG2SOp(cta_group)
+        tma_store_op = cute.nvgpu.cpasync.CopyBulkTensorTileS2GOp()
+
+        q_smem_layout = cute.select(q_smem_layout_staged, mode=[<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>])
+        tma_atom_q, tma_tensor_q = cute.nvgpu.make_tiled_tma_atom_A(
+            tma_load_op,
+            q,
+            q_smem_layout,
+            self.qk_mma_tiler,
+            qk_tiled_mma,
+            self.cluster_layout_vmnk.shape,
+        )
+
+        k_smem_layout = cute.select(k_smem_layout_staged, mode=[<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>])
+        tma_atom_k, tma_tensor_k = cute.nvgpu.make_tiled_tma_atom_B(
+            tma_load_op,
+            k,
+            k_smem_layout,
+            self.qk_mma_tiler,
+            qk_tiled_mma,
+            self.cluster_layout_vmnk.shape,
+        )
+        v_smem_layout = cute.select(v_smem_layout_staged, mode=[<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>])
+        tma_atom_v, tma_tensor_v = cute.nvgpu.make_tiled_tma_atom_B(
+            tma_load_op,
+            v,
+            v_smem_layout,
+            self.pv_mma_tiler,
+            pv_tiled_mma,
+            self.cluster_layout_vmnk.shape,
+        )
+
+        o_smem_layout = cute.select(o_smem_layout_staged, mode=[<span class="number">0</span>, <span class="number">1</span>])
+
+        tma_atom_o, tma_tensor_o = cute.nvgpu.cpasync.make_tiled_tma_atom(
+            tma_store_op,
+            o,
+            o_smem_layout,
+            self.epi_tile,
+        )
+
+        q_copy_size = cute.size_in_bytes(self.q_dtype, q_smem_layout)
+        k_copy_size = cute.size_in_bytes(self.k_dtype, k_smem_layout)
+        self.tma_copy_q_bytes = q_copy_size
+        self.tma_copy_kv_bytes = k_copy_size</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Creates TMA atoms for loading Q, K, V and storing O using Tensor Memory Access.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>5. __call__ Method - Part 7 (SharedStorage Struct)</h2>
+        <pre><code>        <span class="keyword">@cute.struct</span>
+        <span class="keyword">class</span> <span class="function">SharedStorage</span>:
+            load_q_mbar_ptr: cute.struct.MemRange[Int64, self.q_stage * <span class="number">2</span>]
+            load_kv_mbar_ptr: cute.struct.MemRange[Int64, self.kv_stage * <span class="number">2</span>]
+            mma_s0_mbar_ptr: cute.struct.MemRange[Int64, self.mma_softmax_stage * <span class="number">2</span>]
+            mma_s1_mbar_ptr: cute.struct.MemRange[Int64, self.mma_softmax_stage * <span class="number">2</span>]
+            s0_corr_mbar_ptr: cute.struct.MemRange[Int64, self.softmax_corr_stage * <span class="number">2</span>]
+            s1_corr_mbar_ptr: cute.struct.MemRange[Int64, self.softmax_corr_stage * <span class="number">2</span>]
+            s0_s1_sequence_mbar_ptr: cute.struct.MemRange[
+                Int64, self.softmax_warpgroup_count
+            ]
+            corr_epi_mbar_ptr: cute.struct.MemRange[Int64, self.epi_stage * <span class="number">2</span>]
+            mma_corr_mbar_ptr: cute.struct.MemRange[Int64, self.mma_corr_stage * <span class="number">2</span>]
+            tmem_dealloc_mbar_ptr: cute.struct.MemRange[Int64, <span class="number">1</span>]
+            tmem_holding_buf: Int32
+            sO: cute.struct.Align[
+                cute.struct.MemRange[self.o_dtype, cute.cosize(o_smem_layout_staged)],
+                self.buffer_align_bytes,
+            ]
+            sQ: cute.struct.Align[
+                cute.struct.MemRange[self.q_dtype, cute.cosize(q_smem_layout_staged)],
+                self.buffer_align_bytes,
+            ]
+            sK: cute.struct.Align[
+                cute.struct.MemRange[self.k_dtype, cute.cosize(k_smem_layout_staged)],
+                self.buffer_align_bytes,
+            ]
+
+        self.shared_storage = SharedStorage</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Defines shared memory layout with barriers for pipeline synchronization and SMEM buffers for Q, K, V, O.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 1 (Initialization)</h2>
+        <pre><code>    <span class="keyword">@cute.kernel</span>
+    <span class="keyword">def</span> <span class="function">kernel</span>(
+        self,
+        qk_tiled_mma: cute.TiledMma,
+        pv_tiled_mma: cute.TiledMma,
+        tma_atom_q: cute.CopyAtom,
+        mQ_qdl: cute.Tensor,
+        tma_atom_k: cute.CopyAtom,
+        mK_kdl: cute.Tensor,
+        tma_atom_v: cute.CopyAtom,
+        mV_dkl: cute.Tensor,
+        tma_atom_o: cute.CopyAtom,
+        mO_qdl: cute.Tensor,
+        cum_seqlen_q: Optional[cute.Tensor],
+        cum_seqlen_k: Optional[cute.Tensor],
+        mLSE: Optional[cute.Tensor],
+        scale_softmax_log2: Float32,
+        scale_softmax: Float32,
+        scale_output: Float32,
+        window_size_left: Optional[Int32],
+        window_size_right: Optional[Int32],
+        ...
+    ):
+        warp_idx = cute.arch.make_warp_uniform(cute.arch.warp_idx())
+        tidx, _, _ = cute.arch.thread_idx()
+
+        <span class="keyword">if</span> warp_idx == self.load_warp_id:
+            cute.nvgpu.cpasync.prefetch_descriptor(tma_atom_q)
+            cute.nvgpu.cpasync.prefetch_descriptor(tma_atom_k)
+            cute.nvgpu.cpasync.prefetch_descriptor(tma_atom_v)
+            cute.nvgpu.cpasync.prefetch_descriptor(tma_atom_o)
+
+        smem = utils.SmemAllocator()
+        storage = smem.allocate(self.shared_storage)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 2 (Pipeline Creation)</h2>
+        <pre><code>        load_q_producer, load_q_consumer = pipeline.PipelineTmaUmma.create(
+            num_stages=self.q_stage,
+            producer_group=make_thread_cooperative_group(len([self.load_warp_id])),
+            consumer_group=make_thread_cooperative_group(len([self.mma_warp_id])),
+            tx_count=self.tma_copy_q_bytes,
+            barrier_storage=storage.load_q_mbar_ptr.data_ptr(),
+        ).make_participants()
+        load_kv_producer, load_kv_consumer = pipeline.PipelineTmaUmma.create(
+            num_stages=self.kv_stage,
+            producer_group=make_thread_cooperative_group(len([self.load_warp_id])),
+            consumer_group=make_thread_cooperative_group(len([self.mma_warp_id])),
+            tx_count=self.tma_copy_kv_bytes,
+            barrier_storage=storage.load_kv_mbar_ptr.data_ptr(),
+        ).make_participants()
+        mma_s0_producer, mma_s0_consumer = pipeline.PipelineUmmaAsync.create(
+            num_stages=self.mma_softmax_stage,
+            producer_group=make_thread_cooperative_group(len([self.mma_warp_id])),
+            consumer_group=make_thread_cooperative_group(
+                self.threads_per_warp * len(self.softmax0_warp_ids)
+            ),
+            barrier_storage=storage.mma_s0_mbar_ptr.data_ptr(),
+        ).make_participants()</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Creates multiple pipeline objects to synchronize between:
+            - Load warps and MMA warp
+            - MMA warp and softmax warps
+            - Softmax warps and correction warps
+            - Correction warps and epilogue warp</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 3 (More Pipelines)</h2>
+        <pre><code>        s0_corr_producer, s0_corr_consumer = pipeline.PipelineAsync.create(
+            num_stages=self.softmax_corr_stage,
+            producer_group=make_thread_cooperative_group(
+                self.threads_per_warp * len(self.softmax0_warp_ids)
+            ),
+            consumer_group=make_thread_cooperative_group(
+                self.threads_per_warp * len(self.correction_warp_ids)
+            ),
+            barrier_storage=storage.s0_corr_mbar_ptr.data_ptr(),
+        ).make_participants()
+        s1_corr_producer, s1_corr_consumer = pipeline.PipelineAsync.create(
+            num_stages=self.softmax_corr_stage,
+            producer_group=make_thread_cooperative_group(
+                self.threads_per_warp * len(self.softmax1_warp_ids)
+            ),
+            consumer_group=make_thread_cooperative_group(
+                self.threads_per_warp * len(self.correction_warp_ids)
+            ),
+            barrier_storage=storage.s1_corr_mbar_ptr.data_ptr(),
+        ).make_participants()
+        corr_epi_producer, corr_epi_consumer = pipeline.PipelineAsync.create(
+            num_stages=self.epi_stage,
+            producer_group=make_thread_cooperative_group(
+                self.threads_per_warp * len(self.correction_warp_ids)
+            ),
+            consumer_group=make_thread_cooperative_group(
+                self.threads_per_warp * len([self.epilogue_warp_id])
+            ),
+            barrier_storage=storage.corr_epi_mbar_ptr.data_ptr(),
+        ).make_participants()
+        mma_corr_producer, mma_corr_consumer = pipeline.PipelineUmmaAsync.create(
+            num_stages=self.mma_corr_stage,
+            producer_group=make_thread_cooperative_group(len([self.mma_warp_id])),
+            consumer_group=make_thread_cooperative_group(
+                self.threads_per_warp * len(self.correction_warp_ids)
+            ),
+            barrier_storage=storage.mma_corr_mbar_ptr.data_ptr(),
+        ).make_participants()</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 4 (TMEM and SMEM Setup)</h2>
+        <pre><code>        <span class="keyword">if</span> warp_idx == self.empty_warp_id:
+            cute.arch.mbarrier_init(
+                tmem_dealloc_mbar_ptr,
+                self.threads_per_warp
+                * len(
+                    (
+                        *self.softmax0_warp_ids,
+                        *self.softmax1_warp_ids,
+                        *self.correction_warp_ids,
+                    )
+                ),
+            )
+        cute.arch.mbarrier_init_fence()
+
+        sQ = storage.sQ.get_tensor(
+            q_smem_layout_staged.outer, swizzle=q_smem_layout_staged.inner
+        )
+        sK = storage.sK.get_tensor(
+            k_smem_layout_staged.outer, swizzle=k_smem_layout_staged.inner
+        )
+        sV_ptr = cute.recast_ptr(sK.iterator, v_smem_layout_staged.inner)
+        sV = cute.make_tensor(sV_ptr, v_smem_layout_staged.outer)
+        sO = storage.sO.get_tensor(
+            o_smem_layout_staged.outer, swizzle=o_smem_layout_staged.inner
+        )
+        qk_thr_mma = qk_tiled_mma.get_slice(<span class="number">0</span>)
+        pv_thr_mma = pv_tiled_mma.get_slice(<span class="number">0</span>)
+        tSrQ = qk_thr_mma.make_fragment_A(sQ)
+        tSrK = qk_thr_mma.make_fragment_B(sK)
+        tOrV = pv_thr_mma.make_fragment_B(sV)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 5 (Accumulator Fragments)</h2>
+        <pre><code>        qk_acc_shape = qk_thr_mma.partition_shape_C(
+            (self.qk_mma_tiler[<span class="number">0</span>], self.qk_mma_tiler[<span class="number">1</span>])
+        )
+        tStS = qk_thr_mma.make_fragment_C(qk_acc_shape)
+        pv_acc_shape = pv_thr_mma.partition_shape_C(
+            (self.pv_mma_tiler[<span class="number">0</span>], self.pv_mma_tiler[<span class="number">1</span>])
+        )
+        tOtO = pv_thr_mma.make_fragment_C(pv_acc_shape)
+
+        tStS0 = cute.make_tensor(tStS.iterator + self.tmem_s0_offset, tStS.layout)
+        tStS1 = cute.make_tensor(tStS.iterator + self.tmem_s1_offset, tStS.layout)
+        tOtO0 = cute.make_tensor(tOtO.iterator + self.tmem_o0_offset, tOtO.layout)
+        tOtO1 = cute.make_tensor(tOtO.iterator + self.tmem_o1_offset, tOtO.layout)
+
+        tP = cute.make_tensor(tStS.iterator, p_tmem_layout_staged.outer)
+        tOrP = pv_thr_mma.make_fragment_A(tP)[None, None, None, <span class="number">0</span>]
+        tOrP0 = cute.make_tensor(
+            tOrP.iterator
+            + self.qk_acc_dtype.width // self.q_dtype.width * self.tmem_p0_offset,
+            tOrP.layout,
+        )
+        tOrP1 = cute.make_tensor(
+            tOrP.iterator
+            + self.qk_acc_dtype.width // self.q_dtype.width * self.tmem_p1_offset,
+            tOrP.layout,
+        )
+        self.cta_sync_barrier.arrive_and_wait()</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Creates accumulator fragments for S (attention scores) and O (output) in TMEM. Dual-buffering with S0/S1 and O0/O1.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 6 (Load Warp)</h2>
+        <pre><code>        <span class="keyword">if</span> warp_idx == self.load_warp_id:
+            cute.arch.setmaxregister_decrease(self.num_regs_other)
+
+            tile_sched = fmha_utils.create_fmha_static_tile_scheduler(
+                tile_sched_params, cute.arch.block_idx(), cute.arch.grid_dim()
+            )
+            work_tile = tile_sched.initial_work_tile_info()
+
+            <span class="keyword">while</span> work_tile.is_valid_tile:
+                curr_block_coord = work_tile.tile_idx
+                batch_coord = curr_block_coord[<span class="number">2</span>][<span class="number">1</span>]
+                ...
+                gQ_qdl = cute.flat_divide(
+                    mQ_qdl_, cute.select(self.qk_mma_tiler, mode=[<span class="number">0</span>, <span class="number">2</span>])
+                )
+                tSgQ_qdl = qk_thr_mma.partition_A(gQ_qdl)
+                tQsQ, tQgQ_qdl = cute.nvgpu.cpasync.tma_partition(
+                    tma_atom_q,
+                    <span class="number">0</span>,
+                    cute.make_layout(<span class="number">1</span>),
+                    cute.group_modes(sQ, <span class="number">0</span>, <span class="number">3</span>),
+                    cute.group_modes(tSgQ_qdl, <span class="number">0</span>, <span class="number">3</span>),
+                )
+                tQgQ = tQgQ_qdl[None, None, <span class="number">0</span>, curr_block_coord_q[<span class="number">2</span>]]
+
+                gK_kdl = cute.flat_divide(
+                    mK_kdl_, cute.select(self.qk_mma_tiler, mode=[<span class="number">1</span>, <span class="number">2</span>])
+                )</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 7 (TMA Load Operations)</h2>
+        <pre><code>                q0_coord = <span class="number">2</span> * curr_block_coord_q[<span class="number">0</span>]
+                q0_handle = load_q_producer.acquire_and_advance()
+                cute.copy(
+                    tma_atom_q,
+                    tQgQ[None, q0_coord],
+                    tQsQ[None, q0_handle.index],
+                    tma_bar_ptr=q0_handle.barrier,
+                )
+                seqlen_kv_loop_start = fmha_utils.FusedMask.get_trip_start(
+                    self.mask_type,
+                    curr_block_coord,
+                    self.cta_tiler,
+                    seqlen_q,
+                    seqlen_k,
+                    window_size_left,
+                )
+                kv_coord = seqlen_kv_loop_start
+                k_handle = load_kv_producer.acquire_and_advance()
+                cute.copy(
+                    tma_atom_k,
+                    tKgK[None, kv_coord],
+                    tKsK[None, k_handle.index],
+                    tma_bar_ptr=k_handle.barrier,
+                )
+                q1_coord = q0_coord + <span class="number">1</span>
+                q1_handle = load_q_producer.acquire_and_advance()
+                cute.copy(
+                    tma_atom_q,
+                    tQgQ[None, q1_coord],
+                    tQsQ[None, q1_handle.index],
+                    tma_bar_ptr=q1_handle.barrier,
+                )
+                v_handle = load_kv_producer.acquire_and_advance()
+                cute.copy(
+                    tma_atom_v,
+                    tVgV[None, kv_coord],
+                    tVsV[None, v_handle.index],
+                    tma_bar_ptr=v_handle.barrier,
+                )
+                kv_coord += <span class="number">1</span></code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Load warp performs TMA loads for Q0, Q1, K0, V0 tiles. Uses pipeline for efficient async loading.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 8 (KV Loop Loading)</h2>
+        <pre><code>                seqlen_kv_loop_steps = (
+                    fmha_utils.FusedMask.get_trip_count(
+                        self.mask_type,
+                        curr_block_coord,
+                        self.cta_tiler,
+                        seqlen_q,
+                        seqlen_k,
+                        window_size_left,
+                        window_size_right,
+                    )
+                    - <span class="number">1</span>
+                )
+                <span class="keyword">for</span> i <span class="keyword">in</span> cutlass.range(<span class="number">0</span>, seqlen_kv_loop_steps, <span class="number">1</span>, unroll=<span class="number">1</span>):
+                    k_handle = load_kv_producer.acquire_and_advance()
+                    cute.copy(
+                        tma_atom_k,
+                        tKgK[None, kv_coord],
+                        tKsK[None, k_handle.index],
+                        tma_bar_ptr=k_handle.barrier,
+                    )
+                    v_handle = load_kv_producer.acquire_and_advance()
+                    cute.copy(
+                        tma_atom_v,
+                        tVgV[None, kv_coord],
+                        tVsV[None, v_handle.index],
+                        tma_bar_ptr=v_handle.barrier,
+                    )
+                    kv_coord += <span class="number">1</span></code></pre>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 9 (MMA Warp - QK First Step)</h2>
+        <pre><code>        <span class="keyword">if</span> warp_idx == self.mma_warp_id:
+            cute.arch.setmaxregister_decrease(self.num_regs_other)
+
+            tmem_alloc_cols = Int32(self.tmem_alloc_cols)
+            cute.arch.alloc_tmem(tmem_alloc_cols, storage.tmem_holding_buf)
+            self.tmem_alloc_barrier.arrive_and_wait()
+            ...
+
+            <span class="keyword">while</span> work_tile.is_valid_tile:
+                ...
+                seqlen_k = mK_kdl.shape[<span class="number">0</span>]
+
+                <span class="comment"># GEMM_QK00 (Q0 * K0 -> S0)</span>
+                q0_handle = load_q_consumer.wait_and_advance()
+                tSrQ0 = tSrQ[None, None, None, q0_handle.index]
+                k_handle = load_kv_consumer.wait_and_advance()
+                tSrK0 = tSrK[None, None, None, k_handle.index]
+                s0_handle = mma_s0_producer.acquire_and_advance()
+                num_kphases = cute.size(tSrQ0, mode=[<span class="number">2</span>])
+                <span class="keyword">for</span> kphase_idx <span class="keyword">in</span> cutlass.range(num_kphases, unroll_full=<span class="keyword">True</span>):
+                    kphase_coord = (None, None, kphase_idx)
+                    qk_tiled_mma.set(tcgen05.Field.ACCUMULATE, kphase_idx != <span class="number">0</span>)
+                    cute.gemm(
+                        qk_tiled_mma,
+                        tStS0,
+                        tSrQ0[kphase_coord],
+                        tSrK0[kphase_coord],
+                        tStS0,
+                    )
+                s0_handle.commit()</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 10 (MMA Warp - QK and PV)</h2>
+        <pre><code>                <span class="comment"># GEMM_QK10 (Q1 * K0 -> S1)</span>
+                q1_handle = load_q_consumer.wait_and_advance()
+                tSrQ1 = tSrQ[None, None, None, q1_handle.index]
+                s1_handle = mma_s1_producer.acquire_and_advance()
+                num_kphases = cute.size(tSrQ1, mode=[<span class="number">2</span>])
+                <span class="keyword">for</span> kphase_idx <span class="keyword">in</span> cutlass.range(num_kphases, unroll_full=<span class="keyword">True</span>):
+                    kphase_coord = (None, None, kphase_idx)
+                    qk_tiled_mma.set(tcgen05.Field.ACCUMULATE, kphase_idx != <span class="number">0</span>)
+                    cute.gemm(
+                        qk_tiled_mma,
+                        tStS1,
+                        tSrQ1[kphase_coord],
+                        tSrK0[kphase_coord],
+                        tStS1,
+                    )
+                s1_handle.commit()
+                k_handle.release()
+
+                <span class="comment"># GEMM_PV00 (P0 * V0 -> O0_partial)</span>
+                v_handle = load_kv_consumer.wait_and_advance()
+                tOrVi = tOrV[None, None, None, v_handle.index]
+                o0_handle = mma_corr_producer.acquire_and_advance()
+                s0_handle = mma_s0_producer.acquire_and_advance()
+                num_kphases = cute.size(tOrP0, mode=[<span class="number">2</span>])
+                <span class="keyword">for</span> kphase_idx <span class="keyword">in</span> cutlass.range(num_kphases, unroll_full=<span class="keyword">True</span>):
+                    kphase_coord = (None, None, kphase_idx)
+                    pv_tiled_mma.set(tcgen05.Field.ACCUMULATE, kphase_idx != <span class="number">0</span>)
+                    cute.gemm(
+                        pv_tiled_mma,
+                        tOtO0,
+                        tOrP0[kphase_coord],
+                        tOrVi[kphase_coord],
+                        tOtO0,
+                    )
+                o0_handle.commit()</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>MMA warp performs two matrix multiplications:
+            1. Q*K^T -> S (attention scores stored in TMEM)
+            2. P*V -> O (attention output)</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 11 (MMA Main Loop)</h2>
+        <pre><code>                seqlen_kv_loop_steps = (
+                    fmha_utils.FusedMask.get_trip_count(
+                        self.mask_type,
+                        curr_block_coord,
+                        self.cta_tiler,
+                        seqlen_q,
+                        seqlen_k,
+                        window_size_left,
+                        window_size_right,
+                    )
+                    - <span class="number">1</span>
+                )
+
+                pv_whether_acc = <span class="keyword">False</span>
+                <span class="keyword">for</span> i <span class="keyword">in</span> cutlass.range(<span class="number">0</span>, seqlen_kv_loop_steps, <span class="number">1</span>, unroll=<span class="number">1</span>):
+                    <span class="comment"># GEMM_QK0i (Q0 * Ki -> S0)</span>
+                    k_handle = load_kv_consumer.wait_and_advance()
+                    tSrKi = tSrK[None, None, None, k_handle.index]
+                    inner_num_kphases = cute.size(tSrQ0, mode=[<span class="number">2</span>])
+                    <span class="keyword">for</span> kphase_idx <span class="keyword">in</span> cutlass.range(
+                        inner_num_kphases, unroll_full=<span class="keyword">True</span>
+                    ):
+                        kphase_coord = (None, None, kphase_idx)
+                        qk_tiled_mma.set(tcgen05.Field.ACCUMULATE, kphase_idx != <span class="number">0</span>)
+                        cute.gemm(
+                            qk_tiled_mma,
+                            tStS0,
+                            tSrQ0[kphase_coord],
+                            tSrKi[kphase_coord],
+                            tStS0,
+                        )
+                    s0_handle.commit()
+
+                    <span class="comment"># GEMM_PV1(i-1) (P1 * V(i-1) -> O1_partial)</span>
+                    o1_handle = mma_corr_producer.acquire_and_advance()
+                    s1_handle = mma_s1_producer.acquire_and_advance()
+                    inner_num_kphases = cute.size(tOrP0, mode=[<span class="number">2</span>])
+                    <span class="keyword">for</span> kphase_idx <span class="keyword">in</span> cutlass.range(
+                        inner_num_kphases, unroll_full=<span class="keyword">True</span>
+                    ):
+                        kphase_coord = (None, None, kphase_idx)
+                        pv_tiled_mma.set(tcgen05.Field.ACCUMULATE, pv_whether_acc)
+                        cute.gemm(
+                            pv_tiled_mma,
+                            tOtO1,
+                            tOrP1[kphase_coord],
+                            tOrVi[kphase_coord],
+                            tOtO1,
+                        )
+                        pv_whether_acc = <span class="keyword">True</span>
+                    o1_handle.commit()
+                    v_handle.release()
+
+                    <span class="comment"># GEMM_QK1i (Q1 * Ki -> S1)</span>
+                    inner_num_kphases = cute.size(tSrQ1, mode=[<span class="number">2</span>])
+                    <span class="keyword">for</span> kphase_idx <span class="keyword">in</span> cutlass.range(
+                        inner_num_kphases, unroll_full=<span class="keyword">True</span>
+                    ):
+                        kphase_coord = (None, None, kphase_idx)
+                        qk_tiled_mma.set(tcgen05.Field.ACCUMULATE, kphase_idx != <span class="number">0</span>)
+                        cute.gemm(
+                            qk_tiled_mma,
+                            tStS1,
+                            tSrQ1[kphase_coord],
+                            tSrKi[kphase_coord],
+                            tStS1,
+                        )
+                    s1_handle.commit()
+                    k_handle.release()
+
+                    <span class="comment"># GEMM_PV0i (P0 * Vi -> O0_partial)</span>
+                    v_handle = load_kv_consumer.wait_and_advance()
+                    tOrVi = tOrV[None, None, None, v_handle.index]
+                    o0_handle = mma_corr_producer.acquire_and_advance()
+                    s0_handle = mma_s0_producer.acquire_and_advance()
+                    inner_num_kphases = cute.size(tOrP0, mode=[<span class="number">2</span>])
+                    <span class="keyword">for</span> kphase_idx <span class="keyword">in</span> cutlass.range(
+                        inner_num_kphases, unroll_full=<span class="keyword">True</span>
+                    ):
+                        kphase_coord = (None, None, kphase_idx)
+                        pv_tiled_mma.set(tcgen05.Field.ACCUMULATE, <span class="keyword">True</span>)
+                        cute.gemm(
+                            pv_tiled_mma,
+                            tOtO0,
+                            tOrP0[kphase_coord],
+                            tOrVi[kphase_coord],
+                            tOtO0,
+                        )
+                    o0_handle.commit()</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 12 (Softmax Warps)</h2>
+        <pre><code>        <span class="keyword">if</span> warp_idx < self.softmax1_warp_ids[<span class="number">0</span>]:
+            cute.arch.setmaxregister_increase(self.num_regs_softmax)
+
+            self.softmax(
+                stage=<span class="number">0</span>,
+                seqlen_k=mK_kdl.shape[<span class="number">0</span>],
+                seqlen_q=mQ_qdl.shape[<span class="number">0</span>],
+                cum_seqlen_q=cum_seqlen_q,
+                cum_seqlen_k=cum_seqlen_k,
+                scale_softmax_log2=scale_softmax_log2,
+                qk_thr_mma=qk_thr_mma,
+                tStS=tStS,
+                tStSi=tStS0,
+                window_size_left=window_size_left,
+                window_size_right=window_size_right,
+                mma_si_consumer=mma_s0_consumer,
+                si_corr_producer=s0_corr_producer,
+                s0_s1_sequence_consumer=s0_s1_sequence_consumer,
+                s0_s1_sequence_producer=s0_s1_sequence_producer,
+                tile_sched_params=tile_sched_params,
+            )
+            cute.arch.mbarrier_arrive(tmem_dealloc_mbar_ptr)
+
+        <span class="keyword">if</span> (
+            warp_idx < self.correction_warp_ids[<span class="number">0</span>]
+            and warp_idx >= self.softmax1_warp_ids[<span class="number">0</span>]
+        ):
+            cute.arch.setmaxregister_increase(self.num_regs_softmax)
+
+            self.softmax(
+                stage=<span class="number">1</span>,
+                seqlen_k=mK_kdl.shape[<span class="number">0</span>],
+                seqlen_q=mQ_qdl.shape[<span class="number">0</span>],
+                ...
+            )</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Two groups of softmax warps handle stages 0 and 1. They compute numerically stable softmax with masking support.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 13 (Correction Warps)</h2>
+        <pre><code>        <span class="keyword">if</span> warp_idx >= self.correction_warp_ids[<span class="number">0</span>] <span class="keyword">and</span> warp_idx < self.mma_warp_id:
+            cute.arch.setmaxregister_decrease(self.num_regs_correction)
+
+            cS = cute.make_identity_tensor((self.qk_mma_tiler[<span class="number">0</span>], self.qk_mma_tiler[<span class="number">1</span>]))
+            tScS = qk_thr_mma.partition_C(cS)
+
+            tStS_vec_layout = cute.composition(tStS.layout, cute.make_layout((<span class="number">128</span>, <span class="number">2</span>)))
+
+            tStS_vec0 = cute.make_tensor(
+                tStS.iterator + self.tmem_vec0_offset, tStS_vec_layout
+            )
+            tStS_vec1 = cute.make_tensor(
+                tStS.iterator + self.tmem_vec1_offset, tStS_vec_layout
+            )
+
+            tmem_load_v_atom = cute.make_copy_atom(
+                tcgen05.copy.Ld32x32bOp(tcgen05.copy.Repetition(<span class="number">2</span>)),
+                self.qk_acc_dtype,
+            )
+
+            tiled_tmem_load_vec = tcgen05.make_tmem_copy(tmem_load_v_atom, tStS_vec0)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Method - Part 14 (Correction Loop)</h2>
+        <pre><code>                <span class="keyword">while</span> work_tile.is_valid_tile:
+                    ...
+                    <span class="keyword">for</span> i <span class="keyword">in</span> cutlass.range(<span class="number">0</span>, seqlen_kv_loop_steps, <span class="number">1</span>, unroll=<span class="number">1</span>):
+                        vec0_handle = s0_corr_consumer.wait_and_advance()
+                        tTMEM_LOAD_VECrS = cute.make_rmem_tensor(
+                            tTMEM_LOAD_VECcS.shape, self.qk_acc_dtype
+                        )
+                        cute.copy(
+                            tiled_tmem_load_vec, tTMEM_LOAD_VECtS0, tTMEM_LOAD_VECrS
+                        )
+                        scale_ = scale_softmax_log2 * (
+                            tTMEM_LOAD_VECrS[<span class="number">0</span>] - tTMEM_LOAD_VECrS[<span class="number">1</span>]
+                        )
+                        scale = cute.math.exp2(scale_, fastmath=<span class="keyword">True</span>)
+                        o0_handle = mma_corr_consumer.wait_and_advance()
+                        self.correction_rescale(pv_thr_mma, tOtO0, scale)
+                        vec1_handle.release()
+                        cute.arch.fence_view_async_tmem_store()
+                        o0_handle.release()
+
+                        vec1_handle = s1_corr_consumer.wait_and_advance()
+                        cute.copy(
+                            tiled_tmem_load_vec, tTMEM_LOAD_VECtS1, tTMEM_LOAD_VECrS
+                        )
+                        scale_ = scale_softmax_log2 * (
+                            tTMEM_LOAD_VECrS[<span class="number">0</span>] - tTMEM_LOAD_VECrS[<span class="number">1</span>]
+                        )
+                        scale = cute.math.exp2(scale_, fastmath=<span class="keyword">True</span>)
+                        o1_handle = mma_corr_consumer.wait_and_advance()
+                        self.correction_rescale(pv_thr_mma, tOtO1, scale)
+                        cute.arch.fence_view_async_tmem_store()
+                        o1_handle.release()</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>7. softmax_step Method</h2>
+        <pre><code>    <span class="keyword">@cute.jit</span>
+    <span class="keyword">def</span> <span class="function">softmax_step</span>(
+        self,
+        stage: int,
+        need_apply_mask: bool,
+        iter_args: tuple,
+        value_args: tuple,
+        pipeline_args: tuple,
+        atom_args: tuple,
+        tensor_args: tuple,
+    ) -> Tuple[...]:
+        cS, row_max, row_sum, vec_i_handle = iter_args
+        seqlen_k, seqlen_q, scale_softmax_log2, window_size_left, window_size_right = value_args
+
+        <span class="comment"># Wait for Si</span>
+        si_handle = mma_si_consumer.wait_and_advance()
+        tTMEM_LOADrS = cute.make_rmem_tensor(tTMEM_LOADcS.shape, self.qk_acc_dtype)
+        cute.copy(tiled_tmem_load, tTMEM_LOADtS, tTMEM_LOADrS)
+        <span class="keyword">if</span> need_apply_mask:
+            fmha_utils.FusedMask.apply_mask(
+                self.mask_type,
+                tTMEM_LOADrS,
+                tTMEM_LOADcS,
+                seqlen_q,
+                seqlen_k,
+                window_size_left,
+                window_size_right,
+            )
+
+        old_row_max = row_max
+        row_max = tTMEM_LOADrS.load().reduce(cute.ReductionOp.MAX, row_max, <span class="number">0</span>)
+        row_max_safe = row_max
+        <span class="keyword">if</span> row_max == -cutlass.Float32.inf:
+            row_max_safe = <span class="number">0.0</span></code></pre>
+    </div>
+
+    <div class="section">
+        <h2>8. softmax Method</h2>
+        <pre><code>    <span class="keyword">@cute.jit</span>
+    <span class="keyword">def</span> <span class="function">softmax</span>(
+        self,
+        stage: int,
+        seqlen_k: Int32,
+        seqlen_q: Int32,
+        cum_seqlen_q: Optional[cute.Tensor],
+        cum_seqlen_k: Optional[cute.Tensor],
+        scale_softmax_log2: Float32,
+        qk_thr_mma: cute.ThrMma,
+        tStS: cute.Tensor,
+        tStSi: cute.Tensor,
+        window_size_left: Optional[Int32],
+        window_size_right: Optional[Int32],
+        mma_si_consumer: pipeline.PipelineConsumer,
+        si_corr_producer: pipeline.PipelineProducer,
+        s0_s1_sequence_consumer: pipeline.PipelineConsumer,
+        s0_s1_sequence_producer: pipeline.PipelineProducer,
+        tile_sched_params: fmha_utils.FmhaStaticTileSchedulerParams,
+    ):
+        <span class="comment"># Creates tmem load/store atoms for softmax</span>
+        tmem_load_atom = cute.make_copy_atom(
+            tcgen05.copy.Ld32x32bOp(tcgen05.copy.Repetition(<span class="number">32</span>)),
+            self.qk_acc_dtype,
+        )
+        tiled_tmem_load = tcgen05.make_tmem_copy(tmem_load_atom, tStSi)
+        
+        tmem_store_vec_atom = cute.make_copy_atom(
+            tcgen05.copy.St32x32bOp(tcgen05.copy.Repetition(<span class="number">2</span>)),
+            self.qk_acc_dtype,
+        )
+        tiled_tmem_store_vec = tcgen05.make_tmem_copy(tmem_store_vec_atom, tStS_vec)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Computes numerically stable softmax:
+            1. Load attention scores from TMEM
+            2. Apply masking if needed
+            3. Compute row max for numerical stability
+            4. Compute exp(x - max) for each element
+            5. Compute row sum for normalization</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>9. correction_rescale Method</h2>
+        <pre><code>    <span class="keyword">@cute.jit</span>
+    <span class="keyword">def</span> <span class="function">correction_rescale</span>(
+        self,
+        thr_mma: cute.ThrMma,
+        tOtO: cute.Tensor,
+        scale: Float32,
+    ):
+        pv_tiled_mma_shape = (
+            self.pv_mma_tiler[<span class="number">0</span>],
+            self.pv_mma_tiler[<span class="number">1</span>],
+        )
+        cO = cute.make_identity_tensor(pv_tiled_mma_shape)
+        tOcO = thr_mma.partition_C(cO)
+
+        corr_tile_size = <span class="number">16</span>
+        tmem_load_atom = cute.make_copy_atom(
+            tcgen05.copy.Ld32x32bOp(tcgen05.copy.Repetition(corr_tile_size)),
+            self.pv_acc_dtype,
+        )
+        tmem_store_atom = cute.make_copy_atom(
+            tcgen05.copy.St32x32bOp(tcgen05.copy.Repetition(corr_tile_size)),
+            self.pv_acc_dtype,
+        )
+
+        <span class="comment"># Load, scale, and store back to TMEM</span>
+        <span class="keyword">for</span> i <span class="keyword">in</span> range(self.cta_tiler[<span class="number">2</span>] // corr_tile_size):
+            cute.copy(tiled_tmem_load, tTMEM_LOADtO_i, tTMrO_i)
+            <span class="keyword">for</span> j <span class="keyword">in</span> cutlass.range(cute.size(tTMrO_i), vectorize=<span class="keyword">True</span>):
+                tTMrO_i[j] = tTMrO_i[j] * scale
+            cute.copy(tiled_tmem_store, tTMrO_i, tTMEM_STOREtO_i)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>10. correction_epilog Method</h2>
+        <pre><code>    <span class="keyword">@cute.jit</span>
+    <span class="keyword">def</span> <span class="function">correction_epilog</span>(
+        self,
+        thr_mma: cute.ThrMma,
+        tOtO: cute.Tensor,
+        mLSE: Optional[cute.Tensor],
+        tTMEM_LOAD_VECrS: cute.Tensor,
+        row_idx: Int32,
+        cuseqlen_q: Int32,
+        seqlen_q: Int32,
+        blk_coord: Int32,
+        scale_softmax: Float32,
+        scale: Float32,
+        sO: cute.Tensor,
+    ):
+        <span class="comment"># Load from TMEM, apply scale, convert dtype, store to SMEM</span>
+        <span class="keyword">for</span> i <span class="keyword">in</span> range(self.cta_tiler[<span class="number">2</span>] // corr_tile_size):
+            tTMEM_LOADtO_i = tTMEM_LOADtO[None, <span class="number">0</span>, <span class="number">0</span>, i]
+            tTMrO = cute.make_rmem_tensor(
+                tTMEM_LOADoO[None, <span class="number">0</span>, <span class="number">0</span>, i].shape, self.pv_acc_dtype
+            )
+            cute.copy(tiled_tmem_load, tTMEM_LOADtO_i, tTMrO)
+            <span class="keyword">for</span> j <span class="keyword">in</span> range(cute.size(tTMrO), vectorize=<span class="keyword">True</span>):
+                tTMrO[j] = tTMrO[j] * scale
+            tSMrO = cute.make_rmem_tensor(tTMrO.shape, self.o_dtype)
+            o_vec = tTMrO.load()
+            tSMrO.store(o_vec.to(self.o_dtype))
+            cute.copy(tiled_smem_store, tSMrO, tTMEM_LOADsO_i)
+
+        <span class="keyword">if</span> cutlass.const_expr(mLSE <span class="keyword">is not None</span>):
+            scaled_tmp = scale_softmax * tTMEM_LOAD_VECrS[<span class="number">1</span>]
+            lse = cute.math.log(tTMEM_LOAD_VECrS[<span class="number">0</span>], fastmath=<span class="keyword">True</span>) + scaled_tmp
+            <span class="keyword">if</span> row_idx < seqlen_q:
+                mLSE[row_idx + cuseqlen_q, blk_coord[<span class="number">2</span>]] = lse</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Final correction step: applies scaling, converts dtype, and optionally computes LSE (log-sum-exp) for backward pass.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>11. run Function - Part 1 (Setup)</h2>
+        <pre><code><span class="keyword">def</span> <span class="function">run</span>(
+    q_shape: Union[Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>, <span class="keyword">int</span>, <span class="keyword">int</span>], Tuple[<span class="keyword">int</span>, Tuple[<span class="keyword">int</span>, ...], <span class="keyword">int</span>, <span class="keyword">int</span>],
+    k_shape: Union[Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>, <span class="keyword">int</span>, <span class="keyword">int</span>], Tuple[<span class="keyword">int</span>, Tuple[<span class="keyword">int</span>, ...], <span class="keyword">int</span>, <span class="keyword">int</span>],
+    in_dtype: Type[cutlass.Numeric],
+    out_dtype: Type[cutlass.Numeric],
+    qk_acc_dtype: Type[cutlass.Numeric],
+    pv_acc_dtype: Type[cutlass.Numeric],
+    mma_tiler_mn: Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>],
+    is_persistent: bool,
+    is_causal: bool,
+    bottom_right_align: bool,
+    lse_calculation: bool,
+    window_size: Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>],
+    ...
+):
+    <span class="comment"># Unpack parameters</span>
+    b, s_q, h_q, d = q_shape
+    b_, s_k, h_k, d_ = k_shape
+    window_size_left, window_size_right = window_size
+    
+    <span class="keyword">if</span> d <span class="keyword">not</span> in {<span class="number">32</span>, <span class="number">64</span>, <span class="number">128</span>}:
+        raise ValueError(<span class="string">"head dimension must be 32, 64, or 128"</span>)
+
+    <span class="keyword">if</span> h_q % h_k != <span class="number">0</span>:
+        raise ValueError(<span class="string">"h_q must be divisible by h_k"</span>)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>11. run Function - Part 2 (Tensor Creation)</h2>
+        <pre><code>    <span class="keyword">def</span> create_and_pad_tensor(
+        shape, padding, dtype, s_cumsum=None, is_dynamic_layout=<span class="keyword">True</span>:
+        shape_ = tuple(map(<span class="keyword">lambda</span> x, y: x + y, shape, padding))
+        <span class="keyword">if</span> s_cumsum <span class="keyword">is not None</span>:
+            shape_ = shape_[<span class="number">1</span>:]
+            padding = padding[<span class="number">1</span>:]
+
+        f32_torch_tensor_full = cutlass_torch.create_and_permute_torch_tensor(
+            shape_,
+            torch.float32,
+            permute_order=None,
+            init_type=cutlass.torch.TensorInitType.RANDOM,
+            init_config=cutlass.torch.RandomInitConfig(
+                min_val=-<span class="number">2</span> <span class="keyword">if</span> dtype.is_float <span class="keyword">or</span> dtype.signed <span class="keyword">else</span> <span class="number">0</span>, max_val=<span class="number">2</span>
+            ),
+        )
+        _, torch_tensor_full = cutlass_torch.cute_tensor_like(
+            f32_torch_tensor_full,
+            dtype,
+            is_dynamic_layout,
+            assumed_align=<span class="number">16</span>,
+        )
+
+        slices = tuple(slice(s, e) <span class="keyword">for</span> s, e <span class="keyword">in</span> zip(padding, shape_))
+        torch_tensor = torch_tensor_full[slices].detach()
+        cute_tensor = from_dlpack(torch_tensor, assumed_align=<span class="number">16</span>)
+        cute_tensor.element_type = dtype
+        <span class="keyword">return</span> f32_torch_tensor, cute_tensor, torch_tensor</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>11. run Function - Part 3 (Kernel Execution)</h2>
+        <pre><code>    q_ref, q_tensor, q_torch = create_and_pad_tensor(
+        qo_shape, qo_padding, in_dtype, s_cumsum=cum_seqlen_q_torch
+    )
+    k_ref, k_tensor, k_torch = create_and_pad_tensor(
+        kv_shape, kv_padding, in_dtype, s_cumsum=cum_seqlen_k_torch
+    )
+    v_ref, v_tensor, v_torch = create_and_pad_tensor(
+        kv_shape, kv_padding, in_dtype, s_cumsum=cum_seqlen_k_torch
+    )
+    _, o_tensor, o_torch = create_and_pad_tensor(
+        qo_shape, qo_padding, out_dtype, s_cumsum=cum_seqlen_q_torch
+    )
+
+    fmha_kernel = BlackwellFusedMultiHeadAttentionForward(
+        qk_acc_dtype=qk_acc_dtype,
+        pv_acc_dtype=pv_acc_dtype,
+        mma_tiler=(*mma_tiler_mn, <span class="number">0</span>),
+        is_persistent=is_persistent,
+        mask_type=mask_type,
+    )
+
+    <span class="keyword">for</span> i <span class="keyword">in</span> range(warmup_iterations):
+        fmha_kernel(
+            q_tensor, k_tensor, v_tensor, o_tensor,
+            problem_size, ...
+        )
+        stream.synchronize()</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>12. main Function</h2>
+        <pre><code><span class="keyword">def</span> <span class="function">main</span>():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(<span class="string">"--q_shape"</span>, type=int, nargs=<span class="number">4</span>, default=[<span class="number">4</span>, <span class="number">1024</span>, <span class="number">8</span>, <span class="number">64</span>])
+    parser.add_argument(<span class="string">"--k_shape"</span>, type=int, nargs=<span class="number">4</span>, default=[<span class="number">4</span>, <span class="number">1024</span>, <span class="number">8</span>, <span class="number">64</span>])
+    parser.add_argument(<span class="string">"--qk_acc_dtype"</span>, type=cutlass.Numeric, default=cutlass.Float32)
+    parser.add_argument(<span class="string">"--pv_acc_dtype"</span>, type=cutlass.Numeric, default=cutlass.Float32)
+    parser.add_argument(<span class="string">"--mma_tiler_mn"</span>, type=int, nargs=<span class="number">2</span>, default=[<span class="number">128</span>, <span class="number">128</span>])
+    parser.add_argument(<span class="string">"--is_persistent"</span>, action=<span class="string">"store_true"</span>)
+    parser.add_argument(<span class="string">"--is_causal"</span>, action=<span class="string">"store_true"</span>)
+    parser.add_argument(<span class="string">"--lse_calculation"</span>, action=<span class="string">"store_true"</span>)
+    parser.add_argument(<span class="string">"--window_size"</span>, type=int, nargs=<span class="number">2</span>, default=[-<span class="number">1</span>, -<span class="number">1</span>])
+    ...
+    args = parser.parse_args()
+
+    run(
+        q_shape=tuple(args.q_shape),
+        k_shape=tuple(args.k_shape),
+        in_dtype=args.in_dtype,
+        out_dtype=args.out_dtype,
+        qk_acc_dtype=args.qk_acc_dtype,
+        pv_acc_dtype=args.pv_acc_dtype,
+        mma_tiler_mn=tuple(args.mma_tiler_mn),
+        is_persistent=args.is_persistent,
+        is_causal=args.is_causal,
+        ...
+    )
+
+<span class="keyword">if</span> __name__ == <span class="string">"__main__"</span>:
+    main()</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Summary: FMHA Architecture</h2>
+        <table>
+            <tr><th>Component</th><th>Description</th></tr>
+            <tr><td>Warp 0-3</td><td>Softmax0 (first half rows)</td></tr>
+            <tr><td>Warp 4-7</td><td>Softmax1 (second half rows)</td></tr>
+            <tr><td>Warp 8-11</td><td>Correction (rescale O by new max)</td></tr>
+            <tr><td>Warp 12</td><td>MMA (Q*K^T and P*V)</td></tr>
+            <tr><td>Warp 13</td><td>Load (TMA Q, K, V)</td></tr>
+            <tr><td>Warp 14</td><td>Epilogue (store O)</td></tr>
+            <tr><td>Warp 15</td><td>Empty/auxiliary</td></tr>
+        </table>
+        
+        <div class="analysis">
+            <h4>Key Takeaways</h4>
+            <ol>
+                <li><strong>Warp Specialization</strong>: 16 warps with dedicated roles</li>
+                <li><strong>Pipeline Orchestration</strong>: Multiple async pipelines synchronize warps</li>
+                <li><strong>TMEM Dual-Buffering</strong>: S0/S1, O0/O1 for overlapped compute</li>
+                <li><strong>Numerically Stable Softmax</strong>: Subtracts row max before exp</li>
+                <li><strong>Attention Masking</strong>: Supports causal and sliding window</li>
+                <li><strong>LSE Calculation</strong>: Optional log-sum-exp for backward pass</li>
+            </ol>
+        </div>
+    </div>
+
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+</body>
+</html>

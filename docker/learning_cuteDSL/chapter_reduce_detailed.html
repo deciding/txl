@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reduce - Comprehensive Analysis</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.7; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; }
+        h1 { color: #1a1a1a; border-bottom: 4px solid #76b900; padding-bottom: 15px; }
+        h2 { color: #2d2d2d; margin-top: 40px; border-left: 5px solid #76b900; padding-left: 15px; }
+        .section { background: white; padding: 25px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        code { background: #f4f4f4; padding: 3px 8px; border-radius: 4px; font-family: 'Fira Code', monospace; font-size: 0.9em; color: #c7254e; }
+        pre { background: #282c34; color: #abb2bf; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.4; }
+        pre code { background: none; padding: 0; color: inherit; }
+        .keyword { color: #c678dd; }
+        .function { color: #61afef; }
+        .number { color: #d19a66; }
+        .analysis { background: #f0f7ff; border-left: 4px solid #4a90d9; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+        .analysis h4 { margin-top: 0; color: #4a90d9; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background: #f8f8f8; }
+        .nav { display: flex; justify-content: space-between; margin: 30px 0; }
+        .nav a { padding: 12px 25px; background: #76b900; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; }
+        .nav a:hover { background: #5a8f00; }
+    </style>
+</head>
+<body>
+    <h1>Reduce: Comprehensive Code Analysis</h1>
+    <p><strong>File:</strong> <code>reduce.py</code> | <strong>Used by:</strong> RMSNorm</p>
+    
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+
+    <div class="section">
+        <h2>1. Imports</h2>
+        <pre><code><span class="keyword">import</span> operator
+<span class="keyword">from</span> collections.abc <span class="keyword">import</span> Callable
+
+<span class="keyword">import</span> cutlass
+<span class="keyword">import</span> cutlass.cute <span class="keyword">as</span> cute
+<span class="keyword">from</span> cutlass <span class="keyword">import</span> Float32, Int32
+<span class="keyword">from</span> cutlass._mlir.dialects <span class="keyword">import</span> llvm
+<span class="keyword">from</span> cutlass.cutlass_dsl <span class="keyword">import</span> T, dsl_user_op</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <ul>
+                <li><code>operator</code> - For add reduction</li>
+                <li><code>cute</code> - Core CuTeDSL</li>
+                <li><code>dsl_user_op</code> - For custom PTX operations</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>2. set_block_rank - PTX Operation</h2>
+        <pre><code><span class="keyword">@dsl_user_op</span>
+<span class="keyword">def</span> <span class="function">set_block_rank</span>(smem_ptr, peer_cta_rank_in_cluster, *, loc=<span class="keyword">None</span>, ip=<span class="keyword">None</span>):
+    smem_ptr_i32 = smem_ptr.toint(loc=loc, ip=ip).ir_value()
+    <span class="keyword">return</span> Int32(
+        llvm.inline_asm(
+            T.i32(),
+            [smem_ptr_i32, peer_cta_rank_in_cluster.ir_value()],
+            <span class="string">"mapa.shared::cluster.u32 $0, $1, $2;"</span>,
+            <span class="string">"=r,r,r"</span>,
+            has_side_effects=False,
+            is_align_stack=False,
+            asm_dialect=llvm.AsmDialect.AD_ATT,
+        )
+    )</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Maps a local shared memory pointer to peer CTA's address in cluster using PTX mapa instruction.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>3. store_shared_remote - PTX Operation</h2>
+        <pre><code><span class="keyword">@dsl_user_op</span>
+<span class="keyword">def</span> <span class="function">store_shared_remote</span>(val, smem_ptr, mbar_ptr, peer_cta_rank_in_cluster, *, loc=<span class="keyword">None</span>, ip=<span class="keyword">None</span>):
+    remote_smem_ptr_i32 = set_block_rank(smem_ptr, peer_cta_rank_in_cluster, loc=loc, ip=ip).ir_value()
+    remote_mbar_ptr_i32 = set_block_rank(mbar_ptr, peer_cta_rank_in_cluster, loc=loc, ip=ip).ir_value()
+    llvm.inline_asm(
+        <span class="keyword">None</span>,
+        [remote_smem_ptr_i32, val.ir_value(loc=loc, ip=ip), remote_mbar_ptr_i32],
+        <span class="string">"st.async.shared::cluster.mbarrier::complete_tx::bytes.f32 [$0], $1, [$2];"</span>,
+        <span class="string">"r,f,r"</span>,
+        has_side_effects=True,
+        is_align_stack=False,
+        asm_dialect=llvm.AsmDialect.AD_ATT,
+    )</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Asynchronously stores Float32 to remote CTA's shared memory with mbarrier completion tracking.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>4. elem_pointer</h2>
+        <pre><code><span class="keyword">@dsl_user_op</span>
+<span class="keyword">def</span> <span class="function">elem_pointer</span>(x, coord, *, loc=<span class="keyword">None</span>, ip=<span class="keyword">None</span>):
+    <span class="keyword">return</span> x.iterator + cute.crd2idx(coord, x.layout, loc=loc, ip=ip)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Gets pointer to element at specified coordinate in tensor for cross-CTA stores.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>5. block_reduce Function</h2>
+        <pre><code><span class="keyword">@cute.jit</span>
+<span class="keyword">def</span> <span class="function">block_reduce</span>(val, op, reduction_buffer, init_val):
+    lane_idx = cute.arch.lane_idx()
+    warp_idx = cute.arch.warp_idx()
+    warps_per_row = cute.size(reduction_buffer.shape[<span class="number">1</span>])
+    row_idx = warp_idx // warps_per_row
+    col_idx = warp_idx % warps_per_row
+
+    <span class="keyword">if</span> lane_idx == <span class="number">0</span>:
+        reduction_buffer[row_idx, col_idx] = val
+    cute.arch.barrier()
+
+    block_reduce_val = init_val
+    <span class="keyword">if</span> lane_idx < warps_per_row:
+        block_reduce_val = reduction_buffer[row_idx, lane_idx]
+    <span class="keyword">return</span> cute.arch.warp_reduction(block_reduce_val, op)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Reduces across warps within a block: lane 0 writes to smem, then warp reduction.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>6. cluster_reduce Function - Part 1</h2>
+        <pre><code><span class="keyword">@cute.jit</span>
+<span class="keyword">def</span> <span class="function">cluster_reduce</span>(val, op, reduction_buffer, mbar_ptr, cluster_n, init_val):
+    cta_rank_in_cluster = cute.arch.block_idx_in_cluster()
+    lane_idx = cute.arch.lane_idx()
+    warp_idx = cute.arch.warp_idx()
+
+    rows_per_block = reduction_buffer.shape[<span class="number">0</span>]
+    warps_per_row = reduction_buffer.shape[<span class="number">1</span>][<span class="number">0</span>]
+
+    row_idx = warp_idx // warps_per_row
+    col_idx = warp_idx % warps_per_row
+
+    <span class="keyword">if</span> warp_idx == <span class="number">0</span>:
+        <span class="keyword">with</span> cute.arch.elect_one():
+            num_warps = rows_per_block * warps_per_row
+            expected_bytes = num_warps * cluster_n * <span class="number">4</span>
+            cute.arch.mbarrier_arrive_and_expect_tx(mbar_ptr, expected_bytes)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Setup mbarrier for cross-CTA synchronization. Warp 0 sets expected transaction count.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>7. cluster_reduce Function - Part 2</h2>
+        <pre><code>    <span class="keyword">if</span> lane_idx < cluster_n:
+        store_shared_remote(
+            val,
+            elem_pointer(reduction_buffer, (row_idx, (col_idx, cta_rank_in_cluster))),
+            mbar_ptr,
+            peer_cta_rank_in_cluster=lane_idx,
+        )
+
+    cute.arch.mbarrier_wait(mbar_ptr, phase=<span class="number">0</span>)
+
+    num_total = warps_per_row * cluster_n
+    num_iter = cute.ceil_div(num_total, <span class="number">32</span>)
+
+    block_reduce_val = init_val
+    <span class="keyword">for</span> i <span class="keyword">in</span> cutlass.range_constexpr(num_iter):
+        idx = lane_idx + i * <span class="number">32</span>
+        <span class="keyword">if</span> idx < num_total:
+            block_reduce_val = op(block_reduce_val, reduction_buffer[row_idx, idx])
+
+    <span class="keyword">return</span> cute.arch.warp_reduction(block_reduce_val, op)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Distributes values to all CTAs, waits for completion, then reduces across all values.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>8. row_reduce Function</h2>
+        <pre><code><span class="keyword">@cute.jit</span>
+<span class="keyword">def</span> <span class="function">row_reduce</span>(x, op, threads_per_row, reduction_buffer, mbar_ptr, cluster_n, init_val):
+    local_val = x.reduce(op, init_val=init_val, reduction_profile=<span class="number">0</span>)
+
+    warp_op = {cute.ReductionOp.ADD: operator.add, cute.ReductionOp.MAX: cute.arch.fmax}[op]
+
+    warp_width = min(threads_per_row, <span class="number">32</span>)
+    warp_val = cute.arch.warp_reduction(local_val, warp_op, threads_in_group=warp_width)
+
+    warps_per_row = max(threads_per_row // <span class="number">32</span>, <span class="number">1</span>)
+
+    <span class="keyword">if</span> cutlass.const_expr(warps_per_row > <span class="number">1</span> <span class="keyword">or</span> cluster_n > <span class="number">1</span>):
+        <span class="keyword">if</span> cutlass.const_expr(cluster_n == <span class="number">1</span>):
+            <span class="keyword">return</span> block_reduce(warp_val, warp_op, reduction_buffer, init_val)
+        <span class="keyword">else</span>:
+            <span class="keyword">return</span> cluster_reduce(warp_val, warp_op, reduction_buffer, mbar_ptr, cluster_n, init_val)
+    <span class="keyword">else</span>:
+        <span class="keyword">return</span> warp_val</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Main orchestration function: local reduce → warp reduce → block/cluster reduce based on configuration.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Summary</h2>
+        <table>
+            <tr><th>Function</th><th>Purpose</th></tr>
+            <tr><td>set_block_rank</td><td>Map local smem to peer CTA</td></tr>
+            <tr><td>store_shared_remote</td><td>Async store to remote CTA</td></tr>
+            <tr><td>block_reduce</td><td>Reduce within block</td></tr>
+            <tr><td>cluster_reduce</td><td>Reduce across cluster CTAs</td></tr>
+            <tr><td>row_reduce</td><td>Full reduction pipeline</td></tr>
+        </table>
+        
+        <div class="analysis">
+            <h4>Key Takeaways</h4>
+            <ol>
+                <li><strong>Hierarchical reduction</strong>: local → warp → block → cluster</li>
+                <li><strong>mbarrier</strong>: Hardware support for cross-CTA sync</li>
+                <li><strong>PTX inline</strong>: For cluster instructions not in MLIR</li>
+                <li><strong>Adaptive</strong>: Chooses reduction level based on problem size</li>
+            </ol>
+        </div>
+    </div>
+
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+</body>
+</html>

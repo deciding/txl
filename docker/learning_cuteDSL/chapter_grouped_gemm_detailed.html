@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grouped GEMM - Comprehensive Analysis</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.7; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; }
+        h1 { color: #1a1a1a; border-bottom: 4px solid #76b900; padding-bottom: 15px; }
+        h2 { color: #2d2d2d; margin-top: 40px; border-left: 5px solid #76b900; padding-left: 15px; }
+        .section { background: white; padding: 25px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        code { background: #f4f4f4; padding: 3px 8px; border-radius: 4px; font-family: 'Fira Code', monospace; font-size: 0.9em; color: #c7254e; }
+        pre { background: #282c34; color: #abb2bf; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.4; }
+        pre code { background: none; padding: 0; color: inherit; }
+        .keyword { color: #c678dd; }
+        .function { color: #61afef; }
+        .number { color: #d19a66; }
+        .analysis { background: #f0f7ff; border-left: 4px solid #4a90d9; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+        .analysis h4 { margin-top: 0; color: #4a90d9; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background: #f8f8f8; }
+        .nav { display: flex; justify-content: space-between; margin: 30px 0; }
+        .nav a { padding: 12px 25px; background: #76b900; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; }
+        .nav a:hover { background: #5a8f00; }
+    </style>
+</head>
+<body>
+    <h1>Grouped GEMM: Comprehensive Code Analysis</h1>
+    <p><strong>File:</strong> <code>grouped_gemm.py</code> (2387 lines)</p>
+    
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+
+    <div class="section">
+        <h2>1. Imports</h2>
+        <pre><code><span class="keyword">import</span> argparse, functools
+<span class="keyword">from</span> typing <span class="keyword">import</span> List, Type, Union
+<span class="keyword">import</span> torch
+<span class="keyword">import</span> cuda.bindings.driver <span class="keyword">as</span> cuda
+
+<span class="keyword">import</span> cutlass
+<span class="keyword">import</span> cutlass.cute <span class="keyword">as</span> cute
+<span class="keyword">import</span> cutlass.cute.testing <span class="keyword">as</span> testing
+<span class="keyword">import</span> cutlass.utils <span class="keyword">as</span> utils
+<span class="keyword">import</span> cutlass.pipeline <span class="keyword">as</span> pipeline
+<span class="keyword">from</span> cutlass.pipeline <span class="keyword">import</span> pipeline_init_arrive, pipeline_init_wait
+<span class="keyword">from</span> cutlass.cute.nvgpu <span class="keyword">import</span> cpasync, tcgen05
+<span class="keyword">import</span> cutlass.utils.blackwell_helpers <span class="keyword">as</span> sm100_utils</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <ul>
+                <li>Standard CuTeDSL imports</li>
+                <li><code>tcgen05</code> for Blackwell MMA</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>2. Kernel Class Constructor</h2>
+        <pre><code><span class="keyword">class</span> <span class="function">GroupedGemmKernel</span>:
+    <span class="keyword">def</span> <span class="function">__init__</span>(<span class="keyword">self</span>, acc_dtype, use_2cta_instrs, mma_tiler_mn, cluster_shape_mn, tensormap_update_mode=utils.TensorMapUpdateMode.SMEM):
+        <span class="keyword">self</span>.acc_dtype = acc_dtype
+        <span class="keyword">self</span>.use_2cta_instrs = use_2cta_instrs
+        <span class="keyword">self</span>.cluster_shape_mn = cluster_shape_mn
+        <span class="keyword">self</span>.mma_tiler = (*mma_tiler_mn, <span class="number">1</span>)
+        <span class="keyword">self</span>.cta_group = tcgen05.CtaGroup.TWO <span class="keyword">if</span> use_2cta_instrs <span class="keyword">else</span> tcgen05.CtaGroup.ONE
+
+        <span class="keyword">self</span>.tensormap_update_mode = tensormap_update_mode
+        <span class="keyword">self</span>.delegate_tensormap_ab_init = (tensormap_update_mode == utils.TensorMapUpdateMode.SMEM)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Similar to dense GEMM, plus tensormap update mode (GMEM vs SMEM).</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>3. Warp Assignment</h2>
+        <pre><code><span class="keyword">self</span>.epilog_warp_id = (<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>)
+<span class="keyword">self</span>.mma_warp_id = <span class="number">4</span>
+<span class="keyword">self</span>.tma_warp_id = <span class="number">5</span>
+<span class="keyword">self</span>.threads_per_cta = <span class="number">32</span> * len((<span class="keyword">self</span>.mma_warp_id, <span class="keyword">self</span>.tma_warp_id, *<span class="keyword">self</span>.epilog_warp_id))
+
+<span class="keyword">self</span>.epilog_sync_barrier = pipeline.NamedBarrier(barrier_id=<span class="number">1</span>, num_threads=<span class="number">32</span> * len(<span class="keyword">self</span>.epilog_warp_id))
+<span class="keyword">self</span>.tmem_alloc_barrier = pipeline.NamedBarrier(barrier_id=<span class="number">2</span>, num_threads=<span class="number">32</span> * len((<span class="keyword">self</span>.mma_warp_id, *<span class="keyword">self</span>.epilog_warp_id)))
+<span class="keyword">self</span>.tensormap_ab_init_barrier = pipeline.NamedBarrier(barrier_id=<span class="number">3</span>, num_threads=<span class="number">32</span> * (len(<span class="keyword">self</span>.epilog_warp_id) + <span class="number">1</span>))</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>6 warps: 4 epilogue, 1 MMA, 1 TMA. 3 named barriers for synchronization.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>4. Kernel __call__ Signature</h2>
+        <pre><code><span class="keyword">@cute.jit</span>
+    <span class="keyword">def</span> <span class="function">__call__</span>(<span class="keyword">self</span>,
+        initial_a, initial_b, initial_c,
+        group_count,
+        problem_shape_mnkl,
+        strides_abc,
+        tensor_address_abc,
+        total_num_clusters,
+        tensormap_cute_tensor,
+        max_active_clusters,
+        stream,
+    ):</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <ul>
+                <li><code>group_count</code>: Number of GEMM problems</li>
+                <li><code>problem_shape_mnkl</code>: M,N,K,L for each group</li>
+                <li><code>tensor_address_abc</code>: Pointers for each group's matrices</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>5. Group Problem Structure</h2>
+        <pre><code><span class="keyword">@cute.struct</span>
+<span class="keyword">class
+    )</span> <span class="function">GroupProblem</span>:
+    ptr_a: cute.Pointer
+    ptr_b: cute.Pointer
+    ptr_c: cute.Pointer
+    problem_size: cute.Tile[(Int32, Int32, Int32, Int32)]
+    stride_a: cute.Tile[(Int32, Int32)]
+    stride_b: cute.Tile[(Int32, Int32)]
+    stride_c: cute.Tile[(Int32, Int32)]
+    tensormap_a: cute.Tensor
+    tensormap_b: cute.Tensor
+    tensormap_c: cute.Tensor</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Structure holding all info for one GEMM problem: pointers, sizes, strides, tensormaps.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>6. CTA Tile Computation</h2>
+        <pre><code>problem = group_problem_ptr[]
+problem_size = problem.problem_size
+m = problem_size[<span class="number">0</span>]
+n = problem_size[<span class="number">1</span>]
+k = problem_size[<span class="number">2</span>]
+
+cta_tile_m = gemm_tile_m
+cta_tile_n = gemm_tile_n
+num_ctas_m = (m + cta_tile_m - <span class="number">1</span>) // cta_tile_m
+num_ctas_n = (n + cta_tile_n - <span class="number">1</span>) // cta_tile_n
+total_ctas = num_ctas_m * num_ctas_n</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Each group may need multiple CTAs based on its M,N sizes.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>7. Global Offset Calculation</h2>
+        <pre><code>group_base_a = problem.ptr_a
+group_base_b = problem.ptr_b
+group_base_c = problem.ptr_c
+
+m_offset = cta_id_in_group // num_ctas_n * cta_tile_m
+n_offset = cta_id_in_group % num_ctas_n * cta_tile_n
+
+ptr_a = group_base_a + m_offset * k
+ptr_b = group_base_b + n_offset
+ptr_c = group_base_c + m_offset * n + n_offset</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Each CTA computes its offset into its group's matrices.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Summary</h2>
+        <table>
+            <tr><th>Feature</th><th>Description</th></tr>
+            <tr><td>Group metadata</td><td>Pointers + sizes + strides + tensormaps</td></tr>
+            <tr><td>CTA allocation</td><td>Multiple CTAs per large groups</td></tr>
+            <tr><td>Offset compute</td><td>CTA-specific pointer offsets</td></tr>
+            <tr><td>Tensormap</td><td>GMEM or SMEM update mode</td></tr>
+        </table>
+        
+        <div class="analysis">
+            <h4>Key Takeaways</h4>
+            <ol>
+                <li><strong>Variable sizes</strong>: Each group can have different M,N,K</li>
+                <li><strong>CTA per group</strong>: Large groups get multiple CTAs</li>
+                <li><strong>Continuous storage</strong>: All groups stored contiguously</li>
+                <li><strong>Tensormaps</strong>: Can update in GMEM or SMEM</li>
+            </ol>
+        </div>
+    </div>
+
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+</body>
+</html>

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 1: Introduction to CuTeDSL</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; border-bottom: 3px solid #76b900; padding-bottom: 10px; }
+        h2 { color: #555; margin-top: 30px; }
+        h3 { color: #666; }
+        .section { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; }
+        pre { background: #263238; color: #aed581; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        a { color: #76b900; }
+        .nav { display: flex; justify-content: space-between; margin: 20px 0; }
+        .nav a { padding: 10px 20px; background: #76b900; color: white; text-decoration: none; border-radius: 5px; }
+        .note { background: #fff8e1; border-left: 4px solid #ffc107; padding: 10px 15px; margin: 15px 0; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background: #f5f5f5; }
+    </style>
+</head>
+<body>
+    <h1>Chapter 1: Introduction to CuTeDSL</h1>
+    
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+        <a href="chapter2_core_concepts.html">Next: Core Concepts &rarr;</a>
+    </div>
+
+    <div class="section">
+        <h2>What is CuTeDSL?</h2>
+        <p>CuTeDSL (CUDA Tensor Expression Domain Specific Language) is a high-productivity programming model developed by NVIDIA for writing high-performance CUDA kernels. It is part of the CUTLASS library and provides:</p>
+        <ul>
+            <li><strong>Tensor expressions</strong> for describing nested loop structures</li>
+            <li><strong>Layout abstractions</strong> for managing memory access patterns</li>
+            <li><strong>Warp-level operations</strong> for efficient tensor core usage</li>
+            <li><strong>Automatic code generation</strong> for different GPU architectures</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Why Use CuTeDSL?</h2>
+        <table>
+            <tr>
+                <th>Traditional CUDA</th>
+                <th>CuTeDSL</th>
+            </tr>
+            <tr>
+                <td>Manual thread indexing</td>
+                <td>Abstract tensor operations</td>
+            </tr>
+            <tr>
+                <td>Explicit memory coalescing</td>
+                <td>Layout-based memory access</td>
+            </tr>
+            <tr>
+                <td>Complex warp synchronization</td>
+                <li>Built-in pipeline abstractions</li>
+            </tr>
+            <tr>
+                <td>Architecture-specific code</td>
+                <td>Architecture-aware abstractions</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Key Concepts Overview</h2>
+        <h3>1. Tensor</h3>
+        <p>The fundamental data structure representing multi-dimensional arrays.</p>
+        <pre><code>import cutlass.cute as cute
+
+# Create a tensor from a PyTorch tensor
+tensor = cute.make_tensor(torch_tensor)</code></pre>
+
+        <h3>2. Layout</h3>
+        <p>Describes how data is organized in memory (stride, shape, swizzling).</p>
+        <pre><code># Create a simple row-major layout
+layout = cute.make_layout((128, 64))  # Shape (M, N)</code></pre>
+
+        <h3>3. TiledMma</h3>
+        <p>Tensor Core matrix multiplication operation.</p>
+        <pre><code>tiled_mma = cute.make_tiled_mma(
+    cute.MmaAtom.F16F16F16_TN,  # Atom operation
+    cute.LayoutType.RowMajor,    # A layout
+    cute.LayoutType.ColMajor     # B layout
+)</code></pre>
+
+        <h3>4. CopyAtoms</h3>
+        <p>Memory copy operations with vectorization.</p>
+        <pre><code>copy_atom = cute.make_copy_atom(
+    cute.nvgpu.CopyUniversalOp(),
+    cutlass.Float16
+)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Hello World: Simple Element-wise Operation</h2>
+        <p>Here's a minimal example showing CuTeDSL structure:</p>
+        <pre><code>import cutlass.cute as cute
+
+class SimpleKernel:
+    def __init__(self):
+        self.threads_per_cta = 128
+    
+    @cute.kernel
+    def kernel(self, input_tensor, output_tensor):
+        # Get thread index
+        tid = cute.arch.thread_idx()
+        
+        # Get block index
+        bid = cute.arch.block_idx()
+        
+        # Compute global index
+        idx = bid * 128 + tid
+        
+        # Perform operation
+        if idx < output_tensor.size:
+            output_tensor[idx] = input_tensor[idx] * 2.0
+    
+    def __call__(self, input_tensor, output_tensor):
+        grid = (input_tensor.numel() + 127) // 128
+        self.kernel(
+            grid=(grid, 1, 1),
+            block=[128, 1, 1],
+            args=(input_tensor, output_tensor)
+        )</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Architecture Support</h2>
+        <p>CuTeDSL supports multiple NVIDIA GPU architectures:</p>
+        <ul>
+            <li><strong>SM80</strong> (Ampere) - Basic tensor core operations</li>
+            <li><strong>SM90</strong> (Hopper) - TMA, async copy, clusters</li>
+            <li><strong>SM100</strong> (Blackwell) - Enhanced TMA, 2-CTA MMA, TMEM</li>
+        </ul>
+        <div class="note">
+            <strong>Note:</strong> The examples in this tutorial are primarily for Blackwell (SM100) architecture, which offers the most advanced features.
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Installation</h2>
+        <pre><code># From CUTLASS repository
+cd thirdparty/cutlass
+pip install -e .
+
+# Or import directly
+import cutlass
+import cutlass.cute as cute</code></pre>
+    </div>
+
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+        <a href="chapter2_core_concepts.html">Next: Core Concepts &rarr;</a>
+    </div>
+</body>
+</html>

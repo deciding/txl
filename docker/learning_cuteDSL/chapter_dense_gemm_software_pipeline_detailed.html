@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Software Pipeline - Comprehensive Analysis</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.7; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; }
+        h1 { color: #1a1a1a; border-bottom: 4px solid #76b900; padding-bottom: 15px; }
+        h2 { color: #2d2d2d; margin-top: 40px; border-left: 5px solid #76b900; padding-left: 15px; }
+        .section { background: white; padding: 25px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        pre { background: #282c34; color: #abb2bf; padding: 20px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
+        .analysis { background: #f0f7ff; border-left: 4px solid #4a90d9; padding: 15px; margin: 15px 0; }
+        .nav { display: flex; justify-content: space-between; margin: 30px 0; }
+        .nav a { padding: 12px 25px; background: #76b900; color: white; text-decoration: none; border-radius: 6px; }
+    </style>
+</head>
+<body>
+    <h1>Dense GEMM Software Pipeline: Analysis</h1>
+    <p><strong>File:</strong> <code>dense_gemm_software_pipeline.py</code></p>
+    
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+
+    <div class="section">
+        <h2>1. Overview</h2>
+        <p>Software pipeline version uses explicit pipelining between warps instead of hardware pipelines.</p>
+        <ul>
+            <li><strong>Manual Pipelining</strong>: Software-controlled stages</li>
+            <li><strong>Double Buffer</strong>: Ping-pong between buffers</li>
+            <li><strong>Warp Sync</span></td><td>: Explicit synchronization</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>2. Pipeline Stages</h2>
+        <pre><code>NUM_STAGES = 3
+
+sA = [smem_a0, smem_a1, smem_a2]  # 3 stage buffers
+sB = [smem_b0, smem_b1, smem_b2]</code></pre>
+        <div class="analysis">
+            <h4>Double Buffering</h4>
+            <p>Multiple buffers allow overlapping load and compute.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>3. Software Pipeline Loop</h2>
+        <pre><code>for stage in range(NUM_STAGES):
+    current = stage % NUM_STAGES
+    next_stage = (stage + 1) % NUM_STAGES
+    
+    load_to_smem(current)
+    compute_from_smem(next_stage)
+    sync()</code></pre>
+        <div class="analysis">
+            <h4>Pipeline Pattern</h4>
+            <p>Load into one buffer while computing from another.</p>
+        </div>
+    </div>
+
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+</body>
+</html>

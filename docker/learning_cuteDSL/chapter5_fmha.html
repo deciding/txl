@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 5: Fused Multi-Head Attention (FMHA)</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; border-bottom: 3px solid #76b900; padding-bottom: 10px; }
+        h2 { color: #555; margin-top: 30px; }
+        .section { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }
+        pre { background: #263238; color: #aed581; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        a { color: #76b900; }
+        .nav { display: flex; justify-content: space-between; margin: 20px 0; }
+        .nav a { padding: 10px 20px; background: #76b900; color: white; text-decoration: none; border-radius: 5px; }
+        .note { background: #f3e5f5; border-left: 4px solid #7b1fa2; padding: 10px 15px; margin: 15px 0; }
+    </style>
+</head>
+<body>
+    <h1>Chapter 5: Fused Multi-Head Attention (FMHA)</h1>
+    
+    <div class="nav">
+        <a href="chapter4_gemm.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter6_rmsnorm.html">Next: RMSNorm &rarr;</a>
+    </div>
+
+    <div class="section">
+        <h2>Overview</h2>
+        <p>FMHA (Fused Multi-Head Attention) fuses Q*K^T, softmax, and P*V into a single kernel. The example files are:</p>
+        <ul>
+            <li><strong>fmha.py</strong> - Forward pass</li>
+            <li><strong>fmha_bwd.py</strong> - Backward pass</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>FMHA Algorithm</h2>
+        <pre><code># FMHA = Softmax(Q * K^T) * V
+# 
+# 1. Q*K^T -> S (scores)
+# 2. Softmax(S) -> P (probabilities)  
+# 3. P*V -> O (output)</code></pre>
+
+        <h3>Key Features</h3>
+        <ul>
+            <li>Warp specialization (different warps for different phases)</li>
+            <li>Pipeline stages for overlapping computation</li>
+            <li>Support for causal masking</li>
+            <li>Persistent scheduling for long sequences</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Warp Specialization</h2>
+        <pre><code>class BlackwellFusedMultiHeadAttentionForward:
+    def __init__(self, ...):
+        # Different warps handle different phases
+        self.softmax0_warp_ids = (0, 1, 2, 3)  # First softmax phase
+        self.softmax1_warp_ids = (4, 5, 6, 7)   # Second softmax phase
+        self.correction_warp_ids = (8, 9, 10, 11)  # Bias correction
+        self.mma_warp_id = 12                    # Q*K MMA
+        self.load_warp_id = 13                   # Load K,V
+        self.epilogue_warp_id = 14              # Store output
+        self.empty_warp_id = 15                  # Reserved</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Tensor Memory (TMEM) Usage</h2>
+        <div class="note">
+            Blackwell introduces Tensor Memory (TMEM) for storing large accumulators
+        </div>
+        <pre><code># TMEM offsets for different buffers
+self.tmem_s0_offset = 0    # Score buffer 0
+self.tmem_s1_offset = 128  # Score buffer 1
+self.tmem_o0_offset = 256 # Output buffer 0
+self.tmem_o1_offset = 384  # Output buffer 1
+self.tmem_p0_offset = 32   # Probability buffer 0
+self.tmem_p1_offset = 160  # Probability buffer 1</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Running FMHA</h2>
+        <pre><code>fmha = BlackwellFusedMultiHeadAttentionForward(
+    qk_acc_dtype=cutlass.Float32,  # Q*K accumulator type
+    pv_acc_dtype=cutlass.Float32,  # P*V accumulator type
+    mma_tiler=(128, 128, 64),     # MMA tile shape
+    is_persistent=True,             # Persistent kernel
+    mask_type=fmha_utils.MaskEnum.NO_MASK
+)
+
+fmha(q_ptr, k_ptr, v_ptr, o_ptr, problem_size, ...)</code></pre>
+
+        <div class="note">
+            <strong>Example command:</strong><br>
+            <code>python fmha.py --qk_acc_dtype Float32 --pv_acc_dtype Float32 --mma_tiler_mn 128,128 --q_shape 4,1024,8,64 --is_persistent</code>
+        </div>
+    </div>
+
+    <div class="nav">
+        <a href="chapter4_gemm.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter6_rmsnorm.html">Next: RMSNorm &rarr;</a>
+    </div>
+</body>
+</html>

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 2: Core Concepts - Tensors and Layouts</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; border-bottom: 3px solid #76b900; padding-bottom: 10px; }
+        h2 { color: #555; margin-top: 30px; }
+        h3 { color: #666; }
+        .section { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; }
+        pre { background: #263238; color: #aed581; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        a { color: #76b900; }
+        .nav { display: flex; justify-content: space-between; margin: 20px 0; }
+        .nav a { padding: 10px 20px; background: #76b900; color: white; text-decoration: none; border-radius: 5px; }
+        .note { background: #fff8e1; border-left: 4px solid #ffc107; padding: 10px 15px; margin: 15px 0; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background: #f5f5f5; }
+    </style>
+</head>
+<body>
+    <h1>Chapter 2: Core Concepts - Tensors and Layouts</h1>
+    
+    <div class="nav">
+        <a href="chapter1_introduction.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter3_common_apis.html">Next: Common APIs &rarr;</a>
+    </div>
+
+    <div class="section">
+        <h2>Tensor</h2>
+        <p>A Tensor in CuTeDSL represents a multi-dimensional array with an associated layout. Unlike PyTorch tensors, CuTeDSL tensors are symbolic and can represent slices, partitions, and transformations.</p>
+        
+        <h3>Creating Tensors</h3>
+        <pre><code>import cutlass.cute as cute
+import torch
+
+# From PyTorch tensor
+torch_tensor = torch.randn(128, 64, device='cuda')
+tensor = cute.make_tensor(torch_tensor)
+
+# Create a fragment (register tensor) from tiled MMA
+fragment = tiled_mma.make_fragment_A(smem_tensor)
+
+# Create register tensor
+reg_tensor = cute.make_rmem_tensor(shape, dtype)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Layout</h2>
+        <p>A Layout describes how multi-dimensional data is mapped to linear memory. It consists of a shape and strides.</p>
+        
+        <h3>Creating Layouts</h3>
+        <pre><code># Row-major layout (stride[1] = 1)
+row_layout = cute.make_layout((128, 64))  # Shape (M, N), stride = (64, 1)
+
+# Column-major layout (stride[0] = 1)
+col_layout = cute.make_layout((128, 64), stride=(1, 128))
+
+# From existing tensor
+layout = cute.make_layout(torch_tensor)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Key Layout Types</h2>
+        
+        <h3>1. ComposedLayout</h3>
+        <p>Nested layouts with outer/inner composition for swizzling:</p>
+        <pre><code>composed = cute.make_composed_layout(
+    outer=cute.make_layout((8, 128)),  # Outer layout
+    inner=cute.make_layout((8, 16))       # Inner layout (swizzle)
+)</code></pre>
+        
+        <h3>2. Tiled Layout</h3>
+        <p>For dividing work among threads:</p>
+        <pre><code># Divide M dimension into 64-element tiles
+tiled_layout = cute.tiled_product(
+    cute.make_layout((64, 128)),
+    shape=(1, 128)  # Tile shape
+)</code></pre>
+        
+        <h3>3. Partitioned Layout</h3>
+        <p>For distributing work across threads/warps:</p>
+        <pre><code># Partition tensor for threads
+partitioned = tiled_mma.partition_A(global_tensor)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Tensor Operations</h2>
+        
+        <h3>Slicing</h3>
+        <pre><code># Slice a dimension
+sliced = cute.slice_(tensor, (None, 0))  # Take first row
+
+# Slice to specific range
+sliced = cute.slice_(tensor, (slice(0, 64), None))</code></pre>
+        
+        <h3>Local Tile</h3>
+        <pre><code># Extract tiles from tensor
+tiles = cute.local_tile(
+    tensor, 
+    tile_shape=(32, 32), 
+    shift=(0, 0)  # No shift
+)
+# Result: (num_tiles_m, num_tiles_n, 32, 32)</code></pre>
+        
+        <h3>Local Partition</h3>
+        <pre><code># Partition tensor among threads
+thread_partition = tiled_mma.get_slice(thread_id)
+partitioned = thread_partition.partition_A(tensor)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Memory Spaces</h2>
+        <table>
+            <tr>
+                <th>Space</th>
+                <th>Abstraction</th>
+                <th>Usage</th>
+            </tr>
+            <tr>
+                <td>GMEM</td>
+                <td>Global memory tensor</td>
+                <td>Input/output tensors</td>
+            </tr>
+            <tr>
+                <td>SMEM</td>
+                <td>Shared memory tensor</td>
+                <td>Temporary storage, caching</td>
+            </tr>
+            <tr>
+                <td>RMEM</td>
+                <td>Register tensor</td>
+                <td>Computation, fragments</td>
+            </tr>
+            <tr>
+                <td>TMEM</td>
+                <td>Tensor memory (Hopper+)</td>
+                <td>Large accumulator storage</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Data Types</h2>
+        <pre><code>import cutlass
+
+# Common data types
+cutlass.Float16    # FP16
+cutlass.BFloat16   # BF16  
+cutlass.Float32    # FP32
+cutlass.TFloat32   # TF32
+cutlass.Int8       # INT8
+cutlass.Uint8      # UINT8
+cutlass.Float8E4M3FN   # FP8
+cutlass.Float8E5M2     # FP8</code></pre>
+    </div>
+
+    <div class="nav">
+        <a href="chapter1_introduction.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter3_common_apis.html">Next: Common APIs &rarr;</a>
+    </div>
+</body>
+</html>

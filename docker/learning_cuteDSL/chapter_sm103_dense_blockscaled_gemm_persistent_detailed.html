@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SM103 Blockscaled GEMM - Analysis</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.7; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; }
+        h1 { color: #1a1a1a; border-bottom: 4px solid #76b900; padding-bottom: 15px; }
+        h2 { color: #2d2d2d; margin-top: 40px; border-left: 5px solid #76b900; padding-left: 15px; }
+        .section { background: white; padding: 25px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .analysis { background: #f0f7ff; border-left: 4px solid #4a90d9; padding: 15px; margin: 15px 0; }
+        .nav { display: flex; justify-content: space-between; margin: 30px 0; }
+        .nav a { padding: 12px 25px; background: #76b900; color: white; text-decoration: none; border-radius: 6px; }
+    </style>
+</head>
+<body>
+    <h1>SM103 Dense Blockscaled GEMM Persistent: Analysis</h1>
+    <p><strong>File:</strong> <code>sm103_dense_blockscaled_gemm_persistent.py</code></p>
+    
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+
+    <div class="section">
+        <h2>1. Overview</h2>
+        <p>SM103 (Blackwell) variant optimized for that specific architecture.</p>
+        <ul>
+            <li><strong>Architecture</strong>: SM100 (Blackwell)</li>
+            <li><strong>Blockscaled</strong>: Per-tile quantization</li>
+            <li><strong>Persistent</strong>: Multiple tiles per CTA</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>2. SM100 Features</h2>
+        <ul>
+            <li><strong>tcgen05</strong>: Enhanced tensor core instructions</li>
+            <li><strong>TMEM</span></td><td>: Tensor memory for accumulators</li>
+            <li><strong>2-CTA MMA</strong>: Cooperative CTA execution</li>
+        </ul>
+    </div>
+
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+</body>
+</html>

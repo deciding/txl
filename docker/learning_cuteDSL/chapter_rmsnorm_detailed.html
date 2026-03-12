@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RMSNorm - Comprehensive Analysis</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.7; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; }
+        h1 { color: #1a1a1a; border-bottom: 4px solid #76b900; padding-bottom: 15px; }
+        h2 { color: #2d2d2d; margin-top: 40px; border-left: 5px solid #76b900; padding-left: 15px; }
+        .section { background: white; padding: 25px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        code { background: #f4f4f4; padding: 3px 8px; border-radius: 4px; font-family: 'Fira Code', monospace; font-size: 0.9em; color: #c7254e; }
+        pre { background: #282c34; color: #abb2bf; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.4; }
+        pre code { background: none; padding: 0; color: inherit; }
+        .keyword { color: #c678dd; }
+        .function { color: #61afef; }
+        .number { color: #d19a66; }
+        .analysis { background: #f0f7ff; border-left: 4px solid #4a90d9; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+        .analysis h4 { margin-top: 0; color: #4a90d9; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background: #f8f8f8; }
+        .nav { display: flex; justify-content: space-between; margin: 30px 0; }
+        .nav a { padding: 12px 25px; background: #76b900; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; }
+        .nav a:hover { background: #5a8f00; }
+    </style>
+</head>
+<body>
+    <h1>RMSNorm: Comprehensive Code Analysis</h1>
+    <p><strong>File:</strong> <code>rmsnorm.py</code> + <code>reduce.py</code> | <strong>Architecture:</strong> Blackwell (SM100)</p>
+    
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+
+    <div class="section">
+        <h2>1. Imports</h2>
+        <pre><code><span class="keyword">import</span> argparse
+<span class="keyword">import</span> ctypes
+<span class="keyword">import</span> functools
+<span class="keyword">import</span> math
+<span class="keyword">from</span> typing <span class="keyword">import</span> Optional, Tuple, Union
+
+<span class="keyword">import</span> cuda.bindings.driver <span class="keyword">as</span> cuda
+<span class="keyword">import</span> torch
+
+<span class="keyword">import</span> cutlass
+<span class="keyword">import</span> cutlass.cute <span class="keyword">as</span> cute
+<span class="keyword">import</span> cutlass.cute.testing <span class="keyword">as</span> testing
+<span class="keyword">import</span> cutlass.torch <span class="keyword">as</span> cutlass_torch
+<span class="keyword">import</span> cutlass.utils <span class="keyword">as</span> utils
+<span class="keyword">from</span> cutlass <span class="keyword">import</span> Boolean, Float32, Int32, Int64
+<span class="keyword">from</span> cutlass.cute.runtime <span class="keyword">import</span> make_ptr
+
+<span class="keyword">try</span>:
+    <span class="keyword">from</span> .reduce <span class="keyword">import</span> row_reduce
+<span class="keyword">except</span> ImportError:
+    <span class="keyword">from</span> reduce <span class="keyword">import</span> row_reduce</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <ul>
+                <li><code>cutlass.cute</code> - Core CuTeDSL for tensor operations</li>
+                <li><code>cutlass.utils</code> - Memory allocation utilities</li>
+                <li><code>row_reduce</code> - Import from reduce.py for cluster reduction</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>2. Architecture Detection</h2>
+        <pre><code><span class="keyword">@functools.lru_cache</span>(maxsize=<span class="number">16</span>)
+<span class="keyword">def</span> get_sm_version(device=None):
+    <span class="keyword">if not</span> torch.cuda.is_available():
+        <span class="keyword">return</span> <span class="number">80</span>
+    props = torch.cuda.get_device_properties(device)
+    <span class="keyword">return</span> props.major * <span class="number">10</span> + props.minor
+
+<span class="keyword">def</span> supports_cluster():
+    <span class="keyword">return</span> get_sm_version() >= <span class="number">90</span></code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Detects GPU architecture version. SM90+ (Hopper/Blackwell) supports cluster operations.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>3. Predicate Utility</h2>
+        <pre><code><span class="keyword">@cute.jit</span>
+<span class="keyword">def</span> predicate_k(tXcX, limit):
+    tXpX = cute.make_rmem_tensor(
+        cute.make_layout(
+            (cute.size(tXcX, mode=[<span class="number">0</span>, <span class="number">1</span>]), cute.size(tXcX, mode=[<span class="number">1</span>]), cute.size(tXcX, mode=[<span class="number">2</span>])),
+            stride=(cute.size(tXcX, mode=[<span class="number">2</span>]), <span class="number">0</span>, <span class="number">1</span>),
+        ),
+        Boolean,
+    )
+    <span class="keyword">for</span> rest_v <span class="keyword">in</span> cutlass.range_constexpr(tXpX.shape[<span class="number">0</span>]):
+        <span class="keyword">for</span> rest_k <span class="keyword">in</span> cutlass.range_constexpr(tXpX.shape[<span class="number">2</span>]):
+            tXpX[rest_v, <span class="number">0</span>, rest_k] = cute.elem_less(tXcX[(<span class="number">0</span>, rest_v), <span class="number">0</span>, rest_k][<span class="number">1</span>], limit)
+    <span class="keyword">return</span> tXpX</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Creates predicate tensor for bounds checking - identifies which elements are within valid range.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>4. RMSNormConfig - Constructor</h2>
+        <pre><code><span class="keyword">class</span> <span class="function">RMSNormConfig</span>:
+    COPY_BITS = <span class="number">128</span>
+
+    <span class="keyword">def</span> <span class="function">__init__</span>(<span class="keyword">self</span>, dtype, N, has_weight=<span class="keyword">True</span>, sm_version=<span class="keyword">None</span>):
+        <span class="keyword">self</span>.dtype = dtype
+        <span class="keyword">self</span>.N = N
+        <span class="keyword">self</span>.has_weight = has_weight
+        <span class="keyword">self</span>.sm_version = sm_version <span class="keyword">if</span> sm_version <span class="keyword">is not None</span> <span class="keyword">else</span> get_sm_version()
+
+        <span class="keyword">self</span>.vec_size = <span class="keyword">self</span>.COPY_BITS // dtype.width
+        <span class="keyword">self</span>.cluster_n = <span class="keyword">self</span>._compute_cluster_n(N, dtype, <span class="keyword">self</span>.sm_version)
+        <span class="keyword">self</span>.N_per_cta = N // <span class="keyword">self</span>.cluster_n
+        <span class="keyword">self</span>.threads_per_row = <span class="keyword">self</span>._compute_threads_per_row(<span class="keyword">self</span>.N_per_cta)
+        <span class="keyword">self</span>.num_threads = <span class="keyword">self</span>._compute_num_threads(<span class="keyword">self</span>.N_per_cta)
+
+        <span class="keyword">self</span>.num_vec_blocks = max(
+            <span class="number">1</span>, (<span class="keyword">self</span>.N_per_cta // <span class="keyword">self</span>.vec_size + <span class="keyword">self</span>.threads_per_row - <span class="number">1</span>) // <span class="keyword">self</span>.threads_per_row
+        )
+        <span class="keyword">self</span>.rows_per_block = <span class="keyword">self</span>.num_threads // <span class="keyword">self</span>.threads_per_row
+        <span class="keyword">self</span>.cols_per_tile = <span class="keyword">self</span>.vec_size * <span class="keyword">self</span>.num_vec_blocks * <span class="keyword">self</span>.threads_per_row
+        <span class="keyword">self</span>.warps_per_row = max(<span class="keyword">self</span>.threads_per_row // <span class="number">32</span>, <span class="number">1</span>)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Configuration class that computes all kernel parameters based on N and data type.</p>
+            <ul>
+                <li><code>vec_size</code>: Elements per 128-bit vector (8 for FP16)</li>
+                <li><code>cluster_n</code>: CTAs in cluster for large N</li>
+                <li><code>threads_per_row</code>: Threads cooperating on each row</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>5. Cluster Size Computation</h2>
+        <pre><code><span class="keyword">@staticmethod</span>
+    <span class="keyword">def</span> <span class="function">_compute_cluster_n</span>(N, dtype, sm_version):
+        <span class="keyword">if</span> sm_version < <span class="number">90</span>:
+            <span class="keyword">return</span> <span class="number">1</span>
+
+        <span class="keyword">if</span> dtype.width == <span class="number">16</span>:
+            <span class="keyword">if</span> N <= <span class="number">16</span> * <span class="number">1024</span>: <span class="keyword">return</span> <span class="number">1</span>
+            <span class="keyword">elif</span> N <= <span class="number">32</span> * <span class="number">1024</span>: <span class="keyword">return</span> <span class="number">2</span>
+            <span class="keyword">elif</span> N <= <span class="number">64</span> * <span class="number">1024</span>: <span class="keyword">return</span> <span class="number">4</span>
+            <span class="keyword">elif</span> N <= <span class="number">128</span> * <span class="number">1024</span>: <span class="keyword">return</span> <span class="number">8</span>
+            <span class="keyword">else</span>: <span class="keyword">return</span> <span class="number">16</span>
+        <span class="keyword">else</span>:
+            <span class="keyword">if</span> N <= <span class="number">32</span> * <span class="number">1024</span>: <span class="keyword">return</span> <span class="number">1</span>
+            <span class="keyword">elif</span> N <= <span class="number">64</span> * <span class="number">1024</span>: <span class="keyword">return</span> <span class="number">2</span>
+            <span class="keyword">elif</span> N <= <span class="number">128</span> * <span class="number">1024</span>: <span class="keyword">return</span> <span class="number">4</span>
+            <span class="keyword">elif</span> N <= <span class="number">256</span> * <span class="number">1024</span>: <span class="keyword">return</span> <span class="number">8</span>
+            <span class="keyword">else</span>: <span class="keyword">return</span> <span class="number">16</span></code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Computes cluster size based on N dimension and data type. Larger N requires more CTAs.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>6. Thread Configuration</h2>
+        <pre><code><span class="keyword">@staticmethod</span>
+    <span class="keyword">def</span> <span class="function">_compute_threads_per_row</span>(N_per_cta):
+    <span class="keyword">if</span> N_per_cta <= <span class="number">64</span>: <span class="keyword">return</span> <span class="number">8</span>
+    <span class="keyword">elif</span> N_per_cta <= <span class="number">128</span>: <span class="keyword">return</span> <span class="number">16</span>
+    <span class="keyword">elif</span> N_per_cta <= <span class="number">3072</span>: <span class="keyword">return</span> <span class="number">32</span>
+    <span class="keyword">elif</span> N_per_cta <= <span class="number">6144</span>: <span class="keyword">return</span> <span class="number">64</span>
+    <span class="keyword">elif</span> N_per_cta <= <span class="number">16384</span>: <span class="keyword">return</span> <span class="number">128</span>
+    <span class="keyword">else</span>: <span class="keyword">return</span> <span class="number">256</span>
+
+<span class="keyword">@staticmethod</span>
+    <span class="keyword">def</span> <span class="function">_compute_num_threads</span>(N_per_cta):
+    <span class="keyword">return</span> <span class="number">128</span> <span class="keyword">if</span> N_per_cta <= <span class="number">16384</span> <span class="keyword">else</span> <span class="number">256</span></code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Computes optimal thread counts based on N per CTA. Larger N needs more threads.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>7. TV Layout Helper</h2>
+        <pre><code><span class="keyword">@staticmethod</span>
+    <span class="keyword">def</span> <span class="function">_make_tv_layout</span>(threads_per_row, rows_per_block, vec_size, num_vec_blocks):
+    shape = (
+        (threads_per_row, rows_per_block),
+        (vec_size, num_vec_blocks),
+    )
+    stride = (
+        (vec_size * rows_per_block, <span class="number">1</span>),
+        (rows_per_block, rows_per_block * vec_size * threads_per_row),
+    )
+    <span class="keyword">return</span> shape, stride
+
+<span class="keyword">def</span> <span class="function">smem_size_in_bytes</span>(<span class="keyword">self</span>):
+    tile_bytes = <span class="keyword">self</span>.rows_per_block * <span class="keyword">self</span>.cols_per_tile * (<span class="keyword">self</span>.dtype.width // <span class="number">8</span>)
+    reduction_bytes = <span class="keyword">self</span>.rows_per_block * <span class="keyword">self</span>.warps_per_row * <span class="keyword">self</span>.cluster_n * <span class="number">4</span>
+    mbar_bytes = <span class="number">8</span> <span class="keyword">if</span> <span class="keyword">self</span>.cluster_n > <span class="number">1</span> <span class="keyword">else</span> <span class="number">0</span>
+    <span class="keyword">return</span> tile_bytes + reduction_bytes + mbar_bytes</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Creates Thread-Value layout for coalesced memory access. Also calculates SMEM needed.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>8. RMSNormKernel - Constructor</h2>
+        <pre><code><span class="keyword">class</span> <span class="function">RMSNormKernel</span>:
+    <span class="keyword">def</span> <span class="function">__init__</span>(<span class="keyword">self</span>, dtype, N, has_weight=<span class="keyword">True</span>, config=<span class="keyword">None</span>):
+        <span class="keyword">if</span> config <span class="keyword">is not None</span>:
+            <span class="keyword">self</span>.cfg = config
+        <span class="keyword">else</span>:
+            <span class="keyword">self</span>.cfg = RMSNormConfig(dtype, N, has_weight)
+
+        <span class="keyword">self</span>.dtype = <span class="keyword">self</span>.cfg.dtype
+        <span class="keyword">self</span>.N = <span class="keyword">self</span>.cfg.N
+        <span class="keyword">self</span>.has_weight = <span class="keyword">self</span>.cfg.has_weight
+        <span class="keyword">self</span>.cluster_n = <span class="keyword">self</span>.cfg.cluster_n</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Kernel class initialization. Can accept pre-computed config or create new one.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>9. Kernel Entry Point</h2>
+        <pre><code><span class="keyword">@cute.jit</span>
+    <span class="keyword">def</span> <span class="function">__call__</span>(<span class="keyword">self</span>, x_ptr, w_ptr, o_ptr, M, eps, stream):
+        cfg = <span class="keyword">self</span>.cfg
+
+        mX = cute.make_tensor(x_ptr, cute.make_layout((M, cfg.N), stride=(cfg.N, <span class="number">1</span>)))
+        mO = cute.make_tensor(o_ptr, cute.make_layout((M, cfg.N), stride=(cfg.N, <span class="number">1</span>)))
+
+        <span class="keyword">if</span> cutlass.const_expr(cfg.has_weight <span class="keyword">and</span> w_ptr <span class="keyword">is not None</span>):
+            mW = cute.make_tensor(w_ptr, cute.make_layout((cfg.N,), stride=(<span class="number">1</span>)))
+        <span class="keyword">else</span>:
+            mW = <span class="keyword">None</span>
+
+        tv_shape, tv_stride = RMSNormConfig._make_tv_layout(
+            cfg.threads_per_row, cfg.rows_per_block, cfg.vec_size, cfg.num_vec_blocks
+        )
+        tv_layout = cute.make_layout(tv_shape, stride=tv_stride)
+        tiler_mn = (cfg.rows_per_block, cfg.cols_per_tile)
+
+        <span class="keyword">self</span>.kernel(mX, mW, mO, eps, tv_layout, tiler_mn).launch(
+            grid=[cute.ceil_div(M, cfg.rows_per_block), cfg.cluster_n, <span class="number">1</span>],
+            block=[cfg.num_threads, <span class="number">1</span>, <span class="number">1</span>],
+            cluster=[<span class="number">1</span>, cfg.cluster_n, <span class="number">1</span>] <span class="keyword">if</span> cutlass.const_expr(cfg.cluster_n > <span class="number">1</span>) <span class="keyword">else</span> <span class="keyword">None</span>,
+            smem=cfg.smem_size_in_bytes(),
+            stream=stream,
+        )</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Host-side entry point that creates tensors and launches kernel with appropriate grid/cluster.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>10. Device Kernel - Coordinates</h2>
+        <pre><code><span class="keyword">@cute.kernel</span>
+    <span class="keyword">def</span> <span class="function">kernel</span>(<span class="keyword">self</span>, mX, mW, mO, eps, tv_layout, tiler_mn):
+        cfg = <span class="keyword">self</span>.cfg
+        tidx, _, _ = cute.arch.thread_idx()
+        bidx, _, _ = cute.arch.block_idx()
+
+        <span class="keyword">if</span> cutlass.const_expr(cfg.cluster_n > <span class="number">1</span>):
+            cluster_y = cute.arch.block_idx()[<span class="number">1</span>]
+        <span class="keyword">else</span>:
+            cluster_y = cutlass.constexpr(<span class="number">0</span>)
+
+        M = mX.shape[<span class="number">0</span>]
+        threads_per_row = tv_layout.shape[<span class="number">0</span>][<span class="number">0</span>]
+        warps_per_row = max(threads_per_row // <span class="number">32</span>, <span class="number">1</span>)
+        rows_per_block = tiler_mn[<span class="number">0</span>]</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Gets thread/block coordinates. Determines cluster position for multi-CTA reduction.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>11. Shared Memory Allocation</h2>
+        <pre><code>smem = utils.SmemAllocator()
+
+sX = smem.allocate_tensor(
+    mX.element_type,
+    cute.make_ordered_layout(tiler_mn, order=(<span class="number">1</span>, <span class="number">0</span>)),
+    byte_alignment=<span class="number">16</span>,
+)
+
+<span class="keyword">if</span> cutlass.const_expr(cfg.cluster_n == <span class="number">1</span>):
+    reduction_buffer = smem.allocate_tensor(
+        Float32,
+        cute.make_layout((rows_per_block, warps_per_row)),
+        byte_alignment=<span class="number">4</span>,
+    )
+    mbar_ptr = <span class="keyword">None</span>
+<span class="keyword">else</span>:
+    reduction_buffer = smem.allocate_tensor(
+        Float32,
+        cute.make_layout((rows_per_block, (warps_per_row, cfg.cluster_n))),
+        byte_alignment=<span class="number">4</span>,
+    )
+    mbar_ptr = smem.allocate_array(Int64, num_elems=<span class="number">1</span>)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Allocates shared memory for tile storage and reduction buffer. Cluster mode needs extra dimension.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>12. Cluster Initialization</h2>
+        <pre><code><span class="keyword">if</span> cutlass.const_expr(cfg.cluster_n > <span class="number">1</span>):
+    <span class="keyword">if</span> tidx == <span class="number">0</span>:
+        cute.arch.mbarrier_init(mbar_ptr, <span class="number">1</span>)
+    cute.arch.mbarrier_init_fence()
+    cute.arch.cluster_arrive_relaxed()
+    cute.arch.cluster_wait()</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Initializes mbarrier and synchronizes cluster CTAs before data access.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>13. Tensor Partitioning</h2>
+        <pre><code>idX = cute.make_identity_tensor(mX.shape)
+
+gX = cute.local_tile(mX, tiler_mn, (bidx, cluster_y))
+gO = cute.local_tile(mO, tiler_mn, (bidx, cluster_y))
+cX = cute.local_tile(idX, tiler_mn, (bidx, cluster_y))
+
+<span class="keyword">if</span> cutlass.const_expr(cfg.has_weight <span class="keyword">and</span> mW <span class="keyword">is not None</span>):
+    mW_expanded_layout = cute.prepend(mW.layout, cute.make_layout((tiler_mn[<span class="number">0</span>],), stride=(<span class="number">0</span>,)))
+    mW_2d = cute.make_tensor(mW.iterator, mW_expanded_layout)
+    gW = cute.local_tile(mW_2d, tiler_mn, (<span class="number">0</span>, cluster_y))</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Creates global tensors and partitions them for thread-level operations.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>14. TiledCopy Setup</h2>
+        <pre><code>copy_atom_load_async = cute.make_copy_atom(
+    cute.nvgpu.cpasync.CopyG2SOp(), mX.element_type, num_bits_per_copy=RMSNormConfig.COPY_BITS
+)
+
+copy_atom_load_W = cute.make_copy_atom(
+    cute.nvgpu.CopyUniversalOp(), mX.element_type, num_bits_per_copy=RMSNormConfig.COPY_BITS
+)
+
+copy_atom_store = cute.make_copy_atom(
+    cute.nvgpu.CopyUniversalOp(), mO.element_type, num_bits_per_copy=RMSNormConfig.COPY_BITS
+)
+
+tiled_copy_load = cute.make_tiled_copy(copy_atom_load_async, tv_layout, tiler_mn)
+tiled_copy_W = cute.make_tiled_copy(copy_atom_load_W, tv_layout, tiler_mn)
+tiled_copy_store = cute.make_tiled_copy(copy_atom_store, tv_layout, tiler_mn)
+
+thr_copy_X = tiled_copy_load.get_slice(tidx)
+thr_copy_W = tiled_copy_W.get_slice(tidx)
+thr_copy_O = tiled_copy_store.get_slice(tidx)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Creates copy atoms and TiledCopy operations for vectorized memory transfers.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>15. Tensor Partition and Fragments</h2>
+        <pre><code>tXgX = thr_copy_X.partition_S(gX)
+tXsX = thr_copy_X.partition_D(sX)
+tXgO = thr_copy_O.partition_D(gO)
+tXcX = thr_copy_X.partition_S(cX)
+
+tXrX = cute.make_fragment_like(tXgX)
+tXrO = cute.make_fragment_like(tXgO)
+
+<span class="keyword">if</span> cutlass.const_expr(cfg.has_weight <span class="keyword">and</span> mW <span class="keyword">is not None</span>):
+    tWgW = thr_copy_W.partition_S(gW)
+    tWrW = cute.make_fragment_like(tWgW)
+    tXrW = thr_copy_X.retile(tWrW)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Partitions global/shared tensors and creates register fragments.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>16. Bounds Checking and Load</h2>
+        <pre><code>tXpX = predicate_k(tXcX, limit=cfg.N)
+
+row_coord = tXcX[(<span class="number">0</span>, <span class="number">0</span>), <span class="number">0</span>, <span class="number">0</span>]
+row_in_bounds = row_coord[<span class="number">0</span>] < M
+
+<span class="keyword">if</span> row_in_bounds:
+    cute.copy(copy_atom_load_async, tXgX, tXsX, pred=tXpX)
+
+cute.arch.cp_async_commit_group()
+
+<span class="keyword">if</span> cutlass.const_expr(cfg.has_weight <span class="keyword">and</span> mW <span class="keyword">is not None</span>):
+    tWpW = predicate_k(thr_copy_W.partition_S(cX), limit=cfg.N)
+    cute.copy(copy_atom_load_W, tWgW, tWrW, pred=tWpW)
+
+cute.arch.cp_async_wait_group(<span class="number">0</span>)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Creates predicates for bounds checking, loads data from global to shared memory.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>17. Pass 1: Sum of Squares</h2>
+        <pre><code>cute.autovec_copy(tXsX, tXrX)
+x = tXrX.load().to(Float32)
+
+x_sq = x * x
+sum_sq = row_reduce(
+    x_sq,
+    cute.ReductionOp.ADD,
+    threads_per_row,
+    reduction_buffer,
+    mbar_ptr,
+    cfg.cluster_n,
+    Float32(<span class="number">0.0</span>),
+)
+
+mean_sq = sum_sq / cfg.N
+rstd = cute.math.rsqrt(mean_sq + eps, fastmath=<span class="keyword">True</span>)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>First pass: computes sum of squares and rstd (reciprocal of square root).</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>18. Sync Before Pass 2</h2>
+        <pre><code><span class="keyword">if</span> cutlass.const_expr(cfg.cluster_n > <span class="number">1</span>):
+    cute.arch.cluster_arrive_relaxed()
+    cute.arch.cluster_wait()
+<span class="keyword">else</span>:
+    cute.arch.barrier()</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Synchronizes all CTAs before second pass ensures rstd is ready.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>19. Pass 2: Normalize and Store</h2>
+        <pre><code>cute.autovec_copy(tXsX, tXrX)
+x = tXrX.load().to(Float32)
+
+y = x * rstd
+
+<span class="keyword">if</span> cutlass.const_expr(cfg.has_weight <span class="keyword">and</span> mW <span class="keyword">is not None</span>):
+    w = tXrW.load().to(Float32)
+    y = y * w
+
+tXrO.store(y.to(cfg.dtype))
+
+<span class="keyword">if</span> row_in_bounds:
+    cute.copy(copy_atom_store, tXrO, tXgO, pred=tXpX)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Second pass: normalizes data, applies weight, stores to output.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>20. reduce.py - Block Reduction</h2>
+        <pre><code><span class="keyword">@cute.jit</span>
+<span class="keyword">def</span> <span class="function">block_reduce</span>(val, op, reduction_buffer, init_val):
+    lane_idx = cute.arch.lane_idx()
+    warp_idx = cute.arch.warp_idx()
+    warps_per_row = cute.size(reduction_buffer.shape[<span class="number">1</span>])
+    row_idx = warp_idx // warps_per_row
+    col_idx = warp_idx % warps_per_row
+
+    <span class="keyword">if</span> lane_idx == <span class="number">0</span>:
+        reduction_buffer[row_idx, col_idx] = val
+    cute.arch.barrier()
+
+    block_reduce_val = init_val
+    <span class="keyword">if</span> lane_idx < warps_per_row:
+        block_reduce_val = reduction_buffer[row_idx, lane_idx]
+    <span class="keyword">return</span> cute.arch.warp_reduction(block_reduce_val, op)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Reduces values across warps within a block using shared memory.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>21. reduce.py - Cluster Reduction</h2>
+        <pre><code><span class="keyword">@cute.jit</span>
+<span class="keyword">def</span> <span class="function">cluster_reduce</span>(val, op, reduction_buffer, mbar_ptr, cluster_n, init_val):
+    cta_rank_in_cluster = cute.arch.block_idx_in_cluster()
+    lane_idx = cute.arch.lane_idx()
+    warp_idx = cute.arch.warp_idx()
+
+    rows_per_block = reduction_buffer.shape[<span class="number">0</span>]
+    warps_per_row = reduction_buffer.shape[<span class="number">1</span>][<span class="number">0</span>]
+
+    row_idx = warp_idx // warps_per_row
+    col_idx = warp_idx % warps_per_row
+
+    <span class="keyword">if</span> warp_idx == <span class="number">0</span>:
+        <span class="keyword">with</span> cute.arch.elect_one():
+            num_warps = rows_per_block * warps_per_row
+            expected_bytes = num_warps * cluster_n * <span class="number">4</span>
+            cute.arch.mbarrier_arrive_and_expect_tx(mbar_ptr, expected_bytes)
+
+    <span class="keyword">if</span> lane_idx < cluster_n:
+        store_shared_remote(val, elem_pointer(reduction_buffer, (row_idx, (col_idx, cta_rank_in_cluster))), mbar_ptr, peer_cta_rank_in_cluster=lane_idx)
+
+    cute.arch.mbarrier_wait(mbar_ptr, phase=<span class="number">0</span>)
+
+    num_total = warps_per_row * cluster_n
+    num_iter = cute.ceil_div(num_total, <span class="number">32</span>)
+
+    block_reduce_val = init_val
+    <span class="keyword">for</span> i <span class="keyword">in</span> cutlass.range_constexpr(num_iter):
+        idx = lane_idx + i * <span class="number">32</span>
+        <span class="keyword">if</span> idx < num_total:
+            block_reduce_val = op(block_reduce_val, reduction_buffer[row_idx, idx])
+
+    <span class="keyword">return</span> cute.arch.warp_reduction(block_reduce_val, op)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Reduces values across CTAs in a cluster using mbarrier synchronization and cross-CTA stores.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>22. reduce.py - Row Reduction</h2>
+        <pre><code><span class="keyword">@cute.jit</span>
+<span class="keyword">def</span> <span class="function">row_reduce</span>(x, op, threads_per_row, reduction_buffer, mbar_ptr, cluster_n, init_val):
+    local_val = x.reduce(op, init_val=init_val, reduction_profile=<span class="number">0</span>)
+
+    warp_op = {cute.ReductionOp.ADD: operator.add, cute.ReductionOp.MAX: cute.arch.fmax}[op]
+
+    warp_width = min(threads_per_row, <span class="number">32</span>)
+    warp_val = cute.arch.warp_reduction(local_val, warp_op, threads_in_group=warp_width)
+
+    warps_per_row = max(threads_per_row // <span class="number">32</span>, <span class="number">1</span>)
+
+    <span class="keyword">if</span> cutlass.const_expr(warps_per_row > <span class="number">1</span> <span class="keyword">or</span> cluster_n > <span class="number">1</span>):
+        <span class="keyword">if</span> cutlass.const_expr(cluster_n == <span class="number">1</span>):
+            <span class="keyword">return</span> block_reduce(warp_val, warp_op, reduction_buffer, init_val)
+        <span class="keyword">else</span>:
+            <span class="keyword">return</span> cluster_reduce(warp_val, warp_op, reduction_buffer, mbar_ptr, cluster_n, init_val)
+    <span class="keyword">else</span>:
+        <span class="keyword">return</span> warp_val</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Main reduction function that orchestrates local → warp → block → cluster reduction.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>23. Utility Functions</h2>
+        <pre><code><span class="keyword">def</span> <span class="function">create_tensors</span>(M, N, dtype, has_weight):
+    torch.manual_seed(<span class="number">42</span>)
+    torch_dtype = cutlass_torch.dtype(dtype)
+
+    x = torch.randn(M, N, device=<span class="string">"cuda"</span>, dtype=torch_dtype)
+    weight = torch.randn(N, device=<span class="string">"cuda"</span>, dtype=torch_dtype) <span class="keyword">if</span> has_weight <span class="keyword">else</span> <span class="keyword">None</span>
+    out = torch.empty_like(x)
+
+    <span class="keyword">return</span> x, weight, out
+
+<span class="keyword">def</span> <span class="function">rmsnorm_ref</span>(x, weight=<span class="keyword">None</span>, eps=<span class="number">1e-6</span>):
+    x_f32 = x.float()
+    rms = torch.sqrt(torch.mean(x_f32**<span class="number">2</span>, dim=-<span class="number">1</span>, keepdim=<span class="keyword">True</span>) + eps)
+    x_norm = x_f32 / rms
+    <span class="keyword">if</span> weight <span class="keyword">is not None</span>:
+        x_norm = x_norm * weight.float()
+    <span class="keyword">return</span> x_norm.to(x.dtype)</code></pre>
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Helper functions for creating test tensors and reference implementation.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Summary: RMSNorm Architecture</h2>
+        <table>
+            <tr><th>Phase</th><th>Operation</th><th>Location</th></tr>
+            <tr><td>1. Setup</td><td>Config compute, kernel launch</td><td>Host</td></tr>
+            <tr><td>2. Cluster Sync</td><td>mbarrier init, cluster arrive/wait</td><td>Device</td></tr>
+            <tr><td>3. Load</td><td>Global → Shared (vectorized)</td><td>Device</td></tr>
+            <tr><td>4. Reduce</td><td>Sum of squares (local + cluster)</td><td>Device</td></tr>
+            <tr><td>5. Sync</td><td>Cluster barrier</td><td>Device</td></tr>
+            <tr><td>6. Normalize</td><td>y = x * rstd * weight</td><td>Device</td></tr>
+            <tr><td>7. Store</td><td>Shared → Global</td><td>Device</td></tr>
+        </table>
+        
+        <div class="analysis">
+            <h4>Key Takeaways</h4>
+            <ol>
+                <li><strong>Two-pass algorithm</strong>: First computes sum of squares, then normalizes</li>
+                <li><strong>Cluster reduction</strong>: For large N, CTAs cooperate via mbarrier</li>
+                <li><strong>Vectorized access</strong>: 128-bit memory ops for optimal throughput</li>
+                <li><strong>Hierarchical reduction</strong>: local → warp → block → cluster</li>
+            </ol>
+        </div>
+    </div>
+
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+</body>
+</html>

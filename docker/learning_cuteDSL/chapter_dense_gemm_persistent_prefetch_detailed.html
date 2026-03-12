@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dense GEMM Persistent Prefetch - Comprehensive Analysis</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.7; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; }
+        h1 { color: #1a1a1a; border-bottom: 4px solid #76b900; padding-bottom: 15px; }
+        h2 { color: #2d2d2d; margin-top: 40px; border-left: 5px solid #76b900; padding-left: 15px; }
+        h3 { color: #444; }
+        .section { background: white; padding: 25px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        code { background: #f4f4f4; padding: 3px 8px; border-radius: 4px; font-family: 'Fira Code', monospace; font-size: 0.9em; color: #c7254e; }
+        pre { background: #282c34; color: #abb2bf; padding: 20px; border-radius: 8px; overflow-x: auto; font-size: 14px; line-height: 1.5; }
+        pre code { background: none; padding: 0; color: inherit; }
+        .keyword { color: #c678dd; }
+        .function { color: #61afef; }
+        .string { color: #98c379; }
+        .number { color: #d19a66; }
+        .comment { color: #5c6370; font-style: italic; }
+        .analysis { background: #f0f7ff; border-left: 4px solid #4a90d9; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+        .analysis h4 { margin-top: 0; color: #4a90d9; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background: #f8f8f8; }
+        .nav { display: flex; justify-content: space-between; margin: 30px 0; }
+        .nav a { padding: 12px 25px; background: #76b900; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; }
+        .nav a:hover { background: #5a8f00; }
+    </style>
+</head>
+<body>
+    <h1>Dense GEMM Persistent Prefetch: Comprehensive Code Analysis</h1>
+    <p><strong>File:</strong> <code>dense_gemm_persistent_prefetch.py</code> | <strong>Architecture:</strong> Blackwell (SM100) | <strong>Key Features:</strong> TMA Prefetch, Persistent Scheduling</p>
+    
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+
+    <div class="section">
+        <h2>1. Overview: TMA Prefetch</h2>
+        <p>The prefetch version adds explicit TMA prefetch hints to hide memory latency better than the basic persistent version.</p>
+        
+        <table>
+            <tr><th>Feature</th><th>Description</th></tr>
+            <tr><td>Initial Prefetch</td><td>Prefetch K tiles before mainloop starts</td></tr>
+            <tr><td>Rolling Prefetch</td><td>Prefetch next tile while current tile computes</td></tr>
+            <tr><td>prefetch_dist</td><td>Controls prefetch distance (0 = disabled)</td></tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>2. Constructor with Prefetch Parameter</h2>
+        
+        <pre><code><span class="keyword">def</span> <span class="function">__init__</span>(
+    <span class="keyword">self</span>,
+    acc_dtype: Type[cutlass.Numeric],
+    use_2cta_instrs: <span class="keyword">bool</span>,
+    mma_tiler_mn: Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>],
+    cluster_shape_mn: Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>],
+    use_tma_store: <span class="keyword">bool</span>,
+    prefetch_dist: Optional[<span class="keyword">int</span>] = <span class="keyword">None</span>,
+):
+    <span class="keyword">self</span>.acc_dtype = acc_dtype
+    <span class="keyword">self</span>.use_2cta_instrs = use_2cta_instrs
+    <span class="keyword">self</span>.cluster_shape_mn = cluster_shape_mn
+    <span class="keyword">self</span>.mma_tiler_mn = mma_tiler_mn
+    <span class="keyword">self</span>.mma_tiler = (*mma_tiler_mn, <span class="number">1</span>)
+    <span class="keyword">self</span>.use_tma_store = use_tma_store
+
+    <span class="keyword">self</span>.cta_group = (
+        tcgen05.CtaGroup.TWO <span class="keyword">if</span> use_2cta_instrs <span class="keyword">else</span> tcgen05.CtaGroup.ONE
+    )
+
+    <span class="keyword">self</span>.occupancy = <span class="number">1</span>
+    <span class="keyword">self</span>.epilogue_warp_id = (<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>)
+    <span class="keyword">self</span>.mma_warp_id = <span class="number">4</span>
+    <span class="keyword">self</span>.tma_warp_id = <span class="number">5</span>
+    <span class="keyword">self</span>.threads_per_cta = <span class="number">32</span> * len(
+        (<span class="keyword">self</span>.mma_warp_id, <span class="keyword">self</span>.tma_warp_id, *<span class="keyword">self</span>.epilogue_warp_id)
+    )
+
+    <span class="keyword">self</span>.prefetch_dist = prefetch_dist</code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Initializes kernel with optional prefetch distance parameter.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>prefetch_dist</code>: Optional[int] - None=auto, 0=disabled, >0=explicit</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>None defaults to num_ab_stage for optimal pipeline</li>
+                <li>0 explicitly disables prefetch for debugging</li>
+                <li>>0 allows manual tuning of prefetch distance</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>3. Setup Attributes with Prefetch</h2>
+        
+        <pre><code><span class="keyword">def</span> <span class="function">_setup_attributes</span>(<span class="keyword">self</span>):
+    tiled_mma = <span class="keyword">self</span>._create_tiled_mma()
+
+    mma_inst_shape_k = cute.size(tiled_mma.shape_mnk, mode=[<span class="number">2</span>])
+    mma_inst_tile_k = <span class="number">4</span>
+    <span class="keyword">self</span>.mma_tiler = (
+        <span class="keyword">self</span>.mma_tiler[<span class="number">0</span>],
+        <span class="keyword">self</span>.mma_tiler[<span class="number">1</span>],
+        mma_inst_shape_k * mma_inst_tile_k,
+    )
+    <span class="keyword">self</span>.cta_tile_shape_mnk = (
+        <span class="keyword">self</span>.mma_tiler[<span class="number">0</span>] // cute.size(tiled_mma.thr_id.shape),
+        <span class="keyword">self</span>.mma_tiler[<span class="number">1</span>],
+        <span class="keyword">self</span>.mma_tiler[<span class="number">2</span>],
+    )
+
+    <span class="keyword">self</span>.cluster_layout_vmnk = cute.tiled_divide(
+        cute.make_layout((*<span class="keyword">self</span>.cluster_shape_mn, <span class="number">1</span>)),
+        (tiled_mma.thr_id.shape,),
+    )
+
+    <span class="keyword">self</span>.num_mcast_ctas_a = cute.size(<span class="keyword">self</span>.cluster_layout_vmnk.shape[<span class="number">2</span>])
+    <span class="keyword">self</span>.num_mcast_ctas_b = cute.size(<span class="keyword">self</span>.cluster_layout_vmnk.shape[<span class="number">1</span>])
+    <span class="keyword">self</span>.is_a_mcast = <span class="keyword">self</span>.num_mcast_ctas_a > <span class="number">1</span>
+    <span class="keyword">self</span>.is_b_mcast = <span class="keyword">self</span>.num_mcast_ctas_b > <span class="number">1</span></code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Computes MMA tile shape, cluster layout same as persistent version.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>num_mcast_ctas_a</code>: Number of CTAs to multicast A to</li>
+                <li><code>num_mcast_ctas_b</code>: Number of CTAs to multicast B to</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>Multicast reduces memory traffic in cluster</li>
+                <li>Only enabled when cluster has multiple CTAs</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>4. Initial Prefetch Loop</h2>
+        
+        <pre><code>prefetch_k_tile_cnt = <span class="keyword">self</span>.prefetch_dist
+<span class="keyword">if</span> prefetch_k_tile_cnt <span class="keyword">is</span> <span class="keyword">None</span>:
+    prefetch_k_tile_cnt = <span class="keyword">self</span>.num_ab_stage - <span class="number">2</span>
+
+<span class="keyword">if</span> warp_idx == <span class="keyword">self</span>.tma_warp_id:
+    <span class="keyword">for</span> k_tile_idx <span class="keyword">in</span> cutlass.range(
+        <span class="number">0</span>, prefetch_k_tile_cnt, <span class="number">1</span>, unroll=<span class="number">1</span>
+    ):
+        producer_handle = ab_producer.acquire_and_advance()
+
+        cute.copy(
+            tma_atom_a,
+            tAgA_slice[(<span class="keyword">None</span>, k_tile_idx)],
+            tAsA[(<span class="keyword">None</span>, producer_handle.index)],
+            tma_bar_ptr=producer_handle.barrier,
+            mcast_mask=a_full_mcast_mask,
+        )
+        cute.copy(
+            tma_atom_b,
+            tBgB_slice[(<span class="keyword">None</span>, k_tile_idx)],
+            tBsB[(<span class="keyword">None</span>, producer_handle.index)],
+            tma_bar_ptr=producer_handle.barrier,
+            mcast_mask=b_full_mcast_mask,
+        )</code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Initial prefetch loads K tiles before the main computation loop starts.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>prefetch_k_tile_cnt</code>: Number of tiles to prefetch</li>
+                <li><code>producer_handle</code>: Barrier handle for TMA operation</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>Prefetch fills pipeline before compute starts</li>
+                <li>num_ab_stage - 2 leaves slots for compute</li>
+                <li>Can be disabled by setting prefetch_dist=0</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>5. Main Loop with Rolling Prefetch</h2>
+        
+        <pre><code><span class="keyword">for</span> k_tile_idx <span class="keyword">in</span> cutlass.range(k_tile_cnt):
+    <span class="keyword">if</span> k_tile_idx < k_tile_cnt - prefetch_k_tile_cnt:
+        producer_handle = ab_producer.acquire_and_advance(peek_ab_empty_status)
+
+        cute.copy(
+            tma_atom_a,
+            tAgA_slice[(<span class="keyword">None</span>, k_tile_idx + prefetch_k_tile_cnt)],
+            tAsA[(<span class="keyword">None</span>, producer_handle.index)],
+            tma_bar_ptr=producer_handle.barrier,
+            mcast_mask=a_full_mcast_mask,
+        )
+        cute.copy(
+            tma_atom_b,
+            tBgB_slice[(<span class="keyword">None</span>, k_tile_idx + prefetch_k_tile_cnt)],
+            tBsB[(<span class="keyword">None</span>, producer_handle.index)],
+            tma_bar_ptr=producer_handle.barrier,
+            mcast_mask=b_full_mcast_mask,
+        )
+
+    <span class="keyword">if</span> is_leader_cta:
+        consumer_handle = ab_consumer.wait_and_advance(peek_ab_full_status)
+
+        num_kblks = cute.size(tCrA, mode=[<span class="number">2</span>])
+        <span class="keyword">for</span> kblk_idx <span class="keyword">in</span> cutlass.range(num_kblks, unroll_full=<span class="keyword">True</span>):
+            kblk_crd = (<span class="keyword">None</span>, <span class="keyword">None</span>, kblk_idx, consumer_handle.index)
+
+            cute.gemm(tiled_mma, tCtAcc, tCrA[kblk_crd], tCrB[kblk_crd], tCtAcc)
+            tiled_mma.set(tcgen05.Field.ACCUMULATE, <span class="keyword">True</span>)
+
+        consumer_handle.release()</code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Main loop with rolling prefetch - prefetches next tile while computing current.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>k_tile_idx + prefetch_k_tile_cnt</code>: Index of tile to prefetch</li>
+                <li><code>consumer_handle</code>: Barrier for data ready</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>Rolling prefetch keeps pipeline full</li>
+                <li>prefetch_k_tile_cnt ahead of compute</li>
+                <li>Overlaps memory latency with computation</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>6. Prefetch Configuration Summary</h2>
+        
+        <table>
+            <tr><th>prefetch_dist</th><th>Behavior</th></tr>
+            <tr><td>None (default)</td><td>Auto: num_ab_stage - 2 tiles</td></tr>
+            <tr><td>0</td><td>Disabled - no prefetch</td></tr>
+            <tr><td>>0</td><td>Explicit prefetch distance</td></tr>
+        </table>
+        
+        <div class="analysis">
+            <h4>Key Takeaways</h4>
+            <ol>
+                <li><strong>Initial prefetch</strong>: Loads tiles before compute begins</li>
+                <li><strong>Rolling prefetch</strong>: Loads ahead while computing</li>
+                <li><strong>Tuning</strong>: prefetch_dist controls distance between load and compute</li>
+                <li><strong>Trade-off</strong>: More prefetch = better hiding but more SMEM</li>
+            </ol>
+        </div>
+    </div>
+
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+</body>
+</html>

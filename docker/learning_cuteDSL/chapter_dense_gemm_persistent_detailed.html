@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dense GEMM Persistent - Comprehensive Analysis</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.7; max-width: 1000px; margin: 0 auto; padding: 20px; background: #fafafa; }
+        h1 { color: #1a1a1a; border-bottom: 4px solid #76b900; padding-bottom: 15px; }
+        h2 { color: #2d2d2d; margin-top: 40px; border-left: 5px solid #76b900; padding-left: 15px; }
+        h3 { color: #444; }
+        .section { background: white; padding: 25px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        code { background: #f4f4f4; padding: 3px 8px; border-radius: 4px; font-family: 'Fira Code', monospace; font-size: 0.9em; color: #c7254e; }
+        pre { background: #282c34; color: #abb2bf; padding: 20px; border-radius: 8px; overflow-x: auto; font-size: 14px; line-height: 1.5; }
+        pre code { background: none; padding: 0; color: inherit; }
+        .keyword { color: #c678dd; }
+        .function { color: #61afef; }
+        .string { color: #98c379; }
+        .number { color: #d19a66; }
+        .comment { color: #5c6370; font-style: italic; }
+        .analysis { background: #f0f7ff; border-left: 4px solid #4a90d9; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+        .analysis h4 { margin-top: 0; color: #4a90d9; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background: #f8f8f8; }
+        .nav { display: flex; justify-content: space-between; margin: 30px 0; }
+        .nav a { padding: 12px 25px; background: #76b900; color: white; text-decoration: none; border-radius: 6px; font-weight: 500; }
+        .nav a:hover { background: #5a8f00; }
+    </style>
+</head>
+<body>
+    <h1>Dense GEMM Persistent: Comprehensive Code Analysis</h1>
+    <p><strong>File:</strong> <code>dense_gemm_persistent.py</code> | <strong>Architecture:</strong> Blackwell (SM100) | <strong>Key Features:</strong> Persistent Tile Scheduling, Warp Specialization, Dynamic Stages</p>
+    
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+
+    <div class="section">
+        <h2>1. Overview: What Makes Persistent Different</h2>
+        <p>The persistent version of Dense GEMM adds several key optimizations over the basic version:</p>
+        <ul>
+            <li><strong>Persistent Tile Scheduling</strong>: CTAs process multiple tiles in a persistent loop</li>
+            <li><strong>Warp Specialization</strong>: Dedicated warps for TMA load, MMA compute, and epilogue</li>
+            <li><strong>Dynamic Stage Calculation</strong>: Automatically computes optimal pipeline stages based on SMEM</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>2. Stage Computation Function</h2>
+        
+        <pre><code><span class="keyword">def</span> <span class="function">_compute_stages</span>(
+    tiled_mma: cute.TiledMma,
+    mma_tiler_mnk: Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>, <span class="keyword">int</span>],
+    a_dtype: Type[cutlass.Numeric],
+    b_dtype: Type[cutlass.Numeric],
+    c_dtype: Type[cutlass.Numeric],
+    smem_capacity: <span class="keyword">int</span>,
+    occupancy: <span class="keyword">int</span>,
+    use_tma_store: <span class="keyword">bool</span>,
+    c_smem_layout: Union[cute.Layout, <span class="keyword">None</span>],
+) -> Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>, <span class="keyword">int</span>]:
+    num_acc_stage = <span class="number">2</span>
+    num_c_stage = <span class="number">2</span> <span class="keyword">if</span> use_tma_store <span class="keyword">else</span> <span class="number">0</span>
+
+    a_smem_layout_stage_one = utils.sm100.make_smem_layout_a(
+        tiled_mma, mma_tiler_mnk, a_dtype, <span class="number">1</span>
+    )
+    b_smem_layout_staged_one = utils.sm100.make_smem_layout_b(
+        tiled_mma, mma_tiler_mnk, b_dtype, <span class="number">1</span>
+    )
+
+    ab_bytes_per_stage = cute.size_in_bytes(
+        a_dtype, a_smem_layout_stage_one
+    ) + cute.size_in_bytes(b_dtype, b_smem_layout_staged_one)
+    mbar_helpers_bytes = <span class="number">1024</span>
+
+    c_bytes_per_stage = cute.size_in_bytes(c_dtype, c_smem_layout)
+    c_bytes = c_bytes_per_stage * num_c_stage
+
+    num_ab_stage = (
+        smem_capacity // occupancy - (mbar_helpers_bytes + c_bytes)
+    ) // ab_bytes_per_stage
+
+    <span class="keyword">if</span> use_tma_store:
+        num_c_stage += (
+            smem_capacity
+            - occupancy * ab_bytes_per_stage * num_ab_stage
+            - occupancy * (mbar_helpers_bytes + c_bytes)
+        ) // (occupancy * c_bytes_per_stage)
+    <span class="keyword">return</span> num_acc_stage, num_ab_stage, num_c_stage</code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Computes optimal number of pipeline stages for A/B operands and C output based on available shared memory capacity.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>num_acc_stage</code>: Stages for accumulator in TMEM (typically 2)</li>
+                <li><code>num_ab_stage</code>: Stages for A/B buffers in SMEM (computed dynamically)</li>
+                <li><code>num_c_stage</code>: Stages for C output in SMEM (computed dynamically)</li>
+                <li><code>ab_bytes_per_stage</code>: Bytes needed for one stage of A + B</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>Dynamic calculation adapts to different GPU configurations</li>
+                <li>Reserves 1024 bytes for barrier helpers</li>
+                <li>Uses occupancy to divide available SMEM per CTA</li>
+                <li>Extra stages for C if SMEM allows (better overlap)</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>3. Kernel Configuration with Warp Specialization</h2>
+        
+        <pre><code><span class="keyword">class</span> <span class="function">PersistentDenseGemmKernel</span>:
+    <span class="keyword">def</span> <span class="function">__init__</span>(
+        <span class="keyword">self</span>,
+        acc_dtype: Type[cutlass.Numeric],
+        use_2cta_instrs: <span class="keyword">bool</span>,
+        mma_tiler_mn: Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>],
+        cluster_shape_mn: Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>],
+        use_tma_store: <span class="keyword">bool</span>,
+    ):
+        <span class="keyword">self</span>.acc_dtype: Type[cutlass.Numeric] = acc_dtype
+        <span class="keyword">self</span>.use_2cta_instrs = use_2cta_instrs
+        <span class="keyword">self</span>.cluster_shape_mn = cluster_shape_mn
+        <span class="keyword">self</span>.mma_tiler_mn = mma_tiler_mn
+        <span class="keyword">self</span>.mma_tiler = (*mma_tiler_mn, <span class="number">1</span>)
+        <span class="keyword">self</span>.use_tma_store = use_tma_store
+
+        <span class="keyword">self</span>.cta_group = (
+            tcgen05.CtaGroup.TWO <span class="keyword">if</span> use_2cta_instrs <span class="keyword">else</span> tcgen05.CtaGroup.ONE
+        )
+
+        <span class="keyword">self</span>.occupancy = <span class="number">1</span>
+        <span class="keyword">self</span>.epilogue_warp_id = (<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>)
+        <span class="keyword">self</span>.mma_warp_id = <span class="number">4</span>
+        <span class="keyword">self</span>.tma_warp_id = <span class="number">5</span>
+        <span class="keyword">self</span>.threads_per_cta = <span class="number">32</span> * len(
+            (<span class="keyword">self</span>.mma_warp_id, <span class="keyword">self</span>.tma_warp_id, *<span class="keyword">self</span>.epilogue_warp_id)
+        )
+        <span class="keyword">self</span>.epilog_sync_bar_id = <span class="number">1</span>
+        <span class="keyword">self</span>.tmem_alloc_sync_bar_id = <span class="number">2</span>
+        <span class="keyword">self</span>.tmem_dealloc_sync_bar_id = <span class="number">3</span></code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Configures the persistent kernel with dedicated warp IDs for different phases.</p>
+            
+            <h4>Shape Annotations</h4>
+            <table>
+                <tr><th>Warp ID</th><th>Purpose</th></tr>
+                <tr><td><code>epilogue_warp_id</code></td><td>(0,1,2,3) - 4 warps for epilogue</td></tr>
+                <tr><td><code>mma_warp_id</code></td><td>4 - Single warp for MMA compute</td></tr>
+                <tr><td><code>tma_warp_id</code></td><td>5 - Single warp for TMA loads</td></tr>
+                <tr><td><code>threads_per_cta</code></td><td>192 (32 * 6 warps)</td></tr>
+            </table>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>Warp specialization eliminates implicit pipelining</li>
+                <li>Each warp has a dedicated role for better efficiency</li>
+                <li>Named barriers provide explicit synchronization points</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>4. Setup Attributes Method</h2>
+        
+        <pre><code><span class="keyword">def</span> <span class="function">_setup_attributes</span>(<span class="keyword">self</span>):
+    tiled_mma = <span class="keyword">self</span>._create_tiled_mma()
+
+    mma_inst_shape_k = cute.size(tiled_mma.shape_mnk, mode=[<span class="number">2</span>])
+    mma_inst_tile_k = <span class="number">4</span>
+    <span class="keyword">self</span>.mma_tiler = (
+        <span class="keyword">self</span>.mma_tiler[<span class="number">0</span>],
+        <span class="keyword">self</span>.mma_tiler[<span class="number">1</span>],
+        mma_inst_shape_k * mma_inst_tile_k,
+    )
+    <span class="keyword">self</span>.cta_tile_shape_mnk = (
+        <span class="keyword">self</span>.mma_tiler[<span class="number">0</span>] // cute.size(tiled_mma.thr_id.shape),
+        <span class="keyword">self</span>.mma_tiler[<span class="number">1</span>],
+        <span class="keyword">self</span>.mma_tiler[<span class="number">2</span>],
+    )
+
+    <span class="keyword">self</span>.cluster_layout_vmnk = cute.tiled_divide(
+        cute.make_layout((*<span class="keyword">self</span>.cluster_shape_mn, <span class="number">1</span>)),
+        (tiled_mma.thr_id.shape,),
+    )
+
+    <span class="keyword">self</span>.num_mcast_ctas_a = cute.size(<span class="keyword">self</span>.cluster_layout_vmnk.shape[<span class="number">2</span>])
+    <span class="keyword">self</span>.num_mcast_ctas_b = cute.size(<span class="keyword">self</span>.cluster_layout_vmnk.shape[<span class="number">1</span>])
+    <span class="keyword">self</span>.is_a_mcast = <span class="keyword">self</span>.num_mcast_ctas_a > <span class="number">1</span>
+    <span class="keyword">self</span>.is_b_mcast = <span class="keyword">self</span>.num_mcast_ctas_b > <span class="number">1</span></code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Computes MMA tile shape, cluster layout, and multicast configuration.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>mma_tiler</code>: (M, N, K_inst * 4) - full tile including K blocks</li>
+                <li><code>cta_tile_shape_mnk</code>: Per-CTA tile (M/ctas, N, K)</li>
+                <li><code>cluster_layout_vmnk</code>: Cluster layout for MMA thread distribution</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>K dimension computed from MMA instruction shape times tile factor</li>
+                <li>Multicast detection enables cluster-wide data sharing</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>5. Persistent Tile Scheduler Setup</h2>
+        
+        <pre><code><span class="keyword">def</span> <span class="function">_compute_grid</span>(
+    c: cute.Tensor,
+    cta_tile_shape_mnk: Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>, <span class="keyword">int</span>],
+    cluster_shape_mn: Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>],
+    max_active_clusters: cutlass.Constexpr,
+) -> Tuple[utils.PersistentTileSchedulerParams, Tuple[<span class="keyword">int</span>, <span class="keyword">int</span>, <span class="keyword">int</span>]]:
+    c_shape = cute.slice_(cta_tile_shape_mnk, (<span class="keyword">None</span>, <span class="keyword">None</span>, <span class="number">0</span>))
+    gc = cute.zipped_divide(c, tiler=c_shape)
+    num_ctas_mnl = gc[(<span class="number">0</span>, (<span class="keyword">None</span>, <span class="keyword">None</span>, <span class="keyword">None</span>))].shape
+    cluster_shape_mnl = (*cluster_shape_mn, <span class="number">1</span>)
+
+    tile_sched_params = utils.PersistentTileSchedulerParams(
+        num_ctas_mnl, cluster_shape_mnl
+    )
+    grid = utils.StaticPersistentTileScheduler.get_grid_shape(
+        tile_sched_params, max_active_clusters
+    )
+
+    <span class="keyword">return</span> tile_sched_params, grid</code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Computes grid shape using persistent tile scheduler for optimal workload distribution.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>num_ctas_mnl</code>: Number of CTAs in M,N,L dimensions</li>
+                <li><code>cluster_shape_mnl</code>: Cluster shape (M,N,1)</li>
+                <li><code>tile_sched_params</code>: Parameters for persistent scheduler</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>Persistent scheduler allows CTAs to process multiple tiles</li>
+                <li>max_active_clusters controls how many clusters can run simultaneously</li>
+                <li>Grid may be smaller than total tiles (CTA reuse)</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>6. Kernel Entry Point</h2>
+        
+        <pre><code><span class="keyword">@cute.jit</span>
+    <span class="keyword">def</span> <span class="function">__call__</span>(
+        <span class="keyword">self</span>,
+        a: cute.Tensor,
+        b: cute.Tensor,
+        c: cute.Tensor,
+        max_active_clusters: cutlass.Constexpr,
+        stream: cuda.CUstream,
+        epilogue_op: cutlass.Constexpr = <span class="keyword">lambda</span> x: x,
+    ):
+        <span class="keyword">self</span>.a_dtype: Type[cutlass.Numeric] = a.element_type
+        <span class="keyword">self</span>.b_dtype: Type[cutlass.Numeric] = b.element_type
+        <span class="keyword">self</span>.c_dtype: Type[cutlass.Numeric] = c.element_type
+        <span class="keyword">self</span>.a_major_mode = utils.LayoutEnum.from_tensor(a).mma_major_mode()
+        <span class="keyword">self</span>.b_major_mode = utils.LayoutEnum.from_tensor(b).mma_major_mode()
+        <span class="keyword">self</span>.c_layout = utils.LayoutEnum.from_tensor(c)
+
+        <span class="keyword">self</span>._setup_attributes()
+
+        tile_sched_params, grid = <span class="keyword">self</span>._compute_grid(
+            c, <span class="keyword">self</span>.cta_tile_shape_mnk, <span class="keyword">self</span>.cluster_shape_mn, max_active_clusters
+        )
+
+        <span class="keyword">self</span>.kernel(
+            tiled_mma,
+            tma_atom_a,
+            tma_tensor_a,
+            tma_atom_b,
+            tma_tensor_b,
+            tma_atom_c,
+            tma_tensor_c <span class="keyword">if</span> <span class="keyword">self</span>.use_tma_store <span class="keyword">else</span> c,
+            <span class="keyword">self</span>.cluster_layout_vmnk,
+            <span class="keyword">self</span>.a_smem_layout_staged,
+            <span class="keyword">self</span>.b_smem_layout_staged,
+            <span class="keyword">self</span>.c_smem_layout_staged,
+            <span class="keyword">self</span>.epi_tile,
+            tile_sched_params,
+            epilogue_op,
+        ).launch(
+            grid=grid,
+            block=[<span class="keyword">self</span>.threads_per_cta, <span class="number">1</span>, <span class="number">1</span>],
+            cluster=(*<span class="keyword">self</span>.cluster_shape_mn, <span class="number">1</span>),
+            stream=stream,
+        )</code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Host-side entry point that sets up runtime configuration and launches the kernel.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>grid</code>: Computed grid for persistent scheduling</li>
+                <li><code>tile_sched_params</code>: Passed to kernel for tile iteration</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>Persistent scheduling grid may be smaller than naive grid</li>
+                <li>max_active_clusters allows tuning occupancy</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>7. Device Kernel - Warp Specialization</h2>
+        
+        <pre><code><span class="keyword">@cute.kernel</span>
+    <span class="keyword">def</span> <span class="function">kernel</span>(<span class="keyword">self</span>, ...):
+        warp_idx = cute.arch.warp_idx()
+        warp_idx = cute.arch.make_warp_uniform(warp_idx)
+
+        <span class="keyword">if</span> warp_idx == <span class="keyword">self</span>.tma_warp_id:
+            cpasync.prefetch_descriptor(tma_atom_a)
+            cpasync.prefetch_descriptor(tma_atom_b)
+            <span class="keyword">if</span> cutlass.const_expr(<span class="keyword">self</span>.use_tma_store):
+                cpasync.prefetch_descriptor(tma_atom_c)
+
+        use_2cta_instrs = cute.size(tiled_mma.thr_id.shape) == <span class="number">2</span>
+
+        bidx, bidy, bidz = cute.arch.block_idx()
+        mma_tile_coord_v = bidx % cute.size(tiled_mma.thr_id.shape)
+        is_leader_cta = mma_tile_coord_v == <span class="number">0</span>
+        cta_rank_in_cluster = cute.arch.make_warp_uniform(
+            cute.arch.block_idx_in_cluster()
+        )</code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Device kernel with warp specialization - different code paths for TMA/MMA/Epilogue warps.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>warp_idx</code>: Determines which specialized warp path to take</li>
+                <li><code>is_leader_cta</code>: True for CTA 0 in 2-CTA mode</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>Each warp executes only its relevant code</li>
+                <li>TMA warp prefetches descriptors early</li>
+                <li>make_warp_uniform required for cluster operations</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>8. Persistent Tile Scheduling Loop</h2>
+        
+        <pre><code><span class="keyword">while</span> work_tile.is_valid_tile:
+    cur_tile_coord = work_tile.tile_idx
+    mma_tile_coord_mnl = (
+        cur_tile_coord[<span class="number">0</span>] // cute.size(tiled_mma.thr_id.shape),
+        cur_tile_coord[<span class="number">1</span>],
+        cur_tile_coord[<span class="number">2</span>],
+    )
+
+    tAgA_slice = tAgA[
+        (<span class="keyword">None</span>, mma_tile_coord_mnl[<span class="number">0</span>], <span class="keyword">None</span>, mma_tile_coord_mnl[<span class="number">2</span>])
+    ]
+    tBgB_slice = tBgB[
+        (<span class="keyword">None</span>, mma_tile_coord_mnl[<span class="number">1</span>], <span class="keyword">None</span>, mma_tile_coord_mnl[<span class="number">2</span>])
+    ]
+
+    ab_producer.reset()
+    peek_ab_empty_status = ab_producer.try_acquire()
+
+    <span class="keyword">for</span> k_tile <span class="keyword">in</span> cutlass.range(<span class="number">0</span>, k_tile_cnt, <span class="number">1</span>, unroll=<span class="number">1</span>):
+        handle = ab_producer.acquire_and_advance(peek_ab_empty_status)
+
+        cute.copy(tma_atom_a, tAgA_slice[(<span class="keyword">None</span>, handle.count)], tAsA[(<span class="keyword">None</span>, handle.index)], ...)
+        cute.copy(tma_atom_b, tBgB_slice[(<span class="keyword">None</span>, handle.count)], tBsB[(<span class="keyword">None</span>, handle.index)], ...)
+
+        peek_ab_empty_status = cutlass.Boolean(<span class="number">1</span>)
+        <span class="keyword">if</span> handle.count + <span class="number">1</span> < k_tile_cnt:
+            peek_ab_empty_status = ab_producer.try_acquire()
+
+    tile_sched.advance_to_next_work()
+    work_tile = tile_sched.get_current_work()</code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Persistent loop that processes multiple tiles - TMA warp loads data for all tiles.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>work_tile</code>: Current tile from persistent scheduler</li>
+                <li><code>mma_tile_coord_mnl</span></td><td>: CTA's tile in output space</li>
+                <li><code>k_tile_cnt</code>: Number of K tiles to process</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>Persistent: TMA warp handles all tiles in a loop</li>
+                <li>Peek-ahead optimization reduces pipeline stalls</li>
+                <li>Scheduler provides work items until none remain</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>9. MMA Warp Computation</h2>
+        
+        <pre><code><span class="keyword">if</span> warp_idx == <span class="keyword">self</span>.mma_warp_id:
+    tmem.wait_for_alloc()
+    tmem_ptr = tmem.retrieve_ptr(<span class="keyword">self</span>.acc_dtype)
+    tCtAcc_base = cute.make_tensor(tmem_ptr, tCtAcc_fake.layout)
+
+    acc_producer_state = pipeline.make_pipeline_state(
+        pipeline.PipelineUserType.Producer, <span class="keyword">self</span>.num_acc_stage
+    )
+
+    <span class="keyword">while</span> work_tile.is_valid_tile:
+        cur_tile_coord = work_tile.tile_idx
+        mma_tile_coord_mnl = (
+            cur_tile_coord[<span class="number">0</span>] // cute.size(tiled_mma.thr_id.shape),
+            cur_tile_coord[<span class="number">1</span>],
+            cur_tile_coord[<span class="number">2</span>],
+        )
+
+        tCtAcc = tCtAcc_base[(<span class="keyword">None</span>, <span class="keyword">None</span>, <span class="keyword">None</span>, acc_producer_state.index)]
+
+        ab_consumer.reset()
+        peek_ab_full_status = cutlass.Boolean(<span class="number">1</span>)
+        <span class="keyword">if</span> is_leader_cta:
+            peek_ab_full_status = ab_consumer.try_wait()
+
+        <span class="keyword">if</span> is_leader_cta:
+            acc_pipeline.producer_acquire(acc_producer_state)
+
+        tiled_mma.set(tcgen05.Field.ACCUMULATE, <span class="keyword">False</span>)
+
+        <span class="keyword">for</span> k_tile <span class="keyword">in</span> range(k_tile_cnt):
+            <span class="keyword">if</span> is_leader_cta:
+                handle = ab_consumer.wait_and_advance(peek_ab_full_status)
+
+                num_kblocks = cute.size(tCrA, mode=[<span class="number">2</span>])
+                <span class="keyword">for</span> kblk_idx <span class="keyword">in</span> cutlass.range(num_kblocks, unroll_full=<span class="keyword">True</span>):
+                    kblk_crd = (<span class="keyword">None</span>, <span class="keyword">None</span>, kblk_idx, handle.index)
+
+                    cute.gemm(tiled_mma, tCtAcc, tCrA[kblk_crd], tCrB[kblk_crd], tCtAcc)
+                    tiled_mma.set(tcgen05.Field.ACCUMULATE, <span class="keyword">True</span>)
+
+                handle.release()
+
+        <span class="keyword">if</span> is_leader_cta:
+            acc_pipeline.producer_commit(acc_producer_state)
+        acc_producer_state.advance()
+
+        tile_sched.advance_to_next_work()
+        work_tile = tile_sched.get_current_work()</code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>MMA warp performs matrix multiplication for all tiles in persistent loop.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>tCtAcc</code>: Accumulator in TMEM, shape (MMA, M, N, stage)</li>
+                <li><code>acc_producer_state</span></td><td>: Pipeline state for accumulator</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>Persistent MMA processes tiles sequentially</li>
+                <li>ACCUMULATE flag reset for each new tile</li>
+                <li>Only leader CTA does MMA in 2-CTA mode</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>10. Epilogue Warp</h2>
+        
+        <pre><code><span class="keyword">if</span> warp_idx < <span class="keyword">self</span>.mma_warp_id:
+    tmem.allocate(<span class="keyword">self</span>.num_tmem_alloc_cols)
+
+    tmem.wait_for_alloc()
+    tmem_ptr = tmem.retrieve_ptr(<span class="keyword">self</span>.acc_dtype)
+    tCtAcc_base = cute.make_tensor(tmem_ptr, tCtAcc_fake.layout)
+
+    acc_consumer_state = pipeline.make_pipeline_state(
+        pipeline.PipelineUserType.Consumer, <span class="keyword">self</span>.num_acc_stage
+    )
+
+    <span class="keyword">while</span> work_tile.is_valid_tile:
+        cur_tile_coord = work_tile.tile_idx
+        mma_tile_coord_mnl = (
+            cur_tile_coord[<span class="number">0</span>] // cute.size(tiled_mma.thr_id.shape),
+            cur_tile_coord[<span class="number">1</span>],
+            cur_tile_coord[<span class="number">2</span>],
+        )
+
+        tile_sched.advance_to_next_work()
+        work_tile = tile_sched.get_current_work()
+
+        num_tiles_executed = tile_sched.num_tiles_executed
+        <span class="keyword">if</span> cutlass.const_expr(<span class="keyword">self</span>.use_tma_store):
+            acc_consumer_state = utils.gemm.sm100.epilogue_tma_store(
+                <span class="keyword">self</span>, tidx, warp_idx, tma_atom_c, tCtAcc_base, sC, tCgC,
+                epi_tile, num_tiles_executed, epilogue_op, mma_tile_coord_mnl,
+                acc_consumer_state, acc_pipeline, c_pipeline,
+            )
+        <span class="keyword">else</span>:
+            acc_consumer_state = utils.gemm.sm100.epilogue(...)
+
+    tmem.relinquish_alloc_permit()
+    tmem.free(tmem_ptr)</code></pre>
+        
+        <div class="analysis">
+            <h4>Functionality</h4>
+            <p>Epilogue warps handle output conversion and storage for all tiles.</p>
+            
+            <h4>Shape Annotations</h4>
+            <ul>
+                <li><code>sC</code>: Shared memory for C (if TMA store)</li>
+                <li><code>acc_consumer_state</span></td><td>: Pipeline state for consuming accumulators</li>
+            </ul>
+            
+            <h4>Why Like This</h4>
+            <ul>
+                <li>4 epilogue warps work in parallel</li>
+                <li>Pre-advance to next tile before processing</li>
+                <li>TMEM deallocation permit released after done</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Summary: Persistent vs Basic GEMM</h2>
+        
+        <table>
+            <tr><th>Feature</th><th>Basic GEMM</th><th>Persistent GEMM</th></tr>
+            <tr><td>Tile Scheduling</td><td>One tile per CTA</td><td>Multiple tiles per CTA</td></tr>
+            <tr><td>Warp Roles</td><td>All warps similar</td><td>Dedicated TMA/MMA/Epilogue</td></tr>
+            <tr><td>Pipelines</td><td>Static stages</td><td>Dynamic computed stages</td></tr>
+            <tr><td>Grid Size</td><td>Equal to tile count</td><td>Smaller (reuse CTAs)</td></tr>
+        </table>
+        
+        <div class="analysis">
+            <h4>Key Takeaways</h4>
+            <ol>
+                <li><strong>Persistent scheduling</strong> reduces kernel launch overhead</li>
+                <li><strong>Warp specialization</strong> improves efficiency by eliminating idle warps</li>
+                <li><strong>Dynamic stage calculation</strong> maximizes SMEM utilization</li>
+                <li><strong>Tile scheduler</strong> provides work items until all tiles complete</li>
+            </ol>
+        </div>
+    </div>
+
+    <div class="nav">
+        <a href="index.html">&larr; Back to Index</a>
+    </div>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chapter 4: Dense GEMM Operations</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; border-bottom: 3px solid #76b900; padding-bottom: 10px; }
+        h2 { color: #555; margin-top: 30px; }
+        .section { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }
+        pre { background: #263238; color: #aed581; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        a { color: #76b900; }
+        .nav { display: flex; justify-content: space-between; margin: 20px 0; }
+        .nav a { padding: 10px 20px; background: #76b900; color: white; text-decoration: none; border-radius: 5px; }
+        .note { background: #e3f2fd; border-left: 4px solid #1976d2; padding: 10px 15px; margin: 15px 0; }
+    </style>
+</head>
+<body>
+    <h1>Chapter 4: Dense GEMM Operations</h1>
+    
+    <div class="nav">
+        <a href="chapter3_common_apis.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter5_fmha.html">Next: FMHA &rarr;</a>
+    </div>
+
+    <div class="section">
+        <h2>Overview</h2>
+        <p>GEMM (General Matrix Multiply) is the most fundamental operation in deep learning. The CuTeDSL examples include several GEMM variants:</p>
+        <ul>
+            <li><strong>dense_gemm.py</strong> - Basic dense GEMM</li>
+            <li><strong>dense_gemm_persistent.py</strong> - Persistent kernel for large matrices</li>
+            <li><strong>dense_blockscaled_gemm.py</strong> - Block-scaled quantization GEMM</li>
+            <li><strong>grouped_gemm.py</strong> - Variable-sized matrix batches</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Key Components</h2>
+        
+        <h3>1. Kernel Configuration</h3>
+        <pre><code>class DenseGemmKernel:
+    def __init__(
+        self,
+        acc_dtype,          # Accumulator type (Float32, Float16, Int32)
+        use_2cta_instrs,   # Blackwell 2-CTA MMA instructions
+        mma_tiler_mn,      # MMA tile shape (M, N)
+        cluster_shape_mn,  # Cluster dimensions
+        use_tma_store,    # Use TMA for output
+    ):
+        self.acc_dtype = acc_dtype
+        self.use_2cta_instrs = use_2cta_instrs
+        self.cluster_shape_mn = cluster_shape_mn
+        self.mma_tiler_mn = mma_tiler_mn
+        self.use_tma_store = use_tma_store
+        self.threads_per_cta = 128</code></pre>
+
+        <h3>2. MMA Setup</h3>
+        <pre><code># Create tiled MMA
+tiled_mma = sm100_utils.make_trivial_tiled_mma(
+    a_dtype,           # A data type
+    a_major_mode,     # A major mode (row/col)
+    b_major_mode,     # B major mode
+    acc_dtype,        # Accumulator type
+    cta_group,        # CTA group (ONE or TWO)
+    tile_shape,       # Tile (M, N)
+)</code></pre>
+
+        <h3>3. TMA Setup</h3>
+        <pre><code># TMA for A matrix
+tma_atom_a, tma_tensor_a = cute.nvgpu.make_tiled_tma_atom_A(
+    cluster_shape,
+    tensor_a,
+    smem_layout,
+    tile_shape,
+    tiled_mma,
+    cluster_layout
+)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>GEMM Kernel Structure</h2>
+        
+        <h3>Main Loop Pattern</h3>
+        <pre><code>@cute.kernel
+def kernel(self, tiled_mma, tma_atom_a, tma_tensor_a, ...):
+    # 1. Get thread/warp coordinates
+    warp_idx = cute.arch.warp_idx()
+    bidx, bidy, bidz = cute.arch.block_idx()
+    
+    # 2. Initialize accumulator
+    acc = tiled_mma.make_fragment_C(shape)
+    
+    # 3. Main loop: load, compute
+    for k_tile_idx in range(k_tile_cnt):
+        # TMA load to shared memory
+        cute.copy(tma_atom_a, gA, sA)
+        
+        # MMA computation
+        cute.gemm(tiled_mma, acc, fragA, fragB, acc)
+    
+    # 4. Store result
+    cute.copy(tma_atom_c, acc, gC)</code></pre>
+    </div>
+
+    <div class="section">
+        <h2>Running GEMM</h2>
+        <pre><code># Create kernel
+gemm = DenseGemmKernel(
+    acc_dtype=cutlass.Float32,
+    use_2cta_instrs=True,
+    mma_tiler_mn=(128, 128),
+    cluster_shape_mn=(2, 2),
+    use_tma_store=True
+)
+
+# Execute
+gemm(a_tensor, b_tensor, c_tensor, stream)</code></pre>
+
+        <div class="note">
+            <strong>Example command:</strong><br>
+            <code>python dense_gemm.py --ab_dtype Float16 --c_dtype Float16 --acc_dtype Float32 --mma_tiler_mn 256,128 --cluster_shape_mn 2,1 --mnkl 8192,8192,8192,1 --use_tma_store --use_2cta_instrs</code>
+        </div>
+    </div>
+
+    <div class="nav">
+        <a href="chapter3_common_apis.html">&larr; Previous</a>
+        <a href="index.html">Back to Index</a>
+        <a href="chapter5_fmha.html">Next: FMHA &rarr;</a>
+    </div>
+</body>
+</html>

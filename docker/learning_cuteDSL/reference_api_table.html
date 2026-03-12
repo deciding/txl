@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Quick Reference</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.6; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        h1 { color: #333; border-bottom: 3px solid #76b900; padding-bottom: 10px; }
+        table { border-collapse: collapse; width: 100%; margin: 15px 0; background: white; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background: #76b900; color: white; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        code { background: #eee; padding: 2px 5px; border-radius: 3px; font-size: 0.9em; }
+        a { color: #76b900; }
+    </style>
+</head>
+<body>
+    <h1>API Quick Reference Table</h1>
+    <p><a href="index.html">&larr; Back to Index</a></p>
+    
+    <h2>Tensor/Layout Creation</h2>
+    <table>
+        <tr><th>API</th><th>Description</th><th>Example</th></tr>
+        <tr><td><code>make_tensor()</code></td><td>Create tensor from array</td><td><code>cute.make_tensor(arr)</code></td></tr>
+        <tr><td><code>make_layout()</code></td><td>Create layout</td><td><code>cute.make_layout((M,N))</code></td></tr>
+        <tr><td><code>make_composed_layout()</code></td><td>Create composed layout</td><td><code>cute.make_composed_layout(outer, inner)</code></td></tr>
+        <tr><td><code>make_rmem_tensor()</code></td><td>Create register tensor</td><td><code>cute.make_rmem_tensor(shape, dtype)</code></td></tr>
+    </table>
+
+    <h2>Tensor Operations</h2>
+    <table>
+        <tr><th>API</th><th>Description</th><th>Example</th></tr>
+        <tr><td><code>slice_()</code></td><td>Slice tensor/layout</td><td><code>cute.slice_(t, (None, 0))</code></td></tr>
+        <tr><td><code>local_tile()</code></td><td>Extract tiles</td><td><code>cute.local_tile(t, tile, shift)</code></td></tr>
+        <tr><td><code>local_partition()</code></td><td>Partition for threads</td><td><code>cute.local_partition(t, tile, mode)</code></td></tr>
+        <tr><td><code>group_modes()</code></td><td>Group modes</td><td><code>cute.group_modes(t, 0, 3)</code></td></tr>
+        <tr><td><code>size()</code></td><td>Get total size</td><td><code>cute.size(tensor)</code></td></tr>
+        <tr><td><code>rank()</code></td><td>Get rank</td><td><code>cute.rank(tensor)</code></td></tr>
+    </table>
+
+    <h2>MMA Operations</h2>
+    <table>
+        <tr><th>API</th><th>Description</th><th>Example</th></tr>
+        <tr><td><code>make_tiled_mma()</code></td><td>Create tiled MMA</td><td><code>cute.make_tiled_mma(atom, layout_a, layout_b)</code></td></tr>
+        <tr><td><code>tiled_mma.partition_A/B/C()</code></td><td>Partition for MMA</td><td><code>thr_mma.partition_A(tensor)</code></td></tr>
+        <tr><td><code>tiled_mma.make_fragment_*()</code></td><td>Create fragments</td><td><code>tiled_mma.make_fragment_C(shape)</code></td></tr>
+        <tr><td><code>gemm()</code></td><td>Perform GEMM</td><td><code>cute.gemm(tiled_mma, C, A, B, C)</code></td></tr>
+    </table>
+
+    <h2>Copy Operations</h2>
+    <table>
+        <tr><th>API</th><th>Description</th><th>Example</th></tr>
+        <tr><td><code>make_copy_atom()</code></td><td>Create copy atom</td><td><code>cute.make_copy_atom(op, dtype)</code></td></tr>
+        <tr><td><code>make_tiled_copy()</code></td><td>Create tiled copy</td><td><code>cute.make_tiled_copy(atom)</code></td></tr>
+        <tr><td><code>copy()</code></td><td>Perform copy</td><td><code>cute.copy(tiled_copy, src, dst)</code></td></tr>
+    </table>
+
+    <h2>TMA Operations (SM90+)</h2>
+    <table>
+        <tr><th>API</th><th>Description</th><th>Example</th></tr>
+        <tr><td><code>make_tiled_tma_atom_A/B()</code></td><td>Create TMA atom</td><td><code>nvgpu.make_tiled_tma_atom_A(...)</code></td></tr>
+        <tr><td><code>tma_partition()</code></td><td>Partition for TMA</td><td><code>cpasync.tma_partition(...)</code></td></tr>
+        <tr><td><code>prefetch_descriptor()</code></td><td>Prefetch TMA</td><td><code>cpasync.prefetch_descriptor(atom)</code></td></tr>
+    </table>
+
+    <h2>Architecture</h2>
+    <table>
+        <tr><th>API</th><th>Description</th><th>Example</th></tr>
+        <tr><td><code>arch.thread_idx()</code></td><td>Thread index</td><td><code>cute.arch.thread_idx()</code></td></tr>
+        <tr><td><code>arch.block_idx()</code></td><td>Block index</td><td><code>cute.arch.block_idx()</code></td></tr>
+        <tr><td><code>arch.warp_idx()</code></td><td>Warp index</td><td><code>cute.arch.warp_idx()</code></td></tr>
+        <tr><td><code>arch.sync()</code></td><td>Synchronization</td><td><code>cute.arch.sync()</code></td></tr>
+    </table>
+
+    <h2>Pipeline</h2>
+    <table>
+        <tr><th>API</th><th>Description</th><th>Example</th></tr>
+        <tr><td><code>PipelineTmaUmma.create()</code></td><td>Create pipeline</td><td><code>pipeline.PipelineTmaUmma.create(...)</code></td></tr>
+        <tr><td><code>producer_acquire()</code></td><td>Producer acquire</td><td><code>handle = pipeline.producer_acquire()</code></td></tr>
+        <tr><td><code>consumer_wait()</code></td><td>Consumer wait</td><td><code>pipeline.consumer_wait(handle)</code></td></tr>
+    </table>
+
+    <p><a href="index.html">&larr; Back to Index</a></p>
+</body>
+</html>

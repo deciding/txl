@@ -30,10 +30,11 @@ cutlass_image = (
 cutlass_image = (
     cutlass_image.pip_install("torch", "pytest")
     .pip_install("nvidia-cutlass-dsl>=4.4.1")
+    .pip_install("jax", "jaxlib")
     .pip_install("triton==3.5.1")
     .add_local_dir(
         root_dir / "thirdparty" / "cutlass" / "examples" / "python" / "CuTeDSL",
-        remote_path="/workspace/cutlass",
+        remote_path="/workspace/cutlass_examples",
     )
 )
 
@@ -41,7 +42,7 @@ cutlass_image = (
 @app.function(
     gpu=GPU_model,
     image=cutlass_image,
-    timeout=600,
+    timeout=60,
     volumes={"/workspace/dump": volume},
 )
 def run_dense_gemm():
@@ -57,29 +58,76 @@ def run_dense_gemm():
     DEVICE = torch.cuda.current_device()
     print(f"GPU: {torch.cuda.get_device_name(DEVICE)}")
 
-    # Add CuTeDSL to path
-    sys.path.insert(0, "/workspace/cutlass")
+    # Import cutlass from pip - we'll extend this with blackwell
+    import cutlass
+    import cutlass.pipeline as pipeline
+    import cutlass.cute as cute
 
-    M = 8192
-    N = 8192
-    K = 8192
+    import os
+    import sys
+
+    # Find where pip's cutlass is installed
+    cutlass_path = os.path.dirname(cutlass.__file__)
+    print(f"=== Debug: cutlass installed at {cutlass_path} ===")
+
+    # Create symlink from pip's cutlass to local blackwell
+    blackwell_src = "/workspace/cutlass_examples/blackwell"
+    blackwell_dst = os.path.join(cutlass_path, "blackwell")
+
+    if not os.path.exists(blackwell_dst):
+        os.symlink(blackwell_src, blackwell_dst)
+        print(f"=== Created symlink: {blackwell_dst} -> {blackwell_src} ===")
+
+    # Also need to add __init__.py to blackwell
+    blackwell_init = os.path.join(blackwell_dst, "__init__.py")
+    if not os.path.exists(blackwell_init):
+        with open(blackwell_init, "w") as f:
+            pass  # Empty init file
+
+    # Also need __init__.py for blackwell subpackage
+    blackwell_init = os.path.join(blackwell_dst, "__init__.py")
+    if not os.path.exists(blackwell_init):
+        with open(blackwell_init, "w") as f:
+            pass  # Empty init file
+
+    # Now we can import from cutlass.blackwell
+    print(f"=== Debug: contents of {cutlass_path} ===")
+    print(os.listdir(cutlass_path))
+
+    M = 1024
+    N = 1024
+    K = 1024
 
     print(f"\n=== Dense GEMM Test ===")
     print(f"M={M}, N={N}, K={K}")
-
-    # Allocate tensors
-    a = torch.rand(M, K, device=DEVICE, dtype=torch.float16)
-    b = torch.rand(K, N, device=DEVICE, dtype=torch.float16)
-    c = torch.empty(M, N, device=DEVICE, dtype=torch.float16)
-
-    # Reference result using torch
-    ref_c = torch.matmul(a, b)
 
     print("\n=== Running CuTeDSL Dense GEMM ===")
 
     # Import and run the dense gemm example
     from cutlass.blackwell.dense_gemm import DenseGemmKernel
     import cutlass
+    import cutlass.torch as cutlass_torch
+
+    # Create tensors using cutlass_torch.matrix, then convert to cute tensors
+    # This matches the example in dense_gemm.py
+    l = 1  # batch size
+    a_torch_cpu = cutlass_torch.matrix(
+        l, M, K, True, cutlass.Float16
+    )  # a_major=True (row major)
+    b_torch_cpu = cutlass_torch.matrix(
+        l, N, K, False, cutlass.Float16
+    )  # b_major=False (col major)
+    c_torch_cpu = cutlass_torch.matrix(l, M, N, True, cutlass.Float16)  # c_major=True
+
+    a_tensor, _ = cutlass_torch.cute_tensor_like(
+        a_torch_cpu, cutlass.Float16, is_dynamic_layout=True, assumed_align=16
+    )
+    b_tensor, _ = cutlass_torch.cute_tensor_like(
+        b_torch_cpu, cutlass.Float16, is_dynamic_layout=True, assumed_align=16
+    )
+    c_tensor, c_torch_gpu = cutlass_torch.cute_tensor_like(
+        c_torch_cpu, cutlass.Float16, is_dynamic_layout=True, assumed_align=16
+    )
 
     # Configure kernel
     acc_dtype = cutlass.Float32
@@ -99,18 +147,45 @@ def run_dense_gemm():
 
     # Run correctness test
     print("\n=== Correctness Test ===")
-    gemm(a, b, c, torch.cuda.current_stream())
+    # Get CUDA stream - use the same approach as the example
+    torch_stream = torch.cuda.current_stream()
+    from cuda import bindings
+
+    current_stream = bindings.driver.CUstream(torch_stream.cuda_stream)
+
+    # First compile the kernel
+    print("Compiling kernel...")
+    compiled_gemm = cute.compile(gemm, a_tensor, b_tensor, c_tensor, current_stream)
+    print("Compilation done!")
+
+    # Run the compiled kernel
+    compiled_gemm(a_tensor, b_tensor, c_tensor, current_stream)
     torch.cuda.synchronize()
 
-    # Check result
-    max_diff = (c - ref_c).abs().max().item()
-    print(f"Max diff: {max_diff}")
+    # Reference result using torch einsum (matching the example exactly)
+    # Input tensors are (M, K, L) and (N, K, L)
+    ref = torch.einsum(
+        "mkl,nkl->mnl",
+        a_torch_cpu.to(dtype=torch.float32),
+        b_torch_cpu.to(dtype=torch.float32),
+    )
 
-    if max_diff < 1e-3:
-        print("✓ Correctness PASSED!")
-    else:
-        print("✗ Correctness FAILED!")
-        return
+    # Convert ref to c_dtype using cute_tensor_like
+    _, ref_torch_gpu = cutlass_torch.cute_tensor_like(
+        ref, cutlass.Float16, is_dynamic_layout=True, assumed_align=16
+    )
+    ref_result = ref_torch_gpu.cpu()
+
+    # Copy gpu result back
+    kernel_result = c_torch_gpu.cpu()
+
+    # Check result
+    print(f"=== Debug: kernel_result shape: {kernel_result.shape} ===")
+    print(f"=== Debug: ref_result shape: {ref_result.shape} ===")
+
+    # Compare using torch testing
+    torch.testing.assert_close(kernel_result, ref_result, atol=1e-1, rtol=1e-05)
+    print("✓ Correctness PASSED!")
 
     # Benchmark performance
     print("\n=== Performance Benchmark ===")
@@ -118,7 +193,7 @@ def run_dense_gemm():
     repeats = 100
 
     for _ in range(warmup):
-        gemm(a, b, c, torch.cuda.current_stream())
+        compiled_gemm(a_tensor, b_tensor, c_tensor, current_stream)
     torch.cuda.synchronize()
 
     start_event = torch.cuda.Event(enable_timing=True)
@@ -126,19 +201,54 @@ def run_dense_gemm():
 
     start_event.record()
     for _ in range(repeats):
-        gemm(a, b, c, torch.cuda.current_stream())
+        compiled_gemm(a_tensor, b_tensor, c_tensor, current_stream)
     end_event.record()
     torch.cuda.synchronize()
 
-    elapsed_ms = start_event.elapsed_time_to(end_event)
+    elapsed_ms = start_event.elapsed_time(end_event)
     avg_time = elapsed_ms / repeats
 
     # Compute performance
     flops = 2.0 * M * N * K
     tflops = flops / (avg_time * 1e-3) / 1e12
 
-    print(f"Average time: {avg_time:.2f} ms")
-    print(f"Performance: {tflops:.2f} TFLOPS")
+    print(f"CuTeDSL Average time: {avg_time:.4f} ms")
+    print(f"CuTeDSL Performance: {tflops:.2f} TFLOPS")
+
+    # Benchmark PyTorch GEMM for comparison
+    print("\n=== PyTorch GEMM Benchmark ===")
+
+    # Prepare tensors for PyTorch (squeeze batch dimension)
+    a_torch = a_torch_cpu.squeeze(-1).to("cuda")  # (M, K)
+    b_torch = b_torch_cpu.squeeze(-1).to("cuda")  # (N, K) -> transposed below
+    c_torch = torch.empty(M, N, device="cuda", dtype=torch.float16)
+
+    # Warmup
+    for _ in range(warmup):
+        torch.matmul(a_torch, b_torch.T, out=c_torch)
+    torch.cuda.synchronize()
+
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+
+    start_event.record()
+    for _ in range(repeats):
+        torch.matmul(a_torch, b_torch.T, out=c_torch)
+    end_event.record()
+    torch.cuda.synchronize()
+
+    elapsed_ms = start_event.elapsed_time(end_event)
+    avg_time_torch = elapsed_ms / repeats
+
+    tflops_torch = flops / (avg_time_torch * 1e-3) / 1e12
+
+    print(f"PyTorch Average time: {avg_time_torch:.4f} ms")
+    print(f"PyTorch Performance: {tflops_torch:.2f} TFLOPS")
+
+    print("\n=== Performance Comparison ===")
+    print(f"CuTeDSL: {tflops:.2f} TFLOPS")
+    print(f"PyTorch:  {tflops_torch:.2f} TFLOPS")
+    print(f"Speedup:  {tflops / tflops_torch:.2f}x")
 
     print(f"\nDone! Results saved to: {DUMP_DIR}")
     print(f"to download: modal volume get {VOLUME_NAME} {dump_name}")

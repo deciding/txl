@@ -208,8 +208,7 @@
         // Detect file type from filename
         function detectFileType(filename) {
             const ext = filename.toLowerCase().split('.').pop();
-            if (ext === 'ttir' || ext === 'ttgir') return 'ttir';
-            if (ext === 'ptx') return 'ptx';
+            if (ext === 'ttir' || ext === 'ttgir' || ext === 'ptx') return ext;
             return 'unknown';
         }
         

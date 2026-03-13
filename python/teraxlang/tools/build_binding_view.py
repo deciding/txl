@@ -11,12 +11,9 @@ from pathlib import Path
 def detect_file_type(filepath):
     """Detect file type by extension"""
     ext = filepath.lower().split(".")[-1]
-    if ext in ("ttir", "ttgir"):
-        return "ttir"
-    elif ext == "ptx":
-        return "ptx"
-    else:
-        return "unknown"
+    if ext in ("ttir", "ttgir", "ptx"):
+        return ext
+    return "unknown"
 
 
 def parse_ttir_locations(ttir_path):

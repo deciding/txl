@@ -107,8 +107,18 @@ def run_dense_gemm():
     from cutlass.blackwell.dense_gemm_0 import run_dense_gemm as run_gemm_0
 
     # Run the minimal GEMM kernel (includes correctness check)
-    print("Running minimal GEMM kernel...")
+    print("Running GEMM kernel (4 stages pipelining)...")
     run_gemm_0((M, N, K), tolerance=1e-1)
+    print("✓ Correctness PASSED!")
+
+    print("\n=== Running CuTeDSL Dense GEMM 1 ===")
+
+    # Import simplified GEMM kernel (minimal pipelining)
+    from cutlass.blackwell.dense_gemm_1 import run_dense_gemm as run_gemm_1
+
+    # Run the simplified GEMM kernel (includes correctness check)
+    print("Running simplified GEMM kernel (1 stage pipelining)...")
+    run_gemm_1((M, N, K), tolerance=1e-1)
     print("✓ Correctness PASSED!")
 
     # Benchmark with PyTorch

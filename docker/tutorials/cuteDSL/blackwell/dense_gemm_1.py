@@ -9,17 +9,16 @@
 # its affiliates is strictly prohibited.
 
 """
-Minimal CuTeDSL Dense GEMM Kernel Configuration:
+Simplified CuTeDSL Dense GEMM (Minimal Pipelining):
 
 | Parameter              | Value         |
 |------------------------|---------------|
 | MMA Instruction Shape  | (128, 256, 16)|
 | MMA Tiler             | (128, 256, 64)|
 | Threads per CTA        | 128           |
-| Pipeline Stages        | 4 (AB), 1 (acc)|
-| Cluster Shape          | (1, 1) - default |
+| Pipeline Stages        | 1 (AB), 1 (acc)|
 
-This is a tutorial kernel - simple and easy to understand.
+Simplified version with minimal pipelining (single stage).
 """
 
 import argparse
@@ -57,8 +56,8 @@ mma_inst_shape_mnk = (128, 256, 16)
 mma_tiler_mnk = (128, 256, 64)
 threads_per_cta = 128
 
-# Pipeline stage configuration
-ab_stages = 4
+# Pipeline stage configuration - minimal pipelining (single stage)
+ab_stages = 1
 acc_stage = 1
 
 
@@ -225,7 +224,8 @@ def kernel(
     if warp_idx == 0:
         # Wait for a empty accumulator buffer
         acc_empty = acc_producer.acquire_and_advance()
-        for k_tile_idx in cutlass.range(num_k_tiles, prefetch_stages=ab_stages - 2):
+        # Simple loop without prefetch (single stage pipelining)
+        for k_tile_idx in range(num_k_tiles):
             # Issue TMA loads
             ab_empty = ab_producer.acquire_and_advance()
             cute.copy(

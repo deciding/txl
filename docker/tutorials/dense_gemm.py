@@ -7,7 +7,7 @@ from datetime import datetime
 from modal import Image, App, Volume
 import pathlib
 
-root_dir = pathlib.Path(__file__).parent.parent
+root_dir = pathlib.Path(__file__).parent.parent.parent
 GPU_model = "B200"
 
 app = App(name="cutlass-dense-gemm")

@@ -7,7 +7,7 @@ from datetime import datetime
 from modal import Image, App, Volume
 import pathlib
 
-root_dir = pathlib.Path(__file__).parent.parent.parent
+root_dir = pathlib.Path(__file__).parent.parent.parent.parent
 GPU_model = "B200"
 
 app = App(name="cutlass-dense-gemm")
@@ -33,8 +33,8 @@ cutlass_image = (
     .pip_install("jax", "jaxlib")
     .pip_install("triton==3.5.1")
     .add_local_dir(
-        root_dir / "thirdparty" / "cutlass" / "examples" / "python" / "CuTeDSL",
-        remote_path="/workspace/cutlass_examples",
+        root_dir / "docker" / "tutorials" / "cuteDSL",
+        remote_path="/workspace/cuteDSL",
     )
 )
 
@@ -71,7 +71,7 @@ def run_dense_gemm():
     print(f"=== Debug: cutlass installed at {cutlass_path} ===")
 
     # Create symlink from pip's cutlass to local blackwell
-    blackwell_src = "/workspace/cutlass_examples/blackwell"
+    blackwell_src = "/workspace/cuteDSL/blackwell"
     blackwell_dst = os.path.join(cutlass_path, "blackwell")
 
     if not os.path.exists(blackwell_dst):

@@ -22,7 +22,7 @@ txl_image = (
     Image.debian_slim(python_version="3.12")
     .workdir("/workspace")
     .pip_install("torch", "pytest")
-    .pip_install("teraxlang==3.5.1.dev1")
+    .pip_install("teraxlang==3.5.1.dev2")
     .add_local_dir(root_dir / "tutorials", remote_path="/workspace/tutorials")
 )
 

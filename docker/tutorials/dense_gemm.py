@@ -32,8 +32,8 @@ cutlass_image = (
     .pip_install("nvidia-cutlass-dsl>=4.4.1")
     .pip_install("triton==3.5.1")
     .add_local_dir(
-        root_dir / "thirdparty" / "cutlass" / "examples" / "python",
-        remote_path="/workspace/cutlass_examples",
+        root_dir / "thirdparty" / "cutlass" / "examples" / "python" / "CuTeDSL",
+        remote_path="/workspace/cutlass",
     )
 )
 
@@ -58,8 +58,7 @@ def run_dense_gemm():
     print(f"GPU: {torch.cuda.get_device_name(DEVICE)}")
 
     # Add CuTeDSL to path
-    sys.path.insert(0, "/workspace/cutlass_examples")
-    sys.path.insert(0, "/workspace/cutlass_examples/CuTeDSL")
+    sys.path.insert(0, "/workspace/cutlass")
 
     M = 8192
     N = 8192
@@ -79,7 +78,7 @@ def run_dense_gemm():
     print("\n=== Running CuTeDSL Dense GEMM ===")
 
     # Import and run the dense gemm example
-    from examples.python.CuTeDSL.blackwell.dense_gemm import DenseGemmKernel
+    from cutlass.blackwell.dense_gemm import DenseGemmKernel
     import cutlass
 
     # Configure kernel

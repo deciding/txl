@@ -103,8 +103,8 @@ def run_dense_gemm():
 
     print("\n=== Running CuTeDSL Dense GEMM 0 ===")
 
-    # Import minimal GEMM kernel
-    from cutlass.blackwell.dense_gemm_0 import run_dense_gemm as run_gemm_0, io_dtype
+    # Import minimal GEMM kernel (with pipelining)
+    from cutlass.blackwell.dense_gemm_0 import run_dense_gemm as run_gemm_0
 
     # Run the minimal GEMM kernel (includes correctness check)
     print("Running minimal GEMM kernel...")

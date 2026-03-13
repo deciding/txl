@@ -8,6 +8,20 @@
 # without an express license agreement from NVIDIA CORPORATION or
 # its affiliates is strictly prohibited.
 
+"""
+Minimal CuTeDSL Dense GEMM Kernel Configuration:
+
+| Parameter              | Value         |
+|------------------------|---------------|
+| MMA Instruction Shape  | (128, 256, 16)|
+| MMA Tiler             | (128, 256, 64)|
+| Threads per CTA        | 128           |
+| Pipeline Stages        | 4 (AB), 1 (acc)|
+| Cluster Shape          | (1, 1) - default |
+
+This is a tutorial kernel - simple and easy to understand.
+"""
+
 import argparse
 from typing import Tuple
 

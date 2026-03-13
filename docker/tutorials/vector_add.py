@@ -22,7 +22,7 @@ txl_image = (
     Image.debian_slim(python_version="3.12")
     .workdir("/workspace")
     .pip_install("torch", "pytest")
-    .pip_install("teraxlang")
+    .pip_install("teraxlang==3.5.1.dev1")
     .add_local_dir(root_dir / "tutorials", remote_path="/workspace/tutorials")
 )
 
@@ -54,7 +54,7 @@ def run_vector_add():
 
     print(f"GPU: {torch.cuda.get_device_name(DEVICE)}")
 
-    SIZE = 1024 * 1024
+    SIZE = 1024
     BLOCK_SIZE = 1024
 
     @txl.jit()

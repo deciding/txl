@@ -193,8 +193,10 @@ def kernel(
     # tAsA: TMA address descriptor for SMEM A, shape ((8192,1),1)
     #        = (total_elements_per_stage, num_tma_instructions, stages)
     #        # inner dim K=64 × 2 bytes = 128B, with 128B swizzle = 1 TMA instruction
-    # tAgA: GMEM address tensor for A, shape (((64,128),1),16) = (transposed MMA_atom, MMA_tiles, RestK)
+    # tAgA: GMEM address tensor for A, shape (((64,128),1),MMA_K_tiles) = (transposed MMA_atom, MMA_tiles, RestK)
+    #        # MMA_K_tiles = number of MMA instructions
     # def tma_partition(atom, cta_coord, cta_layout, smem_tensor, gmem_tensor) -> (smem_desc, gmem_desc)
+    # NOTE: tma_partition requires input tensors folded in shape (Each_Iter, Num_Iters)
     tAsA, tAgA = cute.nvgpu.cpasync.tma_partition(
         tma_atom_a,  # atom: TMA Copy Atom
         0,  # cta_coord: CTA coordinate

@@ -187,10 +187,12 @@ def kernel(
     tCrB = tiled_mma.make_fragment_B(sB)
     # (MMA_atom, MMA_M_tiles, MMA_N_tiles)
     acc_shape = tiled_mma.partition_shape_C(mma_tiler_mnk[:2])
-    # (MMA_atom, MMA_M_tiles, MMA_N_tiles)
+    # tCtAcc: MMA accumulator fragment, shape ((128,256),1,1) = (MMA_atom, MMA_M_tiles, MMA_N_tiles)
     tCtAcc = tiled_mma.make_fragment_C(acc_shape)
+    if tidx == 0:
+        cute.printf("tCtAcc.shape: {}", cute.shape(tCtAcc))
     # Partition tensors for TMA; This requires the tensors partitioned for MMA
-    # tAsA: SMEM address tensor for A (smem_ptr, shape)
+    # tAsA: TMA address descriptor for SMEM A, shape ((8192,1),1) = (total_elements_per_stage, ?), stages
     # tAgA: GMEM address tensor for A (gmem tensor with layout)
     tAsA, tAgA = cute.nvgpu.cpasync.tma_partition(
         tma_atom_a,
@@ -199,6 +201,8 @@ def kernel(
         cute.group_modes(sA, 0, 3),
         cute.group_modes(tCgA, 0, 3),
     )
+    if tidx == 0:
+        cute.printf("tAsA.shape: {}", cute.shape(tAsA))
     # tBsB: SMEM address tensor for B
     # tBgB: GMEM address tensor for B
     tBsB, tBgB = cute.nvgpu.cpasync.tma_partition(

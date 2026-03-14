@@ -233,7 +233,7 @@ def kernel(
     # gC_epi: (((128,64)),((1,4),1,1)) = (EpiTile, NumTiles)
     gC_epi = cute.zipped_divide(tCgC, epi_tiler)
 
-    # Every thread loads 64 x fp32
+    # Every thread loads 64 columns (epitile for dim N = 64)
     tmem_atom = cute.make_copy_atom(
         tcgen05.Ld32x32bOp(tcgen05.Repetition.x64),
         cutlass.Float32,

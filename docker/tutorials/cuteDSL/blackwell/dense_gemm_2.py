@@ -241,9 +241,9 @@ def kernel(
     tmem_tiled_copy = tcgen05.make_tmem_copy(tmem_atom, tCtAcc_epi[None, 0])
     tmem_thr_copy = tmem_tiled_copy.get_slice(tidx)
 
-    # (TmemCpy,NumTmemCpy,NumTiles)
+    # (TmemCpy,NumTmemCpy,NumTiles) = (((64,32),1),1,((1,4),1,1))
     tDtC = tmem_thr_copy.partition_S(tCtAcc_epi)
-    # (TmemCpy,NumTmemCpy,NumTiles)
+    # (TmemCpy,NumTmemCpy,NumTiles) = ((64,1),1,((1,4),1,1))
     tDgC = tmem_thr_copy.partition_D(gC_epi)
 
     # (TmemCpy,NumTmemCpy)

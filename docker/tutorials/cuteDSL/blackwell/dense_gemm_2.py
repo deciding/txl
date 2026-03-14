@@ -189,31 +189,27 @@ def kernel(
     acc_shape = tiled_mma.partition_shape_C(mma_tiler_mnk[:2])
     # tCtAcc: MMA accumulator fragment, shape ((128,256),1,1) = (MMA_atom, MMA_M_tiles, MMA_N_tiles)
     tCtAcc = tiled_mma.make_fragment_C(acc_shape)
-    if tidx == 0:
-        cute.printf("tCtAcc.shape: {}", cute.shape(tCtAcc))
     # Partition tensors for TMA; This requires the tensors partitioned for MMA
     # tAsA: TMA address descriptor for SMEM A, shape ((8192,1),1)
     #        = (total_elements_per_stage, num_tma_instructions, stages)
     #        # inner dim K=64 × 2 bytes = 128B, with 128B swizzle = 1 TMA instruction
     # tAgA: GMEM address tensor for A, shape (((64,128),1),16) = (transposed MMA_atom, MMA_tiles, RestK)
+    # def tma_partition(atom, cta_coord, cta_layout, smem_tensor, gmem_tensor) -> (smem_desc, gmem_desc)
     tAsA, tAgA = cute.nvgpu.cpasync.tma_partition(
-        tma_atom_a,
-        0,
-        cute.make_layout(1),
-        cute.group_modes(sA, 0, 3),
-        cute.group_modes(tCgA, 0, 3),
+        tma_atom_a,  # atom: TMA Copy Atom
+        0,  # cta_coord: CTA coordinate
+        cute.make_layout(1),  # cta_layout: CTA layout
+        cute.group_modes(sA, 0, 3),  # smem_tensor: SMEM tensor grouped for A
+        cute.group_modes(tCgA, 0, 3),  # gmem_tensor: GMEM tensor grouped for A
     )
-    if tidx == 0:
-        cute.printf("tAsA.shape: {}", cute.shape(tAsA))
-        cute.printf("tAgA.shape: {}", cute.shape(tAgA))
     # tBsB: SMEM address tensor for B
     # tBgB: GMEM address tensor for B
     tBsB, tBgB = cute.nvgpu.cpasync.tma_partition(
-        tma_atom_b,
-        0,
-        cute.make_layout(1),
-        cute.group_modes(sB, 0, 3),
-        cute.group_modes(tCgB, 0, 3),
+        tma_atom_b,  # atom: TMA Copy Atom
+        0,  # cta_coord: CTA coordinate
+        cute.make_layout(1),  # cta_layout: CTA layout
+        cute.group_modes(sB, 0, 3),  # smem_tensor: SMEM tensor grouped for B
+        cute.group_modes(tCgB, 0, 3),  # gmem_tensor: GMEM tensor grouped for B
     )
 
     # CTA-wide sync before retrieving the pointer to the start of the allocated TMEM

@@ -101,59 +101,49 @@ def run_dense_gemm():
     print(f"\n=== Dense GEMM Test ===")
     print(f"M={M}, N={N}, K={K}")
 
-    print("\n=== Running CuTeDSL Dense GEMM 0 ===")
+    print("\n=== Running CuTeDSL Dense GEMM 2 ===")
 
-    # Import minimal GEMM kernel (with pipelining)
-    from cutlass.blackwell.dense_gemm_0 import run_dense_gemm as run_gemm_0
+    # Import GEMM kernel (1 stage pipelining)
+    from cutlass.blackwell.dense_gemm_2 import run_dense_gemm as run_gemm_2
 
-    # Run the minimal GEMM kernel (includes correctness check)
-    print("Running GEMM kernel (4 stages pipelining)...")
-    run_gemm_0((M, N, K), tolerance=1e-1)
+    # Run the kernel (includes correctness check)
+    print("Running GEMM kernel (debug a_tma_tensor)...")
+    run_gemm_2((M, N, K), tolerance=1e-1)
     print("✓ Correctness PASSED!")
 
-    print("\n=== Running CuTeDSL Dense GEMM 1 ===")
+    # # Benchmark with PyTorch
+    # print("\n=== PyTorch GEMM Benchmark ===")
+    # import cutlass.torch as cutlass_torch
 
-    # Import simplified GEMM kernel (minimal pipelining)
-    from cutlass.blackwell.dense_gemm_1 import run_dense_gemm as run_gemm_1
+    # torch.manual_seed(1111)
+    # a = torch.empty(M, K, dtype=torch.float16).random_(-2, 2).to("cuda")
+    # b = torch.empty(N, K, dtype=torch.float16).random_(-2, 2).to("cuda")
+    # c = torch.empty(M, N, device="cuda", dtype=torch.float16)
 
-    # Run the simplified GEMM kernel (includes correctness check)
-    print("Running simplified GEMM kernel (1 stage pipelining)...")
-    run_gemm_1((M, N, K), tolerance=1e-1)
-    print("✓ Correctness PASSED!")
+    # warmup = 10
+    # repeats = 100
 
-    # Benchmark with PyTorch
-    print("\n=== PyTorch GEMM Benchmark ===")
-    import cutlass.torch as cutlass_torch
+    # for _ in range(warmup):
+    #     torch.matmul(a, b.T, out=c)
+    # torch.cuda.synchronize()
 
-    torch.manual_seed(1111)
-    a = torch.empty(M, K, dtype=torch.float16).random_(-2, 2).to("cuda")
-    b = torch.empty(N, K, dtype=torch.float16).random_(-2, 2).to("cuda")
-    c = torch.empty(M, N, device="cuda", dtype=torch.float16)
+    # start_event = torch.cuda.Event(enable_timing=True)
+    # end_event = torch.cuda.Event(enable_timing=True)
 
-    warmup = 10
-    repeats = 100
+    # start_event.record()
+    # for _ in range(repeats):
+    #     torch.matmul(a, b.T, out=c)
+    # end_event.record()
+    # torch.cuda.synchronize()
 
-    for _ in range(warmup):
-        torch.matmul(a, b.T, out=c)
-    torch.cuda.synchronize()
+    # elapsed_ms = start_event.elapsed_time(end_event)
+    # avg_time_torch = elapsed_ms / repeats
 
-    start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
+    # flops = 2.0 * M * N * K
+    # tflops_torch = flops / (avg_time_torch * 1e-3) / 1e12
 
-    start_event.record()
-    for _ in range(repeats):
-        torch.matmul(a, b.T, out=c)
-    end_event.record()
-    torch.cuda.synchronize()
-
-    elapsed_ms = start_event.elapsed_time(end_event)
-    avg_time_torch = elapsed_ms / repeats
-
-    flops = 2.0 * M * N * K
-    tflops_torch = flops / (avg_time_torch * 1e-3) / 1e12
-
-    print(f"PyTorch Average time: {avg_time_torch:.4f} ms")
-    print(f"PyTorch Performance: {tflops_torch:.2f} TFLOPS")
+    # print(f"PyTorch Average time: {avg_time_torch:.4f} ms")
+    # print(f"PyTorch Performance: {tflops_torch:.2f} TFLOPS")
 
     print(f"\nDone! Results saved to: {DUMP_DIR}")
 

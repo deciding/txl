@@ -168,15 +168,9 @@ def kernel(
     gB = cute.local_tile(mB_nkl, mma_tiler_mnk, mma_coord_mnk, proj=(None, 1, 1))
     # gC: (M_tile, N_tile) = (128, 256)
     gC = cute.local_tile(mC_mnl, mma_tiler_mnk, mma_coord_mnk, proj=(1, 1, None))
-    if tidx == 0:
-        cute.printf("gA: {}", gA)
-        cute.printf("gB: {}", gB)
-        cute.printf("gC: {}", gC)
     thr_mma = tiled_mma.get_slice(0)
     # (MMA_atom, MMA_M_tiles, MMA_K_tiles, RestK)
     tCgA = thr_mma.partition_A(gA)
-    if tidx == 0:
-        cute.printf("tCgA: {}", tCgA)
     # (MMA_atom, MMA_N_tiles, MMA_K_tiles, RestK)
     tCgB = thr_mma.partition_B(gB)
     # (MMA_atom, MMA_M_tiles, MMA_N_tiles)
@@ -380,7 +374,7 @@ def host_function(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor):
     # print(f"tiled_mma    = {cute.pretty_str(tiled_mma)}")
     # print(f"a_tma_atom   = {cute.pretty_str(a_tma_atom)}")
     # print(f"b_tma_atom   = {cute.pretty_str(b_tma_atom)}")
-    print(f"a_tma_tensor = {cute.pretty_str(a_tma_tensor)}")
+    # print(f"a_tma_tensor = {cute.pretty_str(a_tma_tensor)}")
     # print(f"b_tma_tensor = {cute.pretty_str(b_tma_tensor)}")
 
     # Launch the kernel

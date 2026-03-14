@@ -227,6 +227,8 @@ def kernel(
         (cute.size(tCtAcc, mode=[0, 0]), cute.size(tCtAcc, mode=[0, 1]) // subtile_cnt),
     )
     # tCtAcc_epi: (((128,64)),((1,4),1,1)) = (EpiTile, NumTiles)
+    #        # EpiTile = (128, 64) - subtile size for epilogue
+    #        # NumTiles = ((tiles_in_MMA_atom), MMA_M_tiles, MMA_N_tiles) = ((1,4),1,1)
     tCtAcc_epi = cute.zipped_divide(tCtAcc, epi_tiler)
     # gC_epi: (((128,64)),((1,4),1,1)) = (EpiTile, NumTiles)
     gC_epi = cute.zipped_divide(tCgC, epi_tiler)

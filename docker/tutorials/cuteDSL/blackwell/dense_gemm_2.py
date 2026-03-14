@@ -222,13 +222,13 @@ def kernel(
     tCtAcc = cute.make_tensor(tmem_ptr, tCtAcc.layout)
 
     subtile_cnt = 4
-    # (EpiTile)
+    # epi_tiler: ((128,64)) = subtile for epilogue (each thread loads 64 fp32)
     epi_tiler = (
         (cute.size(tCtAcc, mode=[0, 0]), cute.size(tCtAcc, mode=[0, 1]) // subtile_cnt),
     )
-    # (EpiTile, NumTiles)
+    # tCtAcc_epi: (((128,64)),((1,4),1,1)) = (EpiTile, NumTiles)
     tCtAcc_epi = cute.zipped_divide(tCtAcc, epi_tiler)
-    # (EpiTile, NumTiles)
+    # gC_epi: (((128,64)),((1,4),1,1)) = (EpiTile, NumTiles)
     gC_epi = cute.zipped_divide(tCgC, epi_tiler)
 
     # Every thread loads 64 x fp32

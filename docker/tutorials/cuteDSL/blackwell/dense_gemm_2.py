@@ -192,7 +192,9 @@ def kernel(
     if tidx == 0:
         cute.printf("tCtAcc.shape: {}", cute.shape(tCtAcc))
     # Partition tensors for TMA; This requires the tensors partitioned for MMA
-    # tAsA: TMA address descriptor for SMEM A, shape ((8192,1),1) = (total_elements_per_stage, ?), stages
+    # tAsA: TMA address descriptor for SMEM A, shape ((8192,1),1)
+    #        = (total_elements_per_stage, num_tma_instructions, stages)
+    #        # inner dim K=64 × 2 bytes = 128B, with 128B swizzle = 1 TMA instruction
     # tAgA: GMEM address tensor for A, shape (((64,128),1),16) = (transposed MMA_atom, MMA_tiles, RestK)
     tAsA, tAgA = cute.nvgpu.cpasync.tma_partition(
         tma_atom_a,

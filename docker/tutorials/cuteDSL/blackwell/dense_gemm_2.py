@@ -103,12 +103,14 @@ def kernel(
     #     * swizzle=a_smem_layout.inner: The inner swizzle pattern for bank conflict avoidance
     smem = cutlass.utils.SmemAllocator()
     storage = smem.allocate(SharedStorage)
+    # sA: SMEM tensor with shape ((128,16),1,4,1) = (MMA_atom, MMA_M_tiles, MMA_K_tiles, stages)
     sA = smem.allocate_tensor(
         element_type=io_dtype,
         layout=a_smem_layout.outer,
         byte_alignment=128,
         swizzle=a_smem_layout.inner,
     )
+    # sB: SMEM tensor with shape ((256,16),1,4,1)
     sB = smem.allocate_tensor(
         element_type=io_dtype,
         layout=b_smem_layout.outer,
@@ -175,9 +177,9 @@ def kernel(
     tCgB = thr_mma.partition_B(gB)
     # (MMA_atom, MMA_M_tiles, MMA_N_tiles)
     tCgC = thr_mma.partition_C(gC)
-    # (MMA_atom, MMA_M_tiles, MMA_K_tiles)
+    # tCrA: MMA fragment for A (smem_desc), shape (MMA_atom, MMA_M_tiles, MMA_K_tiles)
     tCrA = tiled_mma.make_fragment_A(sA)
-    # (MMA_atom, MMA_N_tiles, MMA_K_tiles)
+    # tCrB: MMA fragment for B (smem_desc), shape (MMA_atom, MMA_N_tiles, MMA_K_tiles)
     tCrB = tiled_mma.make_fragment_B(sB)
     # (MMA_atom, MMA_M_tiles, MMA_N_tiles)
     acc_shape = tiled_mma.partition_shape_C(mma_tiler_mnk[:2])

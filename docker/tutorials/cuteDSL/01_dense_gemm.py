@@ -101,14 +101,25 @@ def run_dense_gemm():
     print(f"\n=== Dense GEMM Test ===")
     print(f"M={M}, N={N}, K={K}")
 
-    print("\n=== Running CuTeDSL Dense GEMM 2 ===")
+    print("\n=== Running CuTeDSL Dense GEMM (simplified) ===")
 
-    # Import GEMM kernel (1 stage pipelining)
-    from cutlass.blackwell.dense_gemm_2 import run_dense_gemm as run_gemm_2
+    # Import GEMM kernel (simplified with detailed comments)
+    from cutlass.blackwell.dense_gemm_2 import run as run_gemm
+    import cutlass
 
     # Run the kernel (includes correctness check)
-    print("Running GEMM kernel (debug a_tma_tensor)...")
-    run_gemm_2((M, N, K), tolerance=1e-1)
+    print("Running GEMM kernel...")
+    run_gemm(
+        mnkl=(1, M, N, K),
+        ab_dtype=cutlass.Float16,
+        c_dtype=cutlass.Float16,
+        acc_dtype=cutlass.Float32,
+        a_major="K",
+        b_major="K",
+        c_major="R",
+        tolerance=1e-1,
+        skip_ref_check=False,
+    )
     print("✓ Correctness PASSED!")
 
     # # Benchmark with PyTorch

@@ -177,7 +177,7 @@ def kernel(
     tCgA = thr_mma.partition_A(gA)
     # (MMA_atom, MMA_N_tiles, MMA_K_tiles, RestK)
     tCgB = thr_mma.partition_B(gB)
-    # (MMA_atom, MMA_M_tiles, MMA_N_tiles)
+    # (MMA_atom, MMA_M_tiles, MMA_N_tiles) = ((128,256),1,1)
     tCgC = thr_mma.partition_C(gC)
     # tCrA: MMA fragment for A (smem_desc), derived from sA's smem_desc (128,16)
     #        shape (1,1,4,1) = (1 descriptor for whole block, MMA_M_tiles, MMA_K_tiles, stages)

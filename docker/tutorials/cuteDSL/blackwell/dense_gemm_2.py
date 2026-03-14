@@ -162,12 +162,16 @@ def kernel(
     ).make_participants()
 
     # Partition tensors for MMA and make fragments
-    # (bM, bK, RestK)
+    # gA: (M_tile, K_tile, K_rest) = (128, 64, 16) for M=N=K=1024, tile=(128,256,64)
     gA = cute.local_tile(mA_mkl, mma_tiler_mnk, mma_coord_mnk, proj=(1, None, 1))
-    # (bN, bK, RestK)
+    # gB: (N_tile, K_tile, K_rest) = (256, 64, 16)
     gB = cute.local_tile(mB_nkl, mma_tiler_mnk, mma_coord_mnk, proj=(None, 1, 1))
-    # (bM, bN)
+    # gC: (M_tile, N_tile) = (128, 256)
     gC = cute.local_tile(mC_mnl, mma_tiler_mnk, mma_coord_mnk, proj=(1, 1, None))
+    if tidx == 0:
+        cute.printf("gA: {}", gA)
+        cute.printf("gB: {}", gB)
+        cute.printf("gC: {}", gC)
     thr_mma = tiled_mma.get_slice(0)
     # (MMA_atom, MMA_M_tiles, MMA_K_tiles, RestK)
     tCgA = thr_mma.partition_A(gA)

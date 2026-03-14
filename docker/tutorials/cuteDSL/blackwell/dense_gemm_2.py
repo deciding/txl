@@ -104,6 +104,7 @@ def kernel(
     smem = cutlass.utils.SmemAllocator()
     storage = smem.allocate(SharedStorage)
     # sA: SMEM tensor with shape ((128,16),1,4,1) = (MMA_atom, MMA_M_tiles, MMA_K_tiles, stages)
+    #     smem_desc is one descriptor for the whole block (128, 16)
     sA = smem.allocate_tensor(
         element_type=io_dtype,
         layout=a_smem_layout.outer,
@@ -111,6 +112,7 @@ def kernel(
         swizzle=a_smem_layout.inner,
     )
     # sB: SMEM tensor with shape ((256,16),1,4,1)
+    #     smem_desc is one descriptor for the whole block (256, 16)
     sB = smem.allocate_tensor(
         element_type=io_dtype,
         layout=b_smem_layout.outer,

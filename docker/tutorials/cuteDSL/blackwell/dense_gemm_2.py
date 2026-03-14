@@ -275,12 +275,14 @@ def kernel(
     # My Notation: ((64,1),1,((1,4),1,1)) = per_tmem_atom((64,1)), per_tmem_tile(1), per_mma_tile((1,4)) per_tma_tile(1,1)
     tDgC = tmem_thr_copy.partition_D(gC_epi)
 
-    # tCrAcc: (64, 1) = register tensor for accumulator (acc_dtype = Float32)
-    #   - Shape from tDgC[None, None, 0].shape = (64, 1)
+    # tCrAcc: ((64,1),1) = register tensor for accumulator (acc_dtype = Float32)
+    #   - Shape from tDgC[None, None, 0].shape = ((64,1),1)
     #   - Each thread holds 64 float32 values (one column of the subtile)
+    # My Notation: ((64,1),1) = per_tmem_atom((64,1)), per_tmem_tile(1)
     tCrAcc = cute.make_rmem_tensor(tDgC[None, None, 0].shape, acc_dtype)
-    # tCrC: (64, 1) = register tensor for output (io_dtype = Float16)
+    # tCrC: ((64,1),1) = register tensor for output (io_dtype = Float16)
     #   - Same shape as tCrAcc but different dtype (convert to output dtype)
+    # My Notation: ((64,1),1) = per_tmem_atom((64,1)), per_tmem_tile(1)
     tCrC = cute.make_rmem_tensor(tDgC[None, None, 0].shape, io_dtype)
 
     #

@@ -1,6 +1,10 @@
 """
 Modal script to run CUTLASS CuTeDSL dense GEMM on Blackwell B200 GPU.
 Tests correctness and benchmarks performance.
+
+Usage:
+    # Run specific version (0, 1, 2, or original):
+    modal run 01_dense_gemm.py --version 2
 """
 
 from datetime import datetime
@@ -42,10 +46,20 @@ cutlass_image = (
 @app.function(
     gpu=GPU_model,
     image=cutlass_image,
-    timeout=60,
+    timeout=120,
     volumes={"/workspace/dump": volume},
 )
-def run_dense_gemm():
+def run_dense_gemm(version: str = "2"):
+    """
+    Run CuTeDSL Dense GEMM on Blackwell B200 GPU.
+
+    Args:
+        version: Which version to run:
+            - "0": dense_gemm_0.py (4-stage pipelining)
+            - "1": dense_gemm_1.py (1-stage pipelining)
+            - "2": dense_gemm_2.py (simplified with detailed comments)
+            - "original": dense_gemm.py (full-featured)
+    """
     import torch
     import sys
     import os
@@ -100,65 +114,61 @@ def run_dense_gemm():
 
     print(f"\n=== Dense GEMM Test ===")
     print(f"M={M}, N={N}, K={K}")
+    print(f"Version: {version}")
 
-    print("\n=== Running CuTeDSL Dense GEMM (simplified) ===")
+    if version == "0":
+        print("\n=== Running CuTeDSL Dense GEMM (0 - 4-stage pipelining) ===")
+        from cutlass.blackwell.dense_gemm_0 import run_dense_gemm as run_gemm
 
-    # Import GEMM kernel (simplified with detailed comments)
-    from cutlass.blackwell.dense_gemm_2 import run as run_gemm
-    import cutlass
+        print("Running GEMM kernel...")
+        run_gemm(
+            mnk=(M, N, K),
+            tolerance=1e-1,
+        )
+    elif version == "1":
+        print("\n=== Running CuTeDSL Dense GEMM (1 - 1-stage pipelining) ===")
+        from cutlass.blackwell.dense_gemm_1 import run_dense_gemm as run_gemm
 
-    # Run the kernel (includes correctness check)
-    print("Running GEMM kernel...")
-    run_gemm(
-        mnkl=(1, M, N, K),
-        ab_dtype=cutlass.Float16,
-        c_dtype=cutlass.Float16,
-        acc_dtype=cutlass.Float32,
-        a_major="K",
-        b_major="K",
-        c_major="R",
-        tolerance=1e-1,
-        skip_ref_check=False,
-    )
+        print("Running GEMM kernel...")
+        run_gemm(
+            mnk=(M, N, K),
+            tolerance=1e-1,
+        )
+    elif version == "2":
+        print(
+            "\n=== Running CuTeDSL Dense GEMM (2 - simplified with detailed comments) ==="
+        )
+        from cutlass.blackwell.dense_gemm_2 import run_dense_gemm as run_gemm
+
+        print("Running GEMM kernel...")
+        run_gemm(
+            mnk=(M, N, K),
+            tolerance=1e-1,
+        )
+    elif version == "original":
+        print("\n=== Running CuTeDSL Dense GEMM (original - full-featured) ===")
+        from cutlass.blackwell.dense_gemm import run as run_gemm
+
+        print("Running GEMM kernel...")
+        run_gemm(
+            mnkl=(1, M, N, K),
+            ab_dtype=cutlass.Float16,
+            c_dtype=cutlass.Float16,
+            acc_dtype=cutlass.Float32,
+            a_major="K",
+            b_major="K",
+            c_major="R",
+            tolerance=1e-1,
+            skip_ref_check=False,
+        )
+    else:
+        raise ValueError(f"Unknown version: {version}. Choose from: 0, 1, 2, original")
+
     print("✓ Correctness PASSED!")
-
-    # # Benchmark with PyTorch
-    # print("\n=== PyTorch GEMM Benchmark ===")
-    # import cutlass.torch as cutlass_torch
-
-    # torch.manual_seed(1111)
-    # a = torch.empty(M, K, dtype=torch.float16).random_(-2, 2).to("cuda")
-    # b = torch.empty(N, K, dtype=torch.float16).random_(-2, 2).to("cuda")
-    # c = torch.empty(M, N, device="cuda", dtype=torch.float16)
-
-    # warmup = 10
-    # repeats = 100
-
-    # for _ in range(warmup):
-    #     torch.matmul(a, b.T, out=c)
-    # torch.cuda.synchronize()
-
-    # start_event = torch.cuda.Event(enable_timing=True)
-    # end_event = torch.cuda.Event(enable_timing=True)
-
-    # start_event.record()
-    # for _ in range(repeats):
-    #     torch.matmul(a, b.T, out=c)
-    # end_event.record()
-    # torch.cuda.synchronize()
-
-    # elapsed_ms = start_event.elapsed_time(end_event)
-    # avg_time_torch = elapsed_ms / repeats
-
-    # flops = 2.0 * M * N * K
-    # tflops_torch = flops / (avg_time_torch * 1e-3) / 1e12
-
-    # print(f"PyTorch Average time: {avg_time_torch:.4f} ms")
-    # print(f"PyTorch Performance: {tflops_torch:.2f} TFLOPS")
 
     print(f"\nDone! Results saved to: {DUMP_DIR}")
 
 
 @app.local_entrypoint()
-def main():
-    run_dense_gemm.remote()
+def main(version: str = "2"):
+    run_dense_gemm.remote(version=version)

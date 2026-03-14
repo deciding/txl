@@ -367,3 +367,181 @@ def txl_mla0(...):
 
 - `thirdparty/triton/lib/Dialect/TritonGPU/IR/Ops.cpp` - Add SmemLoadOp canonicalization
 - `thirdparty/triton/third_party/nvidia/lib/Dialect/TXLGPU/Transforms/SoftwarePipeliner.cpp` - Fix lowerSmemLoad
+
+# CuTeDSL Dense GEMM Tutorial
+
+This section documents the conventions and notation used in CuTeDSL dense GEMM kernels for Blackwell B200 GPU.
+
+## CuTe Tensor Naming Conventions
+
+In NVIDIA CUTLASS (especially CuTe), variable names like `tCrC` follow a rigorous naming convention. The name encodes four pieces of information: `<prefix><partitioner><storage><data_role>`.
+
+### Naming Components
+
+| Component | Symbol | Meaning |
+|-----------|--------|---------|
+| **Prefix** | `t` | Thread-level tensor (this thread's private slice) |
+| **Partitioner** | `C`, `A`, `B` | Thread mapping rules (tC, tA, tB) |
+| **Storage** | `r`, `s`, `g` | `r`=Register, `s`=Shared Memory, `g`=Global Memory |
+| **Data Role** | `A`, `B`, `C` | GEMM operands: A=first factor, B=second factor, C=accumulator |
+
+### Common Examples
+
+| Variable | Meaning |
+|----------|---------|
+| `tCsA` | Thread's view of A matrix in Shared Memory (partitioned by C rules) |
+| `tCrA` | Thread's fragment of A matrix in Registers (for MMA compute) |
+| `tAgA` | Thread's view of A matrix in Global Memory (for TMA loads) |
+| `tCrC` | Thread's accumulator fragment in Registers |
+| `tCgA` | Thread's partition of A for MMA (Global memory view) |
+| `tDtC` | TMEM source tensor for epilogue copy |
+| `tDgC` | Global memory destination tensor for epilogue copy |
+
+## My Notation (Custom Notation System)
+
+This section documents the custom notation used in the dense_gemm_2.py tutorial to describe tensor shapes at different levels.
+
+### Terminology
+
+| Term | Meaning |
+|------|---------|
+| `per_mma_atom` | Elements within one MMA instruction (spatial) |
+| `per_mma_tile` | Tile in the MMA grid (spatial) |
+| `per_tma_atom` | Elements within one TMA copy instruction |
+| `per_tma_tile` | Tile for TMA operations (spatial) |
+| `per_wave` | Pipeline stages that can run in parallel (stages dimension) |
+| `per_tide` | Full K loop (runtime iterations) |
+| `per_tmem_atom` | Elements within one TMEM copy instruction |
+| `per_tmem_tile` | Tile for TMEM operations |
+
+### Shape Notation Examples
+
+```python
+# SMEM tensor A: ((128,16),1,4,1)
+# My Notation: per_mma_atom((128,16)), per_tma_tile(1,4), per_wave(1)
+#   - (128,16) = per_mma_atom (MMA instruction shape)
+#   - (1,4) = per_tma_tile (1 MMA_M_tile, 4 MMA_K_tiles)
+#   - 1 = per_wave (1 pipeline stage)
+
+# MMA fragment A: (1,1,4,1)
+# My Notation: per_mma_atom(1), per_tma_tile(1,4), per_wave(1)
+#   - 1 = 1 smem descriptor for whole block
+
+# Accumulator: ((128,256),1,1)
+# My Notation: per_mma_atom((128,256)), per_tma_tile(1,1)
+#   - (128,256) = MMA instruction produces 128x256 accumulator
+
+# TMEM source: (((64,32),1),1,((1,4),1,1))
+# My Notation: per_tmem_atom((64,32)), per_tmem_tile(1), per_mma_tile((1,4)) per_tma_tile(1,1)
+
+# Register tensor: ((64,1),1)
+# My Notation: per_tmem_atom((64,1)), per_tmem_tile(1)
+```
+
+## Dense GEMM Kernel Structure
+
+The typical dense GEMM kernel follows this structure:
+
+### 1. Setup and Allocation
+```python
+# Allocate SMEM tensors
+sA = smem.allocate_tensor(element_type=io_dtype, layout=a_smem_layout.outer, ...)
+sB = smem.allocate_tensor(element_type=io_dtype, layout=b_smem_layout.outer, ...)
+
+# Allocate TMEM for accumulator
+tmem = utils.TmemAllocator(...)
+tmem.allocate(num_tmem_cols)
+```
+
+### 2. Create MMA and TMA
+```python
+# Tiled MMA
+tiled_mma = cute.make_tiled_mma(op)
+
+# TMA atoms
+tma_atom_a = cute.make_tma_atom(...)
+tma_atom_b = cute.make_tma_atom(...)
+```
+
+### 3. Partition and Create Fragments
+```python
+# Partition GMEM tensors for MMA
+tCgA = thr_mma.partition_A(gA)
+tCgB = thr_mma.partition_B(gB)
+tCgC = thr_mma.partition_C(gC)
+
+# Create MMA fragments (from SMEM)
+tCrA = tiled_mma.make_fragment_A(sA)
+tCrB = tiled_mma.make_fragment_B(sB)
+tCtAcc = tiled_mma.make_fragment_C(acc_shape)
+
+# Create TMA descriptors
+tAsA, tAgA = cute.nvgpu.cpasync.tma_partition(tma_atom_a, ...)
+tBsB, tBgB = cute.nvgpu.cpasync.tma_partition(tma_atom_b, ...)
+```
+
+### 4. Main Loop
+```python
+for k_tile_idx in range(num_k_tiles):
+    # Issue TMA loads
+    ab_empty = ab_producer.acquire_and_advance()
+    cute.copy(tma_atom_a, tAgA[(None, ab_empty.count)], tAsA[(None, ab_empty.index)], ...)
+    cute.copy(tma_atom_b, ...)
+
+    # Execute MMA
+    ab_full = ab_consumer.wait_and_advance()
+    for k_block_idx in cutlass.range_constexpr(num_k_blocks):
+        cute.gemm(tiled_mma, tCtAcc, tCrA[k_block_coord], tCrB[k_block_coord], tCtAcc)
+```
+
+### 5. Epilogue (TMEM → Register → GMEM)
+```python
+# Sub-tiling for ILP
+for i in cutlass.range(cute.size(tDtC, mode=[2])):
+    cute.copy(tmem_tiled_copy, tDtC[None, None, i], tCrAcc)  # TMEM -> Reg
+    tCrC.store(tCrAcc.load().to(io_dtype))                    # Convert dtype
+    cute.autovec_copy(tCrC, tDgC[None, None, i])             # Reg -> GMEM
+```
+
+## Running the Tests
+
+```bash
+# Run default version (dense_gemm_2.py - simplified)
+./tools/modal_tests.sh tutorials/cuteDSL/01_dense_gemm.py
+
+# Available versions:
+# - 0: dense_gemm_0.py (4-stage pipelining)
+# - 1: dense_gemm_1.py (1-stage pipelining)
+# - 2: dense_gemm_2.py (simplified with detailed comments)
+# - original: dense_gemm.py (full-featured)
+```
+
+## Key Files
+
+```
+docker/tutorials/cuteDSL/
+├── 01_dense_gemm.py              # Modal test script
+└── blackwell/
+    ├── dense_gemm.py             # Original full-featured
+    ├── dense_gemm_0.py           # 4-stage pipelining
+    ├── dense_gemm_1.py           # 1-stage pipelining
+    └── dense_gemm_2.py           # Simplified with detailed comments
+
+thirdparty/cutlass/python/CuTeDSL/cutlass/
+├── utils/blackwell_helpers.py    # make_smem_layout_a/b
+└── cute/nvgpu/cpasync/helpers.py # tma_partition
+```
+
+## Debug Tips
+
+### Add Shape Verification
+Use `cute.printf` to verify tensor shapes during kernel execution:
+```python
+if tidx == 0:
+    cute.printf("tensor shape: {}\n", tensor.shape)
+```
+
+### Important Notes
+- `smem_desc` represents the whole block, not decomposed like MMA fragments
+- `tma_partition` requires input tensors folded in shape `(Each_Iter, Num_Iters)`
+- `subtile_cnt` in epilogue controls ILP (typically 4 for fp16)

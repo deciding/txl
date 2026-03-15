@@ -320,26 +320,30 @@
                     continue;
                 }
                 
-                // Check for callsite (ends with @)
-                // Pattern: .loc 2 291 36 // standard.py:291:36 @
-                // Note: file_id may not be in .file table, but comment has valid filename
-                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)\s*@/);
+                // Check for callsite (ends with @callee[line])
+                // Pattern: .loc 2 291 36 // standard.py:291:36 @vector_add.py[77]
+                // - file_id 2 may not be in .file table (external function)
+                // - After @ is callee file (vector_add.py) with line in brackets [77]
+                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)\s*@([^[]+)\[(\d+)\]/);
                 if (match) {
                     const fileId = parseInt(match[1]);
-                    const filename = match[4];
-                    const srcLine = parseInt(match[5]);
-                    const srcCol = parseInt(match[6]);
+                    const ptxLine = parseInt(match[2]);
+                    const ptxCol = parseInt(match[3]);
+                    const callsiteFile = match[4];
+                    const callsiteLine = parseInt(match[5]);
+                    const callsiteCol = parseInt(match[6]);
+                    const calleeFile = match[7];
+                    const calleeLine = parseInt(match[8]);
                     
-                    // If file_id is not in .file table but we have comment, use comment's filename
-                    // This handles cases where the PTX references an external function
-                    if (!(fileId in fileIdToName)) {
-                        irLineToLoc[lineNum] = [filename, srcLine, srcCol];
-                    } else if (prevLocInfo) {
-                        // Use previous location (the actual code location, not the callsite)
-                        irLineToLoc[lineNum] = prevLocInfo;
+                    // Look up callee_file in file_id_to_name to find actual source
+                    // file_id maps to actual source file
+                    if (fileId in fileIdToName) {
+                        // Use actual source file from .file table with callee line
+                        const actualFile = fileIdToName[fileId];
+                        irLineToLoc[lineNum] = [actualFile, calleeLine, ptxCol];
                     } else {
-                        // Fallback to comment's filename
-                        irLineToLoc[lineNum] = [filename, srcLine, srcCol];
+                        // file_id not in .file table - use callee filename from @ with callee line
+                        irLineToLoc[lineNum] = [calleeFile, calleeLine, ptxCol];
                     }
                 }
             }

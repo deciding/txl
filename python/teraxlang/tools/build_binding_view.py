@@ -136,31 +136,33 @@ def parse_ptx_locations(ptx_path):
             ir_line_to_loc[line_num] = (filename, src_line, src_col)
             continue
 
-        # Check if this line has a reference to a callsite (ends with @)
-        # Pattern: .loc 2 261 15 // standard.py:261:15 @
-        # Note: file_id may not be in .file table, but comment has valid filename
+        # Check if this line has a reference to a callsite (ends with @callee[line])
+        # Pattern: .loc 2 291 36 // standard.py:291:36 @vector_add.py[77]
+        # - file_id 2 may not be in .file table (external function)
+        # - After @ is callee file (vector_add.py) with line in brackets [77]
         callsite_match = re.match(
-            r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)\s*@", line
+            r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)\s*@([^[]+)\[(\d+)\]",
+            line,
         )
         if callsite_match:
             file_id = int(callsite_match.group(1))
             ptx_line = int(callsite_match.group(2))
             ptx_col = int(callsite_match.group(3))
-            filename = callsite_match.group(4)
-            src_line = int(callsite_match.group(5))
-            src_col = int(callsite_match.group(6))
+            callsite_file = callsite_match.group(4)
+            callsite_line = int(callsite_match.group(5))
+            callsite_col = int(callsite_match.group(6))
+            callee_file = callsite_match.group(7)
+            callee_line = int(callsite_match.group(8))
 
-            # If file_id is not in .file table but we have comment, use comment's filename
-            # This handles cases where the PTX references an external function
-            if file_id not in file_id_to_name:
-                # Use the filename from the comment (the callsite location)
-                ir_line_to_loc[line_num] = (filename, src_line, src_col)
-            elif prev_loc_info:
-                # Use previous location (the actual code location, not the callsite)
-                ir_line_to_loc[line_num] = prev_loc_info
+            # Look up callee_file in file_id_to_name to find actual source
+            # file_id maps to actual source file
+            if file_id in file_id_to_name:
+                # Use actual source file from .file table with callee line
+                actual_file = file_id_to_name[file_id]
+                ir_line_to_loc[line_num] = (actual_file, callee_line, ptx_col)
             else:
-                # Fallback to comment's filename
-                ir_line_to_loc[line_num] = (filename, src_line, src_col)
+                # file_id not in .file table - use callee filename from @ with callee line
+                ir_line_to_loc[line_num] = (callee_file, callee_line, ptx_col)
             continue
 
         # Match: .loc 1 799 16 (no comment - file_id, line, col)

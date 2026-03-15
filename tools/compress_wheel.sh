@@ -1,7 +1,7 @@
 #!/bin/bash
 # Generate teraxlang-dev wheel from original wheel
 
-DEV_SUFFIX="dev3"  # Change this to create different dev versions
+DEV_SUFFIX="dev4"  # Change this to create different dev versions
 ORIGINAL_WHL="thirdparty/triton/dist/teraxlang-3.5.1-cp312-cp312-manylinux_2_35_x86_64.whl"
 OUTPUT_WHL="teraxlang-3.5.1.${DEV_SUFFIX}-cp312-cp312-manylinux_2_35_x86_64.whl"
 

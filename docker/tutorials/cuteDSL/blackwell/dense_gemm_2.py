@@ -149,13 +149,10 @@ def kernel(
     num_tma_copy_bytes = cute.size_in_bytes(
         io_dtype, cute.select(a_smem_layout, mode=[0, 1, 2])
     ) + cute.size_in_bytes(io_dtype, cute.select(b_smem_layout, mode=[0, 1, 2]))
-    ab_producer, ab_consumer = pipeline.PipelineTmaUmma.create(
-        num_stages=ab_stages,
-        producer_group=pipeline.CooperativeGroup(pipeline.Agent.Thread),
-        consumer_group=pipeline.CooperativeGroup(pipeline.Agent.Thread),
-        tx_count=num_tma_copy_bytes,
-        barrier_storage=storage.ab_mbar_ptr.data_ptr(),
-    ).make_participants()
+
+    # Get mbarrier pointers directly (replacing PipelineTmaUmma)
+    ab_mbar_full = storage.ab_mbar_ptr.data_ptr()  # index 0
+    ab_mbar_empty = storage.ab_mbar_ptr.data_ptr() + 1  # index 1
 
     # Get accumulator mbarrier pointer
     acc_mbar_ptr = storage.acc_mbar_ptr.data_ptr()
@@ -163,6 +160,9 @@ def kernel(
     # Initialize accumulator mbarrier - warp 0 initializes with 1 arrival expected
     # if_generate(warp_idx == 0, lambda: cute.arch.mbarrier_init(acc_mbar_ptr, 1))
     if warp_idx == 0:
+        # Initialize mbarriers
+        cute.arch.mbarrier_init(ab_mbar_full, 1)
+        cute.arch.mbarrier_init(ab_mbar_empty, 1)
         cute.arch.mbarrier_init(acc_mbar_ptr, 1)
 
     # Ensure mbarrier init is visible and sync all threads
@@ -291,29 +291,41 @@ def kernel(
     # 2. Main loop
     #
     num_k_tiles = cute.size(gA, mode=[2])
+    phase = 1  # Toggle between 0 and 1
+
     if warp_idx == 0:
         # Simple loop without prefetch (single stage pipelining)
         for k_tile_idx in range(num_k_tiles):
-            # Issue TMA loads
-            ab_empty = ab_producer.acquire_and_advance()
+            # TMA Load: wait for empty buffer
+            cute.arch.mbarrier_wait(ab_mbar_empty, phase)
+
+            # TMA loads
             cute.copy(
                 tma_atom_a,
-                tAgA[(None, ab_empty.count)],
-                tAsA[(None, ab_empty.index)],
-                tma_bar_ptr=ab_empty.barrier,
+                tAgA[(None, k_tile_idx)],
+                tAsA[(None, 0)],
+                tma_bar_ptr=ab_mbar_full,
             )
             cute.copy(
                 tma_atom_b,
-                tBgB[(None, ab_empty.count)],
-                tBsB[(None, ab_empty.index)],
-                tma_bar_ptr=ab_empty.barrier,
+                tBgB[(None, k_tile_idx)],
+                tBsB[(None, 0)],
+                tma_bar_ptr=ab_mbar_full,
             )
 
+            # TMA Load arrives on full: elect_one + expect_tx
+            with cute.arch.elect_one():
+                cute.arch.mbarrier_arrive_and_expect_tx(
+                    ab_mbar_full, num_tma_copy_bytes
+                )
+
+            # TCGen05 MMA: wait for full buffer
+            cute.arch.mbarrier_wait(ab_mbar_full, 1 - phase)
+
             # Execute one K-block worth of MMA instructions
-            ab_full = ab_consumer.wait_and_advance()
             num_k_blocks = cute.size(tCrA, mode=[2])
             for k_block_idx in cutlass.range_constexpr(num_k_blocks):
-                k_block_coord = (None, None, k_block_idx, ab_full.index)
+                k_block_coord = (None, None, k_block_idx, 0)
                 cute.gemm(
                     tiled_mma,
                     tCtAcc,
@@ -323,8 +335,12 @@ def kernel(
                 )
                 tiled_mma.set(tcgen05.Field.ACCUMULATE, True)
 
-            # Signal that the A/B buffers have been consumed and are ready for the next load
-            ab_full.release()
+            # TCGen05 MMA arrives on empty: elect_one + tcgen05.commit
+            with cute.arch.elect_one():
+                cute.nvgpu.tcgen05.commit(ab_mbar_empty)
+
+            # Toggle phase
+            phase = 1 - phase
 
         # Signal MMA done - use tcgen05.commit like PipelineUmmaAsync
         with cute.arch.elect_one():

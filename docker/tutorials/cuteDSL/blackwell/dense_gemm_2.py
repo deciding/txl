@@ -31,6 +31,7 @@ import cutlass.pipeline as pipeline
 from cutlass.cute.nvgpu import cpasync, tcgen05
 import cutlass.utils.blackwell_helpers as sm100_utils
 from cutlass.cute.runtime import from_dlpack
+from cutlass.cutlass_dsl.cutlass import if_generate
 
 """
 The first tutorial GEMM demonstrating a simple kernel implementation in CuTeDSL
@@ -63,13 +64,12 @@ threads_per_cta = 128
 
 # Pipeline stage configuration - minimal pipelining (single stage)
 ab_stages = 1
-acc_stage = 1
 
 
 @cute.struct
 class SharedStorage:
     ab_mbar_ptr: cute.struct.MemRange[cutlass.Int64, ab_stages * 2]
-    acc_mbar_ptr: cute.struct.MemRange[cutlass.Int64, acc_stage * 2]
+    acc_mbar_ptr: cute.struct.MemRange[cutlass.Int64, 1]
     tmem_holding_buf: cutlass.Int32
 
 
@@ -156,16 +156,16 @@ def kernel(
         tx_count=num_tma_copy_bytes,
         barrier_storage=storage.ab_mbar_ptr.data_ptr(),
     ).make_participants()
-    acc_producer, acc_consumer = pipeline.PipelineUmmaAsync.create(
-        # producer: UMMA (MMA compute), consumer: epilogue with threads_per_cta threads
-        num_stages=acc_stage,
-        producer_group=pipeline.CooperativeGroup(pipeline.Agent.Thread),
-        consumer_group=pipeline.CooperativeGroup(
-            pipeline.Agent.Thread,
-            threads_per_cta,
-        ),
-        barrier_storage=storage.acc_mbar_ptr.data_ptr(),
-    ).make_participants()
+
+    # Get accumulator mbarrier pointer
+    acc_mbar_ptr = storage.acc_mbar_ptr.data_ptr()
+
+    # Initialize accumulator mbarrier - warp 0 initializes with 1 arrival expected
+    if_generate(warp_idx == 0, lambda: cute.arch.mbarrier_init(acc_mbar_ptr, 1))
+
+    # Ensure mbarrier init is visible and sync all threads
+    cute.arch.mbarrier_init_fence()
+    cute.arch.sync_threads()
 
     # Partition tensors for MMA and make fragments
     # gA: (M_tile, K_tile, K_rest) = (128, 64, 16) for M=N=K=1024, tile=(128,256,64)
@@ -290,8 +290,6 @@ def kernel(
     #
     num_k_tiles = cute.size(gA, mode=[2])
     if warp_idx == 0:
-        # Wait for a empty accumulator buffer
-        acc_empty = acc_producer.acquire_and_advance()
         # Simple loop without prefetch (single stage pipelining)
         for k_tile_idx in range(num_k_tiles):
             # Issue TMA loads
@@ -326,18 +324,19 @@ def kernel(
             # Signal that the A/B buffers have been consumed and are ready for the next load
             ab_full.release()
 
-        # Signal that the accumulator is fully computed
-        acc_empty.commit()
+        # Signal MMA done - warp 0 arrives at mbarrier
+        cute.arch.mbarrier_arrive(acc_mbar_ptr)
 
     #
+
     # 3. Epilogue
     #
 
     # Release TMEM allocation lock
     tmem.relinquish_alloc_permit()
 
-    # Wait for the accumulator buffer to be full
-    acc_full = acc_consumer.wait_and_advance()
+    # Wait for MMA to complete (warp 0 signals via mbarrier)
+    cute.arch.mbarrier_wait(acc_mbar_ptr, phase=0)
 
     # Epilogue: TMEM -> Register -> Global Memory
     # Sub-tiling: iterate over 4 subtiles (subtile_cnt = 4) for better ILP
@@ -350,7 +349,6 @@ def kernel(
         cute.copy(tmem_tiled_copy, tDtC[None, None, i], tCrAcc)  # TMEM -> Reg (Float32)
         tCrC.store(tCrAcc.load().to(io_dtype))  # Convert to Float16
         cute.autovec_copy(tCrC, tDgC[None, None, i])  # Reg -> Global (Float16)
-    acc_full.release()
 
     # Deallocate TMEM
     pipeline.sync(barrier_id=1)

@@ -11,7 +11,7 @@ from pathlib import Path
 def detect_file_type(filepath):
     """Detect file type by extension"""
     ext = filepath.lower().split(".")[-1]
-    if ext in ("ttir", "ttgir", "ptx"):
+    if ext in ("ttir", "ttgir", "ptx", "llir"):
         return ext
     return "unknown"
 
@@ -120,28 +120,32 @@ def parse_ptx_locations(ptx_path):
         if re.match(r"^\s*\.file\s+", line):
             continue
 
-        # Match: .loc 1 69 16 // vector_add.py:69:16
-        loc_match = re.match(
-            r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)", line
-        )
-        if loc_match:
-            file_id = int(loc_match.group(1))
-            ptx_line = int(loc_match.group(2))
-            ptx_col = int(loc_match.group(3))
-            filename = loc_match.group(4)
-            src_line = int(loc_match.group(5))
-            src_col = int(loc_match.group(6))
+        # Check if this is a callsite line (has @[...])
+        is_callsite = "@[" in line
 
-            prev_loc_info = (filename, src_line, src_col)
-            ir_line_to_loc[line_num] = (filename, src_line, src_col)
-            continue
+        # Match: .loc 1 69 16 // vector_add.py:69:16 (only if NOT a callsite)
+        if not is_callsite:
+            loc_match = re.match(
+                r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)", line
+            )
+            if loc_match:
+                file_id = int(loc_match.group(1))
+                ptx_line = int(loc_match.group(2))
+                ptx_col = int(loc_match.group(3))
+                filename = loc_match.group(4)
+                src_line = int(loc_match.group(5))
+                src_col = int(loc_match.group(6))
 
-        # Check if this line has a reference to a callsite (format: @[true_file:line_no:col_no])
-        # Pattern: .loc 2 291 36 // standard.py:291:36 @[vector_add.py:77:0]
-        # - file_id 2 may not be in .file table (external function)
+                prev_loc_info = (filename, src_line, src_col)
+                ir_line_to_loc[line_num] = (filename, src_line, src_col)
+                continue
+
+        # Check if this line has a reference to a callsite (format: @[ true_file:line_no:col_no ])
+        # Pattern: .loc  2 291 36                        // standard.py:291:36 @[ vector_add.py:75:15 ]
         # - After @[...] is the true source location: file:line:col
+        # - Note: there can be spaces inside the brackets and multiple spaces before //
         callsite_match = re.match(
-            r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)\s*@\[([^:]+):(\d+):(\d+)\]",
+            r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s+//\s+([^:]+):(\d+):(\d+)\s+@\[\s*([^:]+):(\d+):(\d+)\s*\]",
             line,
         )
         if callsite_match:
@@ -174,6 +178,108 @@ def parse_ptx_locations(ptx_path):
             continue
 
     return ir_line_to_loc, {}
+
+
+def parse_llir_locations(llir_path):
+    """
+    Parse LLIR (LLVM IR) file to extract:
+    - Line number to location mapping
+    - LLIR uses !dbg !N for debug info with DIFile and DILocation
+
+    Patterns:
+    1. !N = !DIFile(filename: "xxx", directory: "...") - file definitions
+    2. !N = !DILocation(line: X, column: Y, ...) - location definitions
+    3. instruction !dbg !N - IR line references debug info
+
+    Handles inlined locations: DILocation(line: X, column: Y, scope: !M, inlinedAt: !N)
+    - If inlinedAt is present, follow it to get the TRUE source location
+    """
+    with open(llir_path, "r") as f:
+        lines = f.readlines()
+
+    # First pass: collect all !dbg definitions
+    # !N = !DIFile(filename: "xxx", directory: "...")
+    # !N = !DILocation(line: X, column: Y, scope: !M, inlinedAt: !N)
+    file_defs = {}  # !N -> filepath
+    raw_loc_defs = {}  # !N -> (filepath, line, col, inlinedAt_var or None)
+
+    for line in lines:
+        # Match: !N = !DIFile(filename: "xxx", directory: "...")
+        file_match = re.match(
+            r'^(!\d+)\s*=\s*!DIFile\(filename:\s*"([^"]+)",\s*directory:\s*"([^"]+)"\)',
+            line,
+        )
+        if file_match:
+            var = file_match.group(1)
+            filename = file_match.group(2)
+            directory = file_match.group(3)
+            # Combine directory and filename
+            if directory and not filename.startswith("/"):
+                full_path = directory.rstrip("/") + "/" + filename
+            else:
+                full_path = filename
+            file_defs[var] = full_path
+            continue
+
+        # Match: !N = !DILocation(line: X, column: Y, scope: !M, ...)
+        # This is the basic location pattern
+        loc_match = re.match(
+            r"^(!\d+)\s*=\s*!DILocation\(line:\s*(\d+),\s*column:\s*(\d+)", line
+        )
+        if loc_match:
+            var = loc_match.group(1)
+            line_num = int(loc_match.group(2))
+            col = int(loc_match.group(3))
+
+            # Check for inlinedAt - if present, store it to resolve later
+            inlined_match = re.search(r"inlinedAt:\s*(!\d+)", line)
+            inlined_var = inlined_match.group(1) if inlined_match else None
+
+            # Check for scope to get the file
+            scope_match = re.search(r"scope:\s*(!\d+)", line)
+            filepath = None
+
+            if scope_match:
+                scope_var = scope_match.group(1)
+                # Look for the file in previously parsed locations
+                for loc_var, (f, l, c, _) in raw_loc_defs.items():
+                    if loc_var == scope_var:
+                        filepath = f
+                        break
+
+            # If no scope found, use first available file
+            if not filepath and file_defs:
+                filepath = list(file_defs.values())[0]
+
+            if filepath:
+                raw_loc_defs[var] = (filepath, line_num, col, inlined_var)
+            continue
+
+    # Second pass: resolve inlinedAt references to get TRUE locations
+    loc_defs = {}
+    for var, (filepath, line_num, col, inlined_var) in raw_loc_defs.items():
+        if inlined_var and inlined_var in raw_loc_defs:
+            # Follow inlinedAt to get the true location
+            true_filepath, true_line, true_col, _ = raw_loc_defs[inlined_var]
+            loc_defs[var] = (true_filepath, true_line, true_col)
+        else:
+            loc_defs[var] = (filepath, line_num, col)
+
+    # Third pass: parse IR lines with !dbg references
+    ir_line_to_loc = {}
+
+    for i, line in enumerate(lines):
+        line_num = i + 1
+
+        # Match: instruction ... !dbg !N
+        # Also matches: %x = ... !dbg !N
+        dbg_match = re.search(r"!dbg\s+(!\d+)", line)
+        if dbg_match:
+            dbg_var = dbg_match.group(1)
+            if dbg_var in loc_defs:
+                ir_line_to_loc[line_num] = dbg_var
+
+    return ir_line_to_loc, loc_defs
 
 
 def resolve_location(loc_var, loc_defs):
@@ -233,7 +339,7 @@ def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=Tr
         file_type = detect_file_type(ir_path)
         if file_type == "unknown":
             raise ValueError(
-                f"Unknown file type for {ir_path}. Supported: .ttir, .ttgir, .ptx"
+                f"Unknown file type for {ir_path}. Supported: .ttir, .ttgir, .ptx, .llir"
             )
 
     # Auto-generate output_path if not specified
@@ -246,6 +352,9 @@ def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=Tr
     if file_type == "ptx":
         ir_line_to_loc, loc_defs = parse_ptx_locations(ir_path)
         panel_name = "PTX"
+    elif file_type == "llir":
+        ir_line_to_loc, loc_defs = parse_llir_locations(ir_path)
+        panel_name = "LLIR"
     else:
         ir_line_to_loc, loc_defs = parse_ttir_locations(ir_path)
         panel_name = "TTGIR" if file_type == "ttgir" else "TTIR"
@@ -521,7 +630,7 @@ def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=Tr
 
 def get_file_paths_array(base_path):
     """Returns ALL IR files (not just one of each type)"""
-    target_exts = [".ttir", ".ttgir", ".ptx"]
+    target_exts = [".ttir", ".ttgir", ".ptx", ".llir"]
     found_files = []
 
     for file in base_path.rglob("*"):
@@ -549,7 +658,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="TeraXLang IR Viewer - Build HTML to compare IR (TTIR/TTGIR/PTX) with Python source",
+        description="TeraXLang IR Viewer - Build HTML to compare IR (TTIR/TTGIR/PTX/LLIR) with Python source",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -561,12 +670,15 @@ Supported IR formats:
   .ttir  - Triton TTIR (Triton Intermediate Representation)
   .ttgir - Triton TTGIR (Triton GPU IR)  
   .ptx   - NVIDIA PTX (Parallel Thread Execution)
+  .llir  - LLVM IR (LLVM Intermediate Representation)
 
 The viewer shows interactive bindings between IR code lines and Python source lines.
 Click on any line to navigate between related code.
         """,
     )
-    parser.add_argument("ir_file", help="Path to IR file (.ttir, .ttgir, or .ptx)")
+    parser.add_argument(
+        "ir_file", help="Path to IR file (.ttir, .ttgir, .ptx, or .llir)"
+    )
     parser.add_argument("py_file", help="Path to Python source file")
     parser.add_argument(
         "output_html",
@@ -583,7 +695,7 @@ Click on any line to navigate between related code.
     parser.add_argument(
         "-t",
         "--type",
-        choices=["ttir", "ttgir", "ptx"],
+        choices=["ttir", "ttgir", "ptx", "llir"],
         help="IR file type (auto-detected if not specified)",
     )
 

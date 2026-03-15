@@ -138,13 +138,13 @@
     
     <div class="upload-section">
         <div class="upload-group">
-            <label>IR File (TTIR / TTGIR / PTX)</label>
+            <label>IR File (TTIR / TTGIR / PTX / LLIR)</label>
             <div class="drop-zone" id="ir-drop-zone" data-input-id="ir-file">
                 <span class="drop-text">Drop IR file here or click to browse</span>
-                <span class="file-type">.ttir, .ttgir, .ptx</span>
+                <span class="file-type">.ttir, .ttgir, .ptx, .llir</span>
                 <span class="filename" style="display: none;"></span>
             </div>
-            <input type="file" id="ir-file" accept=".ttir,.ttgir,.ptx" style="display: none;">
+            <input type="file" id="ir-file" accept=".ttir,.ttgir,.ptx,.llir" style="display: none;">
         </div>
         <div class="upload-group">
             <label>Python Source File</label>
@@ -199,6 +199,7 @@
                 <li>.ttir - Triton TTIR</li>
                 <li>.ttgir - Triton TTGIR</li>
                 <li>.ptx - NVIDIA PTX</li>
+                <li>.llir - LLVM IR</li>
             </ul>
             <button class="help-close" onclick="document.getElementById('help-modal').classList.remove('show')">Close</button>
         </div>
@@ -208,7 +209,7 @@
         // Detect file type from filename
         function detectFileType(filename) {
             const ext = filename.toLowerCase().split('.').pop();
-            if (ext === 'ttir' || ext === 'ttgir' || ext === 'ptx') return ext;
+            if (ext === 'ttir' || ext === 'ttgir' || ext === 'ptx' || ext === 'llir') return ext;
             return 'unknown';
         }
         
@@ -294,9 +295,13 @@
                 // Skip .file directives (already processed)
                 if (line.match(/^\s*\.file\s+/)) continue;
                 
-                // Match: .loc 1 69 16 // vector_add.py:69:16
-                let match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)/);
-                if (match) {
+                // Check if this is a callsite line (has @[...])
+                const isCallsite = line.includes('@[');
+                
+                // Match: .loc 1 69 16 // vector_add.py:69:16 (only if NOT a callsite)
+                if (!isCallsite) {
+                    let match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)/);
+                    if (match) {
                     const filename = match[4];
                     const srcLine = parseInt(match[5]);
                     prevLocInfo = [filename, srcLine, 0];
@@ -320,10 +325,11 @@
                     continue;
                 }
                 
-                // Check for callsite (format: @[true_file:line_no:col_no])
-                // Pattern: .loc 2 291 36 // standard.py:291:36 @[vector_add.py:77:0]
+                // Check for callsite (format: @[ true_file:line_no:col_no ])
+                // Pattern: .loc  2 291 36                        // standard.py:291:36 @[ vector_add.py:75:15 ]
                 // - After @[...] is the true source location: file:line:col
-                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)\s*@\[([^:]+):(\d+):(\d+)\]/);
+                // - Note: there can be spaces inside the brackets and multiple spaces before //
+                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s+\/\/\s+([^:]+):(\d+):(\d+)\s+@\[\s*([^:]+):(\d+):(\d+)\s*\]/);
                 if (match) {
                     const fileId = parseInt(match[1]);
                     const ptxLine = parseInt(match[2]);
@@ -341,6 +347,98 @@
             }
             
             return { locDefs: {}, irLineToLoc };
+        }
+        
+        // Parse LLIR (LLVM IR) locations
+        // Uses !dbg !N for debug info with DIFile and DILocation
+        function parseLlirLocations(lines) {
+            const fileDefs = {};  // !N -> filename
+            const rawLocDefs = {}; // !N -> [filepath, line, col, inlinedAtVar or null]
+            const irLineToLoc = {};
+            
+            // First pass: collect !dbg definitions
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                
+                // Match: !N = !DIFile(filename: "xxx", directory: "...")
+                let match = line.match(/^(!\d+)\s*=\s*!DIFile\(filename:\s*"([^"]+)",\s*directory:\s*"([^"]+)"\)/);
+                if (match) {
+                    const var = match[1];
+                    const filename = match[2];
+                    const directory = match[3];
+                    const fullPath = directory && !filename.startsWith('/') 
+                        ? directory.replace(/\/$/, '') + '/' + filename 
+                        : filename;
+                    fileDefs[var] = fullPath;
+                    continue;
+                }
+                
+                // Match: !N = !DILocation(line: X, column: Y, scope: !M, ...)
+                match = line.match(/^(!\d+)\s*=\s*!DILocation\(line:\s*(\d+),\s*column:\s*(\d+)/);
+                if (match) {
+                    const var = match[1];
+                    const lineNum = parseInt(match[2]);
+                    const col = parseInt(match[3]);
+                    
+                    // Check for inlinedAt - if present, store it to resolve later
+                    const inlinedMatch = line.match(/inlinedAt:\s*(!\d+)/);
+                    const inlinedVar = inlinedMatch ? inlinedMatch[1] : null;
+                    
+                    // Check for scope to get file
+                    const scopeMatch = line.match(/scope:\s*(!\d+)/);
+                    let filepath = null;
+                    
+                    if (scopeMatch) {
+                        const scopeVar = scopeMatch[1];
+                        // Look for the file from scope chain
+                        for (const [locVar, locInfo] of Object.entries(rawLocDefs)) {
+                            if (locVar === scopeVar) {
+                                filepath = locInfo[0];
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Use first available file if not found
+                    if (!filepath && Object.keys(fileDefs).length > 0) {
+                        filepath = Object.values(fileDefs)[0];
+                    }
+                    
+                    if (filepath) {
+                        rawLocDefs[var] = [filepath, lineNum, col, inlinedVar];
+                    }
+                }
+            }
+            
+            // Second pass: resolve inlinedAt references to get TRUE locations
+            const locDefs = {};
+            for (const [var, locInfo] of Object.entries(rawLocDefs)) {
+                const [filepath, lineNum, col, inlinedVar] = locInfo;
+                if (inlinedVar && rawLocDefs[inlinedVar]) {
+                    // Follow inlinedAt to get the true location
+                    const [trueFile, trueLine, trueCol] = rawLocDefs[inlinedVar];
+                    locDefs[var] = [trueFile, trueLine, trueCol];
+                } else {
+                    locDefs[var] = [filepath, lineNum, col];
+                }
+            }
+            
+            // Third pass: parse IR lines with !dbg references
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const lineNum = i + 1;
+                
+                // Match: instruction ... !dbg !N
+                const dbgMatch = line.match(/!dbg\s+(!\d+)/);
+                if (dbgMatch) {
+                    const dbgVar = dbgMatch[1];
+                    if (locDefs[dbgVar]) {
+                        irLineToLoc[lineNum] = dbgVar;
+                    }
+                }
+            }
+            
+            return { locDefs, irLineToLoc };
         }
         
         // Resolve location
@@ -363,6 +461,7 @@
                     if (!locInfo) continue;
                     [filepath, pyLine] = locInfo;
                 } else {
+                    // For ttir, ttgir, and llir, locInfo is a var (!N or #locN) that needs resolution
                     const resolved = resolveLocation(locInfo, locDefs);
                     if (!resolved) continue;
                     [filepath, pyLine] = resolved;
@@ -411,6 +510,8 @@
                 let irLineToLoc, locDefs;
                 if (fileType === 'ptx') {
                     ({ locDefs, irLineToLoc } = parsePtxLocations(irLines));
+                } else if (fileType === 'llir') {
+                    ({ locDefs, irLineToLoc } = parseLlirLocations(irLines));
                 } else {
                     ({ locDefs, irLineToLoc } = parseTtirLocations(irLines));
                 }
@@ -431,7 +532,8 @@
                 
                 document.getElementById('ir-filename').textContent = irFilename;
                 document.getElementById('py-filename').textContent = pyFilename;
-                document.getElementById('ir-panel-name').textContent = fileType === 'ptx' ? 'PTX' : 'TTIR';
+                const panelNames = { 'ptx': 'PTX', 'llir': 'LLIR', 'ttir': 'TTIR', 'ttgir': 'TTGIR' };
+                document.getElementById('ir-panel-name').textContent = panelNames[fileType] || 'IR';
                 
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('viewer-container').style.display = 'flex';

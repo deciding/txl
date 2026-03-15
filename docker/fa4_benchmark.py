@@ -34,7 +34,7 @@ fa4_image = (
     .pip_install("torch-c-dlpack-ext")
     .pip_install("triton==3.5.1")
     .pip_install("flash-attn-4==4.0.0b4")
-    .pip_install("teraxlang==3.5.1.dev1")
+    .pip_install("teraxlang==3.5.1.dev4")
     #.add_local_file(
     #    root_dir
     #    / "thirdparty"

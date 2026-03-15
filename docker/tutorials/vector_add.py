@@ -22,7 +22,7 @@ txl_image = (
     Image.debian_slim(python_version="3.12")
     .workdir("/workspace")
     .pip_install("torch", "pytest")
-    .pip_install("teraxlang==3.5.1.dev3")
+    .pip_install("teraxlang==3.5.1.dev4")
     .add_local_dir(root_dir / "tutorials", remote_path="/workspace/tutorials")
 )
 
@@ -30,7 +30,7 @@ txl_image = (
 @app.function(
     gpu=GPU_model,
     image=txl_image,
-    timeout=600,
+    timeout=60,
     volumes={DUMP_VOL: volume},
 )
 def run_vector_add():

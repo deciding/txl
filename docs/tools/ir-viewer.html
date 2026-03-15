@@ -321,14 +321,25 @@
                 }
                 
                 // Check for callsite (ends with @)
+                // Pattern: .loc 2 291 36 // standard.py:291:36 @
+                // Note: file_id may not be in .file table, but comment has valid filename
                 match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)\s*@/);
                 if (match) {
+                    const fileId = parseInt(match[1]);
                     const filename = match[4];
                     const srcLine = parseInt(match[5]);
-                    if (prevLocInfo) {
+                    const srcCol = parseInt(match[6]);
+                    
+                    // If file_id is not in .file table but we have comment, use comment's filename
+                    // This handles cases where the PTX references an external function
+                    if (!(fileId in fileIdToName)) {
+                        irLineToLoc[lineNum] = [filename, srcLine, srcCol];
+                    } else if (prevLocInfo) {
+                        // Use previous location (the actual code location, not the callsite)
                         irLineToLoc[lineNum] = prevLocInfo;
                     } else {
-                        irLineToLoc[lineNum] = [filename, srcLine, 0];
+                        // Fallback to comment's filename
+                        irLineToLoc[lineNum] = [filename, srcLine, srcCol];
                     }
                 }
             }

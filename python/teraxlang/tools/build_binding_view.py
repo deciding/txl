@@ -138,6 +138,7 @@ def parse_ptx_locations(ptx_path):
 
         # Check if this line has a reference to a callsite (ends with @)
         # Pattern: .loc 2 261 15 // standard.py:261:15 @
+        # Note: file_id may not be in .file table, but comment has valid filename
         callsite_match = re.match(
             r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)\s*@", line
         )
@@ -149,10 +150,16 @@ def parse_ptx_locations(ptx_path):
             src_line = int(callsite_match.group(5))
             src_col = int(callsite_match.group(6))
 
-            # For callsite, use previous loc as fallback
-            if prev_loc_info:
+            # If file_id is not in .file table but we have comment, use comment's filename
+            # This handles cases where the PTX references an external function
+            if file_id not in file_id_to_name:
+                # Use the filename from the comment (the callsite location)
+                ir_line_to_loc[line_num] = (filename, src_line, src_col)
+            elif prev_loc_info:
+                # Use previous location (the actual code location, not the callsite)
                 ir_line_to_loc[line_num] = prev_loc_info
             else:
+                # Fallback to comment's filename
                 ir_line_to_loc[line_num] = (filename, src_line, src_col)
             continue
 

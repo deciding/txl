@@ -62,16 +62,16 @@
         .panel-content {
             flex: 1; overflow: auto;
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-            font-size: 12px; line-height: 1.5;
+            font-size: 12px; line-height: 1.5; overflow-x: scroll;
         }
         
-        .line { display: flex; white-space: pre; }
+        .line { display: flex; min-width: max-content; }
         .line-num {
             width: 50px; text-align: right; padding-right: 12px;
             color: #999; user-select: none;
             border-right: 1px solid #eee; flex-shrink: 0;
         }
-        .line-content { flex: 1; padding-left: 12px; }
+        .line-content { white-space: pre; padding-left: 12px; }
         .line:hover { background: #f0f0f0; cursor: pointer; }
         
         .line.linked:hover { background: #e3f2fd; }
@@ -510,7 +510,7 @@
             const irEl = document.querySelector(`[data-ir-line="${irLine}"]`);
             if (irEl) {
                 irEl.classList.add('highlight-ir');
-                irEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                irEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
             }
             
             // Highlight bound Python lines
@@ -518,7 +518,7 @@
                 const pyEl = document.querySelector(`[data-py-line="${pyLine}"]`);
                 if (pyEl) {
                     pyEl.classList.add('highlight-py');
-                    pyEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    pyEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
                 }
             });
         }
@@ -532,7 +532,7 @@
             const pyEl = document.querySelector(`[data-py-line="${pyLine}"]`);
             if (pyEl) {
                 pyEl.classList.add('highlight-py');
-                pyEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                pyEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
             }
             
             // Highlight bound IR lines
@@ -541,7 +541,7 @@
                 if (irEl) {
                     irEl.classList.add('highlight-ir');
                     if (idx === 0) {
-                        irEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        irEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
                     }
                 }
             });

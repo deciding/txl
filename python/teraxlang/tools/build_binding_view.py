@@ -280,10 +280,10 @@ def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=Tr
         .panel {{ flex: 1; display: flex; flex-direction: column; border-right: 1px solid #ddd; overflow: hidden; }}
         .panel:last-child {{ border-right: none; }}
         .panel-header {{ background: #f5f5f5; padding: 8px 12px; font-weight: 600; font-size: 13px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; }}
-        .panel-content {{ flex: 1; overflow: auto; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: 12px; line-height: 1.5; }}
-        .line {{ display: flex; white-space: pre; }}
+        .panel-content {{ flex: 1; overflow: auto; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: 12px; line-height: 1.5; overflow-x: scroll; }}
+        .line {{ display: flex; min-width: max-content; }}
         .line-num {{ width: 50px; text-align: right; padding-right: 12px; color: #999; user-select: none; border-right: 1px solid #eee; flex-shrink: 0; }}
-        .line-content {{ flex: 1; padding-left: 12px; }}
+        .line-content {{ white-space: pre; padding-left: 12px; }}
         .line:hover {{ background: #f0f0f0; cursor: pointer; }}
         .line.linked:hover {{ background: #e3f2fd; }}
         .line.linked.py-linked {{ background: #fff3e0; }}
@@ -444,12 +444,12 @@ def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=Tr
                 const pyEl = pyPanel.querySelector(`[data-py-line="${pyLine}"]`);
                 if (pyEl) {
                     pyEl.classList.add('highlight-py');
-                    pyEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    pyEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
                 }
             });
             
-            // Scroll IR line into view
-            line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Scroll IR line into view (only vertically)
+            line.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
         });
         
         // Python line click -> highlight corresponding IR lines
@@ -479,13 +479,13 @@ def generate_html(ir_path, py_path, output_path=None, file_type=None, verbose=Tr
                     irEl.classList.add('highlight-ir');
                     if (firstIrLine === null) {
                         firstIrLine = irLine;
-                        irEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        irEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
                     }
                 }
             });
             
-            // Scroll Python line into view
-            line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Scroll Python line into view (only vertically)
+            line.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
         });
         
         // Escape key to clear highlights

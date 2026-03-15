@@ -320,11 +320,10 @@
                     continue;
                 }
                 
-                // Check for callsite (ends with @callee[line])
-                // Pattern: .loc 2 291 36 // standard.py:291:36 @vector_add.py[77]
-                // - file_id 2 may not be in .file table (external function)
-                // - After @ is callee file (vector_add.py) with line in brackets [77]
-                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)\s*@([^[]+)\[(\d+)\]/);
+                // Check for callsite (format: @[true_file:line_no:col_no])
+                // Pattern: .loc 2 291 36 // standard.py:291:36 @[vector_add.py:77:0]
+                // - After @[...] is the true source location: file:line:col
+                match = line.match(/^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*\/\/\s*([^:]+):(\d+):(\d+)\s*@\[([^:]+):(\d+):(\d+)\]/);
                 if (match) {
                     const fileId = parseInt(match[1]);
                     const ptxLine = parseInt(match[2]);
@@ -332,19 +331,12 @@
                     const callsiteFile = match[4];
                     const callsiteLine = parseInt(match[5]);
                     const callsiteCol = parseInt(match[6]);
-                    const calleeFile = match[7];
-                    const calleeLine = parseInt(match[8]);
+                    const trueFile = match[7];
+                    const trueLine = parseInt(match[8]);
+                    const trueCol = parseInt(match[9]);
                     
-                    // Look up callee_file in file_id_to_name to find actual source
-                    // file_id maps to actual source file
-                    if (fileId in fileIdToName) {
-                        // Use actual source file from .file table with callee line
-                        const actualFile = fileIdToName[fileId];
-                        irLineToLoc[lineNum] = [actualFile, calleeLine, ptxCol];
-                    } else {
-                        // file_id not in .file table - use callee filename from @ with callee line
-                        irLineToLoc[lineNum] = [calleeFile, calleeLine, ptxCol];
-                    }
+                    // Use true source location from @[...] format
+                    irLineToLoc[lineNum] = [trueFile, trueLine, trueCol];
                 }
             }
             

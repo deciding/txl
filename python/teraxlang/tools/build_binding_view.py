@@ -136,12 +136,12 @@ def parse_ptx_locations(ptx_path):
             ir_line_to_loc[line_num] = (filename, src_line, src_col)
             continue
 
-        # Check if this line has a reference to a callsite (ends with @callee[line])
-        # Pattern: .loc 2 291 36 // standard.py:291:36 @vector_add.py[77]
+        # Check if this line has a reference to a callsite (format: @[true_file:line_no:col_no])
+        # Pattern: .loc 2 291 36 // standard.py:291:36 @[vector_add.py:77:0]
         # - file_id 2 may not be in .file table (external function)
-        # - After @ is callee file (vector_add.py) with line in brackets [77]
+        # - After @[...] is the true source location: file:line:col
         callsite_match = re.match(
-            r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)\s*@([^[]+)\[(\d+)\]",
+            r"^\s*\.loc\s+(\d+)\s+(\d+)\s+(\d+)\s*//\s*([^:]+):(\d+):(\d+)\s*@\[([^:]+):(\d+):(\d+)\]",
             line,
         )
         if callsite_match:
@@ -151,18 +151,12 @@ def parse_ptx_locations(ptx_path):
             callsite_file = callsite_match.group(4)
             callsite_line = int(callsite_match.group(5))
             callsite_col = int(callsite_match.group(6))
-            callee_file = callsite_match.group(7)
-            callee_line = int(callsite_match.group(8))
+            true_file = callsite_match.group(7)
+            true_line = int(callsite_match.group(8))
+            true_col = int(callsite_match.group(9))
 
-            # Look up callee_file in file_id_to_name to find actual source
-            # file_id maps to actual source file
-            if file_id in file_id_to_name:
-                # Use actual source file from .file table with callee line
-                actual_file = file_id_to_name[file_id]
-                ir_line_to_loc[line_num] = (actual_file, callee_line, ptx_col)
-            else:
-                # file_id not in .file table - use callee filename from @ with callee line
-                ir_line_to_loc[line_num] = (callee_file, callee_line, ptx_col)
+            # Use true source location from @[...] format
+            ir_line_to_loc[line_num] = (true_file, true_line, true_col)
             continue
 
         # Match: .loc 1 799 16 (no comment - file_id, line, col)

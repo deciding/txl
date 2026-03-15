@@ -545,3 +545,83 @@ if tidx == 0:
 - `smem_desc` represents the whole block, not decomposed like MMA fragments
 - `tma_partition` requires input tensors folded in shape `(Each_Iter, Num_Iters)`
 - `subtile_cnt` in epilogue controls ILP (typically 4 for fp16)
+
+## Low-Level Mbarrier API (dense_gemm_2.py)
+
+This section documents the low-level mbarrier implementation in dense_gemm_2.py, which replaces the high-level `PipelineTmaUmma` API.
+
+### PipelineOp Types
+
+| PipelineOp | Mbarrier Type | Operation | expect_tx? |
+|-----------|---------------|-----------|------------|
+| `PipelineOp.TmaLoad` | **Full** | `mbarrier_arrive_and_expect_tx(bytes)` | **YES** |
+| `PipelineOp.TCGen05Mma` | **Empty** | `tcgen05.commit()` | **NO** |
+
+### Mbarrier Layout
+
+```
+ab_mbar_ptr: [ab_mbar_full, ab_mbar_empty]
+                  │              │
+                  ▼              ▼
+              index 0        index 1
+```
+
+- **Full mbarrier**: Signals data is ready (TMA→MMA), uses expect_tx with bytes
+- **Empty mbarrier**: Signals buffer is consumed (MMA→TMA), just sync signal
+
+### Synchronization Pattern (Single-Stage)
+
+```python
+phase = 1  # Toggle between 0 and 1
+
+for k_tile_idx in range(num_k_tiles):
+    # TMA Load: wait for empty buffer
+    cute.arch.mbarrier_wait(ab_mbar_empty, phase)
+
+    # TMA loads (single-stage: GMEM[k_tile_idx] → SMEM[0])
+    cute.copy(tma_atom_a, tAgA[(None, k_tile_idx)], tAsA[(None, 0)], tma_bar_ptr=ab_mbar_full)
+    cute.copy(tma_atom_b, ...)
+
+    # TMA arrives on full: elect_one + expect_tx
+    with cute.arch.elect_one():
+        cute.arch.mbarrier_arrive_and_expect_tx(ab_mbar_full, num_tma_copy_bytes)
+
+    # MMA: wait for full buffer
+    cute.arch.mbarrier_wait(ab_mbar_full, 1 - phase)
+
+    # MMA compute
+    cute.gemm(...)
+
+    # MMA arrives on empty: elect_one + tcgen05.commit (NO expect_tx)
+    with cute.arch.elect_one():
+        cute.nvgpu.tcgen05.commit(ab_mbar_empty)
+
+    # Toggle phase
+    phase = 1 - phase
+```
+
+### Key Rules
+
+1. **Always use `elect_one()`** for arrive operations:
+   - `mbarrier_arrive_and_expect_tx` needs elect_one
+   - `tcgen05.commit` needs elect_one
+
+2. **Single-stage indexing** (ab_stages=1):
+   - SMEM index always 0 (only one buffer)
+   - GMEM index uses `k_tile_idx`
+   - Phase toggles for mbarrier coordination only
+
+3. **Accurate mbarrier wait**:
+   - Wait for **full** mbarrier with `1 - phase` (the opposite phase)
+   - This ensures proper synchronization between TMA and MMA
+
+### Acc Mbarrier (Epilogue Sync)
+
+```python
+# Signal MMA done
+with cute.arch.elect_one():
+    cute.nvgpu.tcgen05.commit(acc_mbar_ptr)
+
+# Wait for MMA to complete
+cute.arch.mbarrier_wait(acc_mbar_ptr, phase=0)
+```

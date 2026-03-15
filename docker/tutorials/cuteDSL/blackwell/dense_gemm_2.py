@@ -161,7 +161,9 @@ def kernel(
     acc_mbar_ptr = storage.acc_mbar_ptr.data_ptr()
 
     # Initialize accumulator mbarrier - warp 0 initializes with 1 arrival expected
-    if_generate(warp_idx == 0, lambda: cute.arch.mbarrier_init(acc_mbar_ptr, 1))
+    # if_generate(warp_idx == 0, lambda: cute.arch.mbarrier_init(acc_mbar_ptr, 1))
+    if warp_idx == 0:
+        cute.arch.mbarrier_init(acc_mbar_ptr, 1)
 
     # Ensure mbarrier init is visible and sync all threads
     cute.arch.mbarrier_init_fence()
@@ -324,8 +326,9 @@ def kernel(
             # Signal that the A/B buffers have been consumed and are ready for the next load
             ab_full.release()
 
-        # Signal MMA done - warp 0 arrives at mbarrier
-        cute.arch.mbarrier_arrive(acc_mbar_ptr)
+        # Signal MMA done - use tcgen05.commit like PipelineUmmaAsync
+        with cute.arch.elect_one():
+            cute.nvgpu.tcgen05.commit(acc_mbar_ptr)
 
     #
 

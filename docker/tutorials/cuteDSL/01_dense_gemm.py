@@ -182,6 +182,21 @@ def run_dense_gemm():
     tflops2 = flops / time_ms / 1e9
     print(f"dense_gemm_2: {time_ms:.4f} ms, {tflops2:.2f} TFLOPS")
 
+    # 5. dense_gemm_3.py (with cluster support)
+    print("\n=== 5. dense_gemm_3.py Benchmark ===")
+    from cuteDSL.blackwell.dense_gemm_3 import run_dense_gemm as run_dense_gemm_3
+
+    us = run_dense_gemm_3(
+        (M, N, K),
+        tolerance=0.1,
+        warmup_iterations=warmup,
+        iterations=repeats,
+        skip_ref_check=False,
+    )
+    time_ms = us / 1000
+    tflops3 = flops / time_ms / 1e9
+    print(f"dense_gemm_3: {time_ms:.4f} ms, {tflops3:.2f} TFLOPS")
+
     print(f"\nDone! Results saved to: {DUMP_DIR}")
 
 

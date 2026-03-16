@@ -1,60 +1,76 @@
-# GEMM Implementation Comparison
+# GEMM Optimization Plan
+
+Current: dense_gemm_2 (Pipeline API) → Target: dense_gemm.py (full-featured)
 
 ## Versions Overview
 
-| Version | File | Pipeline Stages | Complexity | Use Case |
-|---------|------|----------------|-----------|----------|
-| gemm_0 | `dense_gemm_0.py` | 4 AB, 1 acc | Tutorial | 4-stage pipelining example |
-| gemm_1 | `dense_gemm_1.py` | 1 AB, 1 acc | Tutorial | Simple 1-stage pipeline |
-| gemm_2 | `dense_gemm_2.py` | 1 AB, 1 acc | Tutorial | Low-level mbarrier API |
-| full | `dense_gemm.py` | Configurable | Production | High-performance production |
+| Version | File | Description |
+|---------|------|-------------|
+| dense_gemm | `dense_gemm.py` | Full-featured production kernel |
+| dense_gemm_1 | `dense_gemm_1.py` | Low-level mbarrier API |
+| dense_gemm_2 | `dense_gemm_2.py` | Pipeline API (4-stage, no cluster) |
 
-## gemm_0 vs dense_gemm.py Comparison
+## Benchmark Results (8192x8192x4096)
 
-| Feature | gemm_0 (Tutorial) | dense_gemm.py (Full-featured) |
-|---------|-------------------|------------------------------|
-| **Pipeline Stages** | Fixed (4 AB, 1 acc) | Configurable (`num_ab_stage`, `num_acc_stage`) |
-| **Cluster Shape** | Fixed (1,1) | Configurable (`cluster_shape_mn`) |
-| **2-CTA MMA** | No | Yes (`use_2cta_instrs`) |
-| **TMA Store** | No (autovec) | Yes (`use_tma_store`) |
-| **TMA Multicast** | No | Yes (reduces L2 traffic) |
-| **Prefetch** | Simple (`prefetch_stages`) | Advanced (with `try_wait`) |
-| **Data Types** | fp16 only | fp16, bf16, tf32, int8, fp8 |
-| **Epilogue** | Simple | Flexible (epilogue_op lambda) |
-| **Code Lines** | ~500 | ~1800 |
-| **Configuration** | Hardcoded | Full CLI arguments |
+| Kernel | TFLOPS |
+|--------|--------|
+| torch.matmul (cuBLAS) | ~1700 |
+| dense_gemm.py | ~1730 |
+| dense_gemm_2.py | ~620 |
+| dense_gemm_1.py | ~340 |
 
-## Key Additional Features in dense_gemm.py
+## Key Differences: dense_gemm_2 vs dense_gemm.py
 
-### 1. TMA Multicast
-- Reduces L2 cache traffic by broadcasting loads to multiple CTAs in cluster
-- Uses `cpasync.create_tma_multicast_mask()`
+| Feature | dense_gemm_2 | dense_gemm.py |
+|---------|-------------|---------------|
+| Cluster Shape | Fixed (1,1) | Configurable (e.g., (2,1), (2,2)) |
+| 2-CTA MMA | No (cta_group=1) | Yes (cta_group=2, 256x128 tile) |
+| TMA Store | Autovec store | TMA direct store |
+| TMA Multicast | No | Yes (reduces L2 traffic) |
+| Prefetch | Basic | try_wait() speculative prefetch |
+| Data Types | fp16 only | fp16, bf16, tf32, int8, fp8 |
 
-### 2. 2-CTA MMA
-- Uses `cta_group=2` for larger MMA tiles
-- 128x256 instead of 128x128 with cta_group=1
+## Optimization Roadmap
 
-### 3. TMA Store
-- Uses TMA to store output directly to GMEM
-- vs autovec store in tutorial versions
+### Step 1: Add Cluster Support
+- Add `cluster_shape_mn` parameter
+- Modify grid computation for cluster
+- Add cluster synchronization
+- **Expected gain**: ~20-30% (more parallelism)
 
-### 4. Cluster Support
-- Multiple CTAs working together
-- Proper synchronization with multicast
+### Step 2: Add 2-CTA MMA
+- Use `cta_group=2` in MMA
+- Increase MMA tile from 128x128 to 256x128
+- Update SMEM layouts accordingly
+- **Expected gain**: ~50-100% (larger tiles)
 
-### 5. Deferred Sync
-- Uses `defer_sync=True` for better pipeline control
+### Step 3: Add TMA Store
+- Replace autovec store with TMA store
+- Add TMEM for accumulator
+- **Expected gain**: ~10-20% (better memory coalescing)
 
-### 6. Try-Wait (Speculative Prefetch)
-- Uses `try_wait()` for speculative prefetching
-- Allows overlapping computation with memory operations
+### Step 4: Add TMA Multicast
+- Add multicast for A/B loads within cluster
+- Reduces L2 cache pressure
+- **Expected gain**: ~5-10%
 
-## Quick Reference: Which Version to Use?
+### Step 5: Add try_wait Prefetch
+- Speculative prefetching
+- Better overlap of compute and memory
+- **Expected gain**: ~5-10%
 
-| Scenario | Recommended Version |
-|----------|-------------------|
-| Learning GEMM internals | gemm_1 or gemm_2 |
-| Understanding 4-stage pipeline | gemm_0 |
-| Low-level mbarrier API study | gemm_2 |
-| Production high-performance | dense_gemm.py |
-| Quick benchmark | Any tutorial version |
+### Final: Add Multi-Dtype Support
+- bf16, tf32, int8, fp8
+- Parameterize all the things
+- **Expected**: Full performance
+
+## Target Performance
+
+| Stage | Expected TFLOPS |
+|-------|-----------------|
+| Start (dense_gemm_2) | ~620 |
+| After Step 1 | ~750 |
+| After Step 2 | ~1100 |
+| After Step 3 | ~1400 |
+| After Step 4 | ~1600 |
+| After Step 5 | ~1700+ |

@@ -152,11 +152,11 @@ def run_dense_gemm():
         tflops = flops / time_ms / 1e9
         print(f"dense_gemm: {time_ms:.4f} ms, {tflops:.2f} TFLOPS")
 
-    # 3. dense_gemm_0.py
-    print("\n=== 3. dense_gemm_0.py Benchmark ===")
-    from cuteDSL.blackwell.dense_gemm_0 import run_dense_gemm
+    # 3. dense_gemm_1.py (low-level mbarrier API)
+    print("\n=== 3. dense_gemm_1.py Benchmark ===")
+    from cuteDSL.blackwell.dense_gemm_1 import run_dense_gemm as run_dense_gemm_1
 
-    us = run_dense_gemm(
+    us = run_dense_gemm_1(
         (M, N, K),
         tolerance=0.1,
         warmup_iterations=warmup,
@@ -164,8 +164,23 @@ def run_dense_gemm():
         skip_ref_check=False,
     )
     time_ms = us / 1000
-    tflops0 = flops / time_ms / 1e9
-    print(f"dense_gemm_0: {time_ms:.4f} ms, {tflops0:.2f} TFLOPS")
+    tflops1 = flops / time_ms / 1e9
+    print(f"dense_gemm_1: {time_ms:.4f} ms, {tflops1:.2f} TFLOPS")
+
+    # 4. dense_gemm_2.py (Pipeline API)
+    print("\n=== 4. dense_gemm_2.py Benchmark ===")
+    from cuteDSL.blackwell.dense_gemm_2 import run_dense_gemm as run_dense_gemm_2
+
+    us = run_dense_gemm_2(
+        (M, N, K),
+        tolerance=0.1,
+        warmup_iterations=warmup,
+        iterations=repeats,
+        skip_ref_check=False,
+    )
+    time_ms = us / 1000
+    tflops2 = flops / time_ms / 1e9
+    print(f"dense_gemm_2: {time_ms:.4f} ms, {tflops2:.2f} TFLOPS")
 
     print(f"\nDone! Results saved to: {DUMP_DIR}")
 

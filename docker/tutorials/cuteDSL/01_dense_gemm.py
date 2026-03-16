@@ -1,10 +1,6 @@
 """
-Modal script to run CUTLASS CuTeDSL dense GEMM on Blackwell B200 GPU.
-Tests correctness and benchmarks performance.
-
-Usage:
-    # Run specific version (0, 1, 2, or original):
-    modal run 01_dense_gemm.py --version 2
+Modal script to benchmark CUTLASS CuTeDSL dense GEMM on Blackwell B200 GPU.
+Tests torch.matmul and dense_gemm with same settings.
 """
 
 from datetime import datetime
@@ -34,7 +30,7 @@ cutlass_image = (
 cutlass_image = (
     cutlass_image.pip_install("torch", "pytest")
     .pip_install("nvidia-cutlass-dsl>=4.4.1")
-    .pip_install("jax", "jaxlib")
+    # .pip_install("jax", "jaxlib")
     .pip_install("triton==3.5.1")
     .add_local_dir(
         root_dir / "docker" / "tutorials" / "cuteDSL",
@@ -46,23 +42,13 @@ cutlass_image = (
 @app.function(
     gpu=GPU_model,
     image=cutlass_image,
-    timeout=120,
+    timeout=600,
     volumes={"/workspace/dump": volume},
 )
-def run_dense_gemm(version: str = "2"):
-    """
-    Run CuTeDSL Dense GEMM on Blackwell B200 GPU.
-
-    Args:
-        version: Which version to run:
-            - "0": dense_gemm_0.py (4-stage pipelining)
-            - "1": dense_gemm_1.py (1-stage pipelining)
-            - "2": dense_gemm_2.py (simplified with detailed comments)
-            - "original": dense_gemm.py (full-featured)
-    """
+def run_dense_gemm():
     import torch
-    import sys
     import os
+    import subprocess
     from datetime import datetime
 
     dump_name = "dense_gemm" + "".join(str(datetime.now()).replace(":", ".").split())
@@ -72,103 +58,118 @@ def run_dense_gemm(version: str = "2"):
     DEVICE = torch.cuda.current_device()
     print(f"GPU: {torch.cuda.get_device_name(DEVICE)}")
 
-    # Import cutlass from pip - we'll extend this with blackwell
     import cutlass
-    import cutlass.pipeline as pipeline
-    import cutlass.cute as cute
 
-    import os
-    import sys
+    blackwell_dst = "/workspace/cuteDSL/blackwell"
 
-    # Find where pip's cutlass is installed
-    cutlass_path = os.path.dirname(cutlass.__file__)
-    print(f"=== Debug: cutlass installed at {cutlass_path} ===")
+    M = 8192
+    N = 8192
+    K = 4096
+    warmup = 10
+    repeats = 100
 
-    # Create symlink from pip's cutlass to local blackwell
-    blackwell_src = "/workspace/cuteDSL/blackwell"
-    blackwell_dst = os.path.join(cutlass_path, "blackwell")
+    print(f"\n=== Benchmark: {M}x{N}x{K} ===")
+    print(f"Warmup: {warmup}, Iterations: {repeats}")
 
-    if not os.path.exists(blackwell_dst):
-        os.symlink(blackwell_src, blackwell_dst)
-        print(f"=== Created symlink: {blackwell_dst} -> {blackwell_src} ===")
+    import torch.utils.benchmark as benchmark
 
-    # Also need to add __init__.py to blackwell
-    blackwell_init = os.path.join(blackwell_dst, "__init__.py")
-    if not os.path.exists(blackwell_init):
-        with open(blackwell_init, "w") as f:
-            pass  # Empty init file
+    # 1. torch.matmul (uses cuBLAS under the hood)
+    print("\n=== 1. torch.matmul Benchmark ===")
+    torch.manual_seed(1111)
+    a = torch.empty(M, K, dtype=torch.float16).random_(-2, 2).to("cuda")
+    b = torch.empty(N, K, dtype=torch.float16).random_(-2, 2).to("cuda")
 
-    # Also need __init__.py for blackwell subpackage
-    blackwell_init = os.path.join(blackwell_dst, "__init__.py")
-    if not os.path.exists(blackwell_init):
-        with open(blackwell_init, "w") as f:
-            pass  # Empty init file
+    timer = benchmark.Timer(
+        stmt="torch.matmul(a, b.T)",
+        globals={"a": a, "b": b},
+    )
+    result = timer.blocked_autorange(min_run_time=1.0)
+    avg_time_ms = result.mean * 1e3
+    flops = 2.0 * M * N * K
+    tflops = flops / (avg_time_ms * 1e-3) / 1e12
 
-    # Now we can import from cutlass.blackwell
-    print(f"=== Debug: contents of {cutlass_path} ===")
-    print(os.listdir(cutlass_path))
+    print(f"torch.matmul: {avg_time_ms:.4f} ms, {tflops:.2f} TFLOPS")
+    print(f"  (median: {result.median * 1e3:.4f} ms)")
 
-    M = 1024
-    N = 1024
-    K = 1024
+    # 2. dense_gemm.py via subprocess
+    print("\n=== 2. dense_gemm.py Benchmark ===")
 
-    print(f"\n=== Dense GEMM Test ===")
-    print(f"M={M}, N={N}, K={K}")
-    print(f"Version: {version}")
-
-    if version == "0":
-        print("\n=== Running CuTeDSL Dense GEMM (0 - 4-stage pipelining) ===")
-        from cutlass.blackwell.dense_gemm_0 import run_dense_gemm as run_gemm
-
-        print("Running GEMM kernel...")
-        run_gemm(
-            mnk=(M, N, K),
-            tolerance=1e-1,
+    TERMINAL = False
+    if TERMINAL:
+        result = subprocess.run(
+            [
+                "python",
+                "/workspace/cuteDSL/blackwell/dense_gemm.py",
+                "--mnkl",
+                f"{M},{N},{K},1",
+                "--ab_dtype",
+                "Float16",
+                "--acc_dtype",
+                "Float32",
+                "--c_dtype",
+                "Float16",
+                "--mma_tiler_mn",
+                "256,256",
+                "--cluster_shape_mn",
+                "2,1",
+                "--use_2cta_instrs",
+                "--use_tma_store",
+                "--warmup_iterations",
+                str(warmup),
+                "--iterations",
+                str(repeats),
+                "--skip_ref_check",
+            ],
+            capture_output=True,
+            text=True,
         )
-    elif version == "1":
-        print("\n=== Running CuTeDSL Dense GEMM (1 - 1-stage pipelining) ===")
-        from cutlass.blackwell.dense_gemm_1 import run_dense_gemm as run_gemm
+        print(result.stdout)
+        if result.stderr:
+            print("STDERR:", result.stderr)
 
-        print("Running GEMM kernel...")
-        run_gemm(
-            mnk=(M, N, K),
-            tolerance=1e-1,
-        )
-    elif version == "2":
-        print(
-            "\n=== Running CuTeDSL Dense GEMM (2 - simplified with detailed comments) ==="
-        )
-        from cutlass.blackwell.dense_gemm_2 import run_dense_gemm as run_gemm
+    else:
+        from cuteDSL.blackwell.dense_gemm import run
 
-        print("Running GEMM kernel...")
-        run_gemm(
-            mnk=(M, N, K),
-            tolerance=1e-1,
-        )
-    elif version == "original":
-        print("\n=== Running CuTeDSL Dense GEMM (original - full-featured) ===")
-        from cutlass.blackwell.dense_gemm import run as run_gemm
-
-        print("Running GEMM kernel...")
-        run_gemm(
-            mnkl=(1, M, N, K),
+        us = run(
+            (M, N, K, 1),
             ab_dtype=cutlass.Float16,
             c_dtype=cutlass.Float16,
             acc_dtype=cutlass.Float32,
-            a_major="K",
-            b_major="K",
-            c_major="R",
-            tolerance=1e-1,
+            a_major="k",
+            b_major="k",
+            c_major="n",
+            mma_tiler_mn=(256, 256),
+            cluster_shape_mn=(2, 1),
+            use_2cta_instrs=True,
+            use_tma_store=True,
+            tolerance=0.1,
+            warmup_iterations=warmup,
+            iterations=repeats,
             skip_ref_check=False,
+            use_cold_l2=False,
         )
-    else:
-        raise ValueError(f"Unknown version: {version}. Choose from: 0, 1, 2, original")
+        time_ms = us / 1000
+        tflops = flops / time_ms / 1e9
+        print(f"dense_gemm: {time_ms:.4f} ms, {tflops:.2f} TFLOPS")
 
-    print("✓ Correctness PASSED!")
+    # 3. dense_gemm_0.py
+    print("\n=== 3. dense_gemm_0.py Benchmark ===")
+    from cuteDSL.blackwell.dense_gemm_0 import run_dense_gemm
+
+    us = run_dense_gemm(
+        (M, N, K),
+        tolerance=0.1,
+        warmup_iterations=warmup,
+        iterations=repeats,
+        skip_ref_check=False,
+    )
+    time_ms = us / 1000
+    tflops0 = flops / time_ms / 1e9
+    print(f"dense_gemm_0: {time_ms:.4f} ms, {tflops0:.2f} TFLOPS")
 
     print(f"\nDone! Results saved to: {DUMP_DIR}")
 
 
 @app.local_entrypoint()
-def main(version: str = "2"):
-    run_dense_gemm.remote(version=version)
+def main():
+    run_dense_gemm.remote()

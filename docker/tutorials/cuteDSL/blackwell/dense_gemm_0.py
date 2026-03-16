@@ -33,6 +33,9 @@ from cutlass.cute.nvgpu import cpasync, tcgen05
 import cutlass.utils.blackwell_helpers as sm100_utils
 from cutlass.cute.runtime import from_dlpack
 
+import cuda.bindings.driver as cuda
+import cutlass.cute.testing as testing
+
 """
 The first tutorial GEMM demonstrating a simple kernel implementation in CuTeDSL
 
@@ -92,25 +95,14 @@ def kernel(
     #
 
     # Allocate SMEM
-    # smem.allocate() vs smem.allocate_tensor():
-    #   - smem.allocate(SharedStorage): Allocates a struct in SMEM for barrier pointers (MemRange)
-    #   - smem.allocate_tensor(): Allocates a tensor in SMEM with specific layout and swizzle
-    #     * layout=a_smem_layout.outer: The outer layout (tiled shape)
-    #     * swizzle=a_smem_layout.inner: The inner swizzle pattern for bank conflict avoidance
     smem = cutlass.utils.SmemAllocator()
     storage = smem.allocate(SharedStorage)
-    # sA: SMEM tensor with shape ((128,16),1,4,4) = (MMA_atom, MMA_M_tiles, MMA_K_tiles, stages)
-    # My Notation: ((128,16),1,4,4) = per_mma_atom((128,16)), per_tma_tile(1,4), per_wave(4)
-    #     smem_desc is one descriptor for the whole block (128, 16)
     sA = smem.allocate_tensor(
         element_type=io_dtype,
         layout=a_smem_layout.outer,
         byte_alignment=128,
         swizzle=a_smem_layout.inner,
     )
-    # sB: SMEM tensor with shape ((256,16),1,4,4)
-    # My Notation: ((256,16),1,4,4) = per_mma_atom((256,16)), per_tma_tile(1,4), per_wave(4)
-    #     smem_desc is one descriptor for the whole block (256, 16)
     sB = smem.allocate_tensor(
         element_type=io_dtype,
         layout=b_smem_layout.outer,
@@ -119,12 +111,6 @@ def kernel(
     )
 
     # Allocate all TMEM columns
-    # utils.TmemAllocator parameters:
-    #   - alloc_result_dst_smem_ptr: SMEM pointer holding base address of allocated tensor memory
-    #   - barrier_for_retrieve: NamedBarrier for synchronizing TMEM pointer retrieval
-    #   - allocator_warp_id: Warp ID of allocator warp (default: 0)
-    #   - is_two_cta: Whether to coordinate two CTAs (default: False)
-    #   - arch: GPU architecture (default: "sm_100")
     tmem_alloc_barrier = pipeline.NamedBarrier(
         barrier_id=1,
         num_threads=threads_per_cta,
@@ -163,43 +149,28 @@ def kernel(
     ).make_participants()
 
     # Partition tensors for MMA and make fragments
-    # gA: (M_tile, K_tile, K_rest) = (128, 64, 16) for M=N=K=1024, tile=(128,256,64)
+    # (bM, bK, RestK)
     gA = cute.local_tile(mA_mkl, mma_tiler_mnk, mma_coord_mnk, proj=(1, None, 1))
-    # gB: (N_tile, K_tile, K_rest) = (256, 64, 16)
+    # (bN, bK, RestK)
     gB = cute.local_tile(mB_nkl, mma_tiler_mnk, mma_coord_mnk, proj=(None, 1, 1))
-    # gC: (M_tile, N_tile) = (128, 256)
+    # (bM, bN)
     gC = cute.local_tile(mC_mnl, mma_tiler_mnk, mma_coord_mnk, proj=(1, 1, None))
     thr_mma = tiled_mma.get_slice(0)
-    # (MMA_atom, MMA_M_tiles, MMA_K_tiles, RestK)
-    # My Notation: = per_mma_atom, per_tma_tile, per_tide
+    # (MMA, MMA_M, MMA_K)
     tCgA = thr_mma.partition_A(gA)
-    # (MMA_atom, MMA_N_tiles, MMA_K_tiles, RestK)
-    # My Notation: = per_mma_atom, per_tma_tile, per_tide
+    # (MMA, MMA_N, MMA_K)
     tCgB = thr_mma.partition_B(gB)
-    # (MMA_atom, MMA_M_tiles, MMA_N_tiles) = ((128,256),1,1)
-    # My Notation: = per_mma_atom, per_tma_tile
+    # (MMA, MMA_M, MMA_N)
     tCgC = thr_mma.partition_C(gC)
-    # tCrA: MMA fragment for A (smem_desc), derived from sA's smem_desc (128,16)
-    #        shape (1,1,4,4) = (1 descriptor for whole block, MMA_M_tiles, MMA_K_tiles, stages)
-    # My Notation: (1,1,4,4) = per_mma_atom(1), per_tma_tile(1,4), per_wave(4)
+    # (MMA, MMA_M, MMA_K)
     tCrA = tiled_mma.make_fragment_A(sA)
-    # tCrB: MMA fragment for B (smem_desc), derived from sB's smem_desc (256,16)
-    #        shape (1,1,4,4) = (1 descriptor for whole block, MMA_N_tiles, MMA_K_tiles, stages)
-    # My Notation: (1,1,4,4) = per_mma_atom(1), per_tma_tile(1,4), per_wave(4)
+    # (MMA, MMA_N, MMA_K)
     tCrB = tiled_mma.make_fragment_B(sB)
-    # (MMA_atom, MMA_M_tiles, MMA_N_tiles)
+    # (MMA, MMA_M, MMA_N)
     acc_shape = tiled_mma.partition_shape_C(mma_tiler_mnk[:2])
-    # tCtAcc: MMA accumulator fragment, shape ((128,256),1,1) = (MMA_atom, MMA_M_tiles, MMA_N_tiles)
-    # My Notation: ((128,256),1,1) = per_mma_atom((128,256)), per_tma_tile(1,1)
+    # (MMA, MMA_M, MMA_N)
     tCtAcc = tiled_mma.make_fragment_C(acc_shape)
     # Partition tensors for TMA; This requires the tensors partitioned for MMA
-    # tAsA: TMA address descriptor for SMEM A, shape ((8192,1),4)
-    #        = (total_elements_per_stage, num_tma_instructions, stages)
-    # My Notation: ((8192,1),4) = (per_tma_atom(8192), per_tma_tile(1)), per_wave(4)
-    # tAgA: GMEM address tensor for A
-    # My Notation: (((64,128),1),4) = per_tma_atom((64,128)), per_tma_tile(1), per_tide(4)
-    # def tma_partition(atom, cta_coord, cta_layout, smem_tensor, gmem_tensor) -> (smem_desc, gmem_desc)
-    # NOTE: tma_partition requires input tensors folded in shape (Each_Iter, Num_Iters)
     tAsA, tAgA = cute.nvgpu.cpasync.tma_partition(
         tma_atom_a,
         0,
@@ -207,10 +178,6 @@ def kernel(
         cute.group_modes(sA, 0, 3),
         cute.group_modes(tCgA, 0, 3),
     )
-    # tBsB: SMEM address tensor for B
-    # My Notation: ((8192,1),4) = (per_tma_atom(8192), per_tma_tile(1)), per_wave(4)
-    # tBgB: GMEM address tensor for B
-    # My Notation: (((64,128),1),4) = per_tma_atom((64,128)), per_tma_tile(1), per_tide(4)
     tBsB, tBgB = cute.nvgpu.cpasync.tma_partition(
         tma_atom_b,
         0,
@@ -227,55 +194,31 @@ def kernel(
     tCtAcc = cute.make_tensor(tmem_ptr, tCtAcc.layout)
 
     subtile_cnt = 4
-    # epi_tiler: ((128,64)) = subtile for epilogue (each thread loads 64 fp32 columns)
-    #   - M dimension: 128 = MMA_atom M (full width)
-    #   - N dimension: 64 = 1/4 of MMA_atom N (1 column group out of 4 subtiles)
+    # (EpiTile)
     epi_tiler = (
         (cute.size(tCtAcc, mode=[0, 0]), cute.size(tCtAcc, mode=[0, 1]) // subtile_cnt),
     )
-    # epi_tiler: ((128,64)) = subtile (each thread processes 64 columns)
-    # tCtAcc_epi: (((128,64)),((1,4),1,1)) = (EpiTile, NumTiles)
-    #   - EpiTile = (128, 64) - subtile size: 128 rows x 64 columns
-    #   - NumTiles = ((1,4),1,1) = (tiles_in_MMA_atom, MMA_M_tiles, MMA_K_tiles)
-    # My Notation: (((128,64)),((1,4),1,1)) = per_tmem_tile((128,64)), per_mma_tile((1,4)) per_tma_tile(1,1)
+    # (EpiTile, NumTiles)
     tCtAcc_epi = cute.zipped_divide(tCtAcc, epi_tiler)
-    # gC_epi: (((128,64)),((1,4),1,1)) = (EpiTile, NumTiles)
-    #   - Same structure as tCtAcc_epi but for global memory layout
-    # My Notation: (((128,64)),((1,4),1,1)) = per_tmem_tile((128,64)), per_mma_tile((1,4)) per_tma_tile(1,1)
+    # (EpiTile, NumTiles)
     gC_epi = cute.zipped_divide(tCgC, epi_tiler)
 
-    # TMEM copy atom: loads 32x32 blocks with x64 repetition (64 elements per instruction)
-    # Every thread loads 64 columns per iteration (32 elements * 2 for x64 repetition)
+    # Every thread loads 64 x fp32
     tmem_atom = cute.make_copy_atom(
         tcgen05.Ld32x32bOp(tcgen05.Repetition.x64),
         cutlass.Float32,
     )
-    # tmem_tiled_copy: creates tiled copy with the TMEM atom
     tmem_tiled_copy = tcgen05.make_tmem_copy(tmem_atom, tCtAcc_epi[None, 0])
-    # Get thread slice of the tiled copy
     tmem_thr_copy = tmem_tiled_copy.get_slice(tidx)
 
-    # tDtC: (((64,32),1),1,((1,4),1,1)) = (TmemCpy, NumTmemCpy, NumTiles)
-    #   - TmemCpy = (64, 32) - each thread's local tile: 64 rows x 32 cols
-    #   - NumTmemCpy = 1 - one copy instruction per tile
-    #   - NumTiles = ((1,4),1,1) = tile layout in the epilogue
-    #   - partitioned from tCtAcc_epi: (((128,64)),((1,4),1,1))
-    # My Notation: (((64,32),1),1,((1,4),1,1)) = per_tmem_atom((64,32)), per_tmem_tile(1), per_mma_tile((1,4)) per_tma_tile(1,1)
+    # (TmemCpy,NumTmemCpy,NumTiles)
     tDtC = tmem_thr_copy.partition_S(tCtAcc_epi)
-    # tDgC: ((64,1),1,((1,4),1,1)) = (TmemCpy, NumTmemCpy, NumTiles)
-    #   - TmemCpy = (64, 1) - destination tile in global memory
-    #   - partitioned from gC_epi: (((128,64)),((1,4),1,1))
-    # My Notation: ((64,1),1,((1,4),1,1)) = per_tmem_atom((64,1)), per_tmem_tile(1), per_mma_tile((1,4)) per_tma_tile(1,1)
+    # (TmemCpy,NumTmemCpy,NumTiles)
     tDgC = tmem_thr_copy.partition_D(gC_epi)
 
-    # tCrAcc: ((64,1),1) = register tensor for accumulator (acc_dtype = Float32)
-    #   - Shape from tDgC[None, None, 0].shape = ((64,1),1)
-    #   - Each thread holds 64 float32 values (one column of the subtile)
-    # My Notation: ((64,1),1) = per_tmem_atom((64,1)), per_tmem_tile(1)
+    # (TmemCpy,NumTmemCpy)
     tCrAcc = cute.make_rmem_tensor(tDgC[None, None, 0].shape, acc_dtype)
-    # tCrC: ((64,1),1) = register tensor for output (io_dtype = Float16)
-    #   - Same shape as tCrAcc but different dtype (convert to output dtype)
-    # My Notation: ((64,1),1) = per_tmem_atom((64,1)), per_tmem_tile(1)
+    # (TmemCpy,NumTmemCpy)
     tCrC = cute.make_rmem_tensor(tDgC[None, None, 0].shape, io_dtype)
 
     #
@@ -345,7 +288,7 @@ def kernel(
 
 
 @cute.jit
-def host_function(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor):
+def host_function(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor, stream):
     # Construct tiled MMA
     op = tcgen05.MmaF16BF16Op(
         io_dtype,
@@ -359,25 +302,6 @@ def host_function(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor):
     tiled_mma = cute.make_tiled_mma(op)
 
     # Construct SMEM layouts for A and B
-    # make_smem_layout_a(tiled_mma, mma_tiler_mnk, a_dtype, num_stages)
-    #   ├─> tiled_mma.partition_shape_A()  # Get partitioned shape (M, N, K partitions per CTA)
-    #   │   # Returns: ((M_part, N_part, K_part), M_tile, N_tile, K_tile)
-    #   │   # e.g., for 64x128 tile: ((1,2,1), 64, 64, 128)
-    #   │
-    #   ├─> get_smem_layout_atom_ab()  # Heuristic selection
-    #   │   │   # Based on major_mode (K or MN), dtype width, and major_mode_size_bits
-    #   │   └─> Returns: SmemLayoutAtomKind (K_SW128, K_SW64, K_SW32, K_INTER, MN_SW128, MN_SW64, etc.)
-    #   │
-    #   ├─> make_smem_layout_atom()  # Create actual layout atom
-    #   │   │   # Uses core.make_composed_layout + core.make_swizzle
-    #   │   │   # Swizzle patterns: INTER(128b), SW32(256b), SW64(512b), SW128(1024b)
-    #   │   └─> Returns: ComposedLayout with swizzle applied
-    #   │
-    #   └─> tile_to_mma_shape()  # Tile and stage the layout
-    #       └─> cute.tile_to_shape(cute.append(shape, num_stages), order=...)
-    #       # Final shape: ((M_atom, K_atom), MMA_M_tiles, MMA_K_tiles, num_stages)
-    #       # e.g., ((128,16), 1, 4, 4) for M=128, K=64, stages=4
-    #       # cute.select(mode=[0,1,2]) removes trailing stage dim when stages=1
     a_smem_layout = sm100_utils.make_smem_layout_a(
         tiled_mma,
         mma_tiler_mnk,
@@ -434,12 +358,16 @@ def host_function(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor):
     ).launch(
         grid=grid_shape,
         block=(threads_per_cta, 1, 1),
+        stream=stream,
     )
 
 
 def run_dense_gemm(
     mnk: Tuple[int, int, int],
     tolerance: float,
+    warmup_iterations = 10,
+    iterations = 100,
+    skip_ref_check = False
 ):
     global torch, cutlass_torch
     import torch
@@ -453,9 +381,15 @@ def run_dense_gemm(
     print()
 
     m, n, k = mnk
+    l = 1
     torch.manual_seed(1111)
+    ab_dtype = cutlass.Float16
+    c_dtype = cutlass.Float16
+    a_major = 'k'
+    b_major = 'k'
+    c_major = 'n'
 
-    # Make K-major tensors (torch tensors are row-major)
+    ## Make K-major tensors (torch tensors are row-major)
     def make_tensors(mn, k, dtype):
         shape = (mn, k)
         return (
@@ -464,34 +398,129 @@ def run_dense_gemm(
             .to(dtype=dtype, device="cuda")
         )
 
-    a = make_tensors(m, k, cutlass_torch.dtype(io_dtype))
-    b = make_tensors(n, k, cutlass_torch.dtype(io_dtype))
-    c = make_tensors(m, n, cutlass_torch.dtype(io_dtype))
-    a_tensor = (
-        from_dlpack(a, assumed_align=32)
-        .mark_layout_dynamic(leading_dim=1)
-        .mark_compact_shape_dynamic(mode=1, divisibility=k)
-    )
-    b_tensor = (
-        from_dlpack(b, assumed_align=32)
-        .mark_layout_dynamic(leading_dim=1)
-        .mark_compact_shape_dynamic(mode=1, divisibility=k)
-    )
-    c_tensor = (
-        from_dlpack(c, assumed_align=32)
-        .mark_layout_dynamic(leading_dim=1)
-        .mark_compact_shape_dynamic(mode=1, divisibility=n)
+    #a = make_tensors(m, k, cutlass_torch.dtype(io_dtype))
+    #b = make_tensors(n, k, cutlass_torch.dtype(io_dtype))
+    #c = make_tensors(m, n, cutlass_torch.dtype(io_dtype))
+    #a_tensor = (
+    #    from_dlpack(a, assumed_align=32)
+    #    .mark_layout_dynamic(leading_dim=1)
+    #    .mark_compact_shape_dynamic(mode=1, divisibility=k)
+    #)
+    #b_tensor = (
+    #    from_dlpack(b, assumed_align=32)
+    #    .mark_layout_dynamic(leading_dim=1)
+    #    .mark_compact_shape_dynamic(mode=1, divisibility=k)
+    #)
+    #c_tensor = (
+    #    from_dlpack(c, assumed_align=32)
+    #    .mark_layout_dynamic(leading_dim=1)
+    #    .mark_compact_shape_dynamic(mode=1, divisibility=n)
+    #)
+
+    def create_tensors(l, m, n, k, a_major, b_major, c_major, ab_dtype, c_dtype):
+        import torch
+        import cutlass.torch as cutlass_torch
+
+        torch.manual_seed(1111)
+
+        #a_torch_cpu = cutlass_torch.matrix(l, m, k, a_major == "m", ab_dtype) # no prepend l
+        #b_torch_cpu = cutlass_torch.matrix(l, n, k, b_major == "n", ab_dtype)
+        #c_torch_cpu = cutlass_torch.matrix(l, m, n, c_major == "m", c_dtype)
+        a_torch_cpu = make_tensors(m, k, cutlass_torch.dtype(io_dtype))
+        b_torch_cpu = make_tensors(n, k, cutlass_torch.dtype(io_dtype))
+        c_torch_cpu = make_tensors(m, n, cutlass_torch.dtype(io_dtype))
+
+        a_tensor, _ = cutlass_torch.cute_tensor_like(
+            a_torch_cpu, ab_dtype, is_dynamic_layout=True, assumed_align=16
+        )
+        b_tensor, _ = cutlass_torch.cute_tensor_like(
+            b_torch_cpu, ab_dtype, is_dynamic_layout=True, assumed_align=16
+        )
+        c_tensor, c_torch_gpu = cutlass_torch.cute_tensor_like(
+            c_torch_cpu, c_dtype, is_dynamic_layout=True, assumed_align=16
+        )
+
+        return (
+            a_tensor,
+            b_tensor,
+            c_tensor,
+            a_torch_cpu,
+            b_torch_cpu,
+            c_torch_cpu,
+            c_torch_gpu,
+        )
+
+    def generate_tensors():
+        import cutlass.torch as cutlass_torch
+
+        a_tensor, _ = cutlass_torch.cute_tensor_like(
+            a_torch_cpu, ab_dtype, is_dynamic_layout=True, assumed_align=16
+        )
+        b_tensor, _ = cutlass_torch.cute_tensor_like(
+            b_torch_cpu, ab_dtype, is_dynamic_layout=True, assumed_align=16
+        )
+        c_tensor, _ = cutlass_torch.cute_tensor_like(
+            c_torch_cpu, c_dtype, is_dynamic_layout=True, assumed_align=16
+        )
+        return testing.JitArguments(a_tensor, b_tensor, c_tensor, current_stream)
+
+    a_tensor, b_tensor, c_tensor, a_torch_cpu, b_torch_cpu, c_torch_cpu, c_torch_gpu = (
+        create_tensors(l, m, n, k, a_major, b_major, c_major, ab_dtype, c_dtype)
     )
 
+    # Get current CUDA stream from PyTorch
+    torch_stream = torch.cuda.current_stream()
+    # Get the raw stream pointer as a CUstream
+    current_stream = cuda.CUstream(torch_stream.cuda_stream)
     # Entry point to the host JIT function
-    host_function(a_tensor, b_tensor, c_tensor, no_cache=True)
+    compiled_gemm = cute.compile(host_function, a_tensor, b_tensor, c_tensor, current_stream)
 
-    # Compute reference result and verify
-    ref = (torch.einsum("mk,nk->mn", a.to(torch.float32), b.to(torch.float32))).cpu()
+    #host_function(a_tensor, b_tensor, c_tensor, no_cache=True)
+    ## Compute reference result and verify
+    #ref = (torch.einsum("mk,nk->mn", a.to(torch.float32), b.to(torch.float32))).cpu()
 
-    torch.testing.assert_close(
-        c.cpu(), ref.to(cutlass_torch.dtype(io_dtype)), atol=tolerance, rtol=1e-05
+    #torch.testing.assert_close(
+    #    c.cpu(), ref.to(cutlass_torch.dtype(io_dtype)), atol=tolerance, rtol=1e-05
+    #)
+
+    def compare(a_torch_cpu, b_torch_cpu, c_torch_gpu, c_dtype, tolerance):
+        import torch
+        import cutlass.torch as cutlass_torch
+
+        # Copy gpu result back
+        kernel_result = c_torch_gpu.cpu()
+
+        # Compute reference result
+        ref = torch.einsum(
+            "mk,nk->mn",
+            a_torch_cpu.to(dtype=torch.float32),
+            b_torch_cpu.to(dtype=torch.float32),
+        )
+
+        # Convert ref to c_dtype
+        _, ref_torch_gpu = cutlass_torch.cute_tensor_like(
+            ref, c_dtype, is_dynamic_layout=True, assumed_align=16
+        )
+        ref_result = ref_torch_gpu.cpu()
+
+        # Assert close results
+        torch.testing.assert_close(kernel_result, ref_result, atol=tolerance, rtol=1e-05)
+
+    if not skip_ref_check:
+        compiled_gemm(a_tensor, b_tensor, c_tensor, current_stream)
+        compare(a_torch_cpu, b_torch_cpu, c_torch_gpu, c_dtype, tolerance)
+
+    workspace_count = 1
+    exec_time = testing.benchmark(
+        compiled_gemm,
+        workspace_generator=generate_tensors,
+        workspace_count=workspace_count,
+        stream=current_stream,
+        warmup_iterations=warmup_iterations,
+        iterations=iterations,
     )
+
+    return exec_time  # Return execution time in microseconds
 
 
 if __name__ == "__main__":

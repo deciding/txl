@@ -1776,7 +1776,7 @@ if __name__ == "__main__":
     if len(args.cluster_shape_mn) != 2:
         parser.error("--cluster_shape_mn must contain exactly 2 values")
 
-    run(
+    us = run(
         args.mnkl,
         args.ab_dtype,
         args.c_dtype,
@@ -1794,4 +1794,5 @@ if __name__ == "__main__":
         args.skip_ref_check,
         args.use_cold_l2,
     )
+    print(f"{us}us per iter")
     print("PASS")

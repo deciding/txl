@@ -197,6 +197,21 @@ def run_dense_gemm():
     tflops3 = flops / time_ms / 1e9
     print(f"dense_gemm_3: {time_ms:.4f} ms, {tflops3:.2f} TFLOPS")
 
+    # 6. dense_gemm_4.py (with pair-UMMA / CtaGroup.TWO)
+    print("\n=== 6. dense_gemm_4.py Benchmark ===")
+    from cuteDSL.blackwell.dense_gemm_4 import run_dense_gemm as run_dense_gemm_4
+
+    us = run_dense_gemm_4(
+        (M, N, K),
+        tolerance=0.1,
+        warmup_iterations=warmup,
+        iterations=repeats,
+        skip_ref_check=False,
+    )
+    time_ms = us / 1000
+    tflops4 = flops / time_ms / 1e9
+    print(f"dense_gemm_4: {time_ms:.4f} ms, {tflops4:.2f} TFLOPS")
+
     print(f"\nDone! Results saved to: {DUMP_DIR}")
 
 

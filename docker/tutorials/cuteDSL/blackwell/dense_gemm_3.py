@@ -107,7 +107,7 @@ def kernel(
     cta_rank_in_cluster = cute.arch.make_warp_uniform(cute.arch.block_idx_in_cluster())
     block_in_cluster_coord_vmnk = cluster_layout_vmnk.get_flat_coord(
         cta_rank_in_cluster
-    )
+    ) # column-major cta id within cluster
 
     #
     # 1. Prepare args
@@ -138,8 +138,6 @@ def kernel(
         storage.tmem_holding_buf,
         barrier_for_retrieve=tmem_alloc_barrier,
     )
-    num_tmem_cols = 512
-    tmem.allocate(num_tmem_cols)
 
     # Prefetch tma descriptor
     if warp_idx == 0:
@@ -155,7 +153,7 @@ def kernel(
         num_stages=ab_stages,
         producer_group=pipeline.CooperativeGroup(pipeline.Agent.Thread),
         consumer_group=pipeline.CooperativeGroup(
-            pipeline.Agent.Thread, num_tma_producer
+            pipeline.Agent.Thread, num_tma_producer # number of participants
         ),
         tx_count=num_tma_copy_bytes,
         barrier_storage=storage.ab_mbar_ptr.data_ptr(),
@@ -170,6 +168,14 @@ def kernel(
         ),
         barrier_storage=storage.acc_mbar_ptr.data_ptr(),
     ).make_participants()
+
+    # [CLUSTER] Initialize pipeline arrive for cluster, barrier.cluster.arrive.relaxed
+    pipeline_init_arrive(cluster_shape_mn=cluster_layout_vmnk, is_relaxed=True)
+    # [CLUSTER] Wait for pipeline to complete before tmem alloc
+    pipeline_init_wait(cluster_shape_mn=cluster_layout_vmnk)
+
+    num_tmem_cols = 512
+    tmem.allocate(num_tmem_cols)
 
     # Partition tensors for MMA and make fragments
     # (bM, bK, RestK)
@@ -196,15 +202,15 @@ def kernel(
     # Partition tensors for TMA; This requires the tensors partitioned for MMA
     # [CLUSTER] Create CTA layouts from cluster_layout_vmnk
     a_cta_layout = cute.make_layout(
-        cute.slice_(cluster_layout_vmnk, (0, 0, None, 0)).shape
+        cute.slice_(cluster_layout_vmnk, (0, 0, None, 0)).shape # dim N
     )
     b_cta_layout = cute.make_layout(
         cute.slice_(cluster_layout_vmnk, (0, None, 0, 0)).shape
     )
     tAsA, tAgA = cute.nvgpu.cpasync.tma_partition(
         tma_atom_a,
-        block_in_cluster_coord_vmnk[2],
-        a_cta_layout,
+        block_in_cluster_coord_vmnk[2], # cta coord on N
+        a_cta_layout, # cta layout on dim N
         cute.group_modes(sA, 0, 3),
         cute.group_modes(tCgA, 0, 3),
     )
@@ -254,10 +260,8 @@ def kernel(
     #
     # 2. Main loop
     #
-    # [CLUSTER] Initialize pipeline arrive for cluster
-    pipeline_init_arrive(cluster_shape_mn=cluster_layout_vmnk, is_relaxed=True)
 
-    # [CLUSTER] Create multicast masks
+    # [CLUSTER] Create multicast masks, 1. tma: whom to mcast 2. mma: whom to arrive
     a_full_mcast_mask = None
     b_full_mcast_mask = None
     if cutlass.const_expr(is_a_mcast or is_b_mcast):
@@ -280,14 +284,14 @@ def kernel(
                 tAgA[(None, ab_empty.count)],
                 tAsA[(None, ab_empty.index)],
                 tma_bar_ptr=ab_empty.barrier,
-                mcast_mask=a_full_mcast_mask,
+                mcast_mask=a_full_mcast_mask, # mcast
             )
             cute.copy(
                 tma_atom_b,
                 tBgB[(None, ab_empty.count)],
                 tBsB[(None, ab_empty.index)],
                 tma_bar_ptr=ab_empty.barrier,
-                mcast_mask=b_full_mcast_mask,
+                mcast_mask=b_full_mcast_mask, # mcast
             )
 
             # Execute one K-block worth of MMA instructions
@@ -305,6 +309,9 @@ def kernel(
                 tiled_mma.set(tcgen05.Field.ACCUMULATE, True)
 
             # Signal that the A/B buffers have been consumed and are ready for the next load
+            # [CLUSTER] internally call umma_arrive_multicast
+            # PipelineTmaUmma._compute_mcast_arrival_mask
+            # PipelineTmaUmma._is_leader_cta
             ab_full.release()
 
         # Signal that the accumulator is fully computed
@@ -313,9 +320,6 @@ def kernel(
     #
     # 3. Epilogue
     #
-
-    # [CLUSTER] Wait for pipeline to complete
-    pipeline_init_wait(cluster_shape_mn=cluster_layout_vmnk)
 
     # Release TMEM allocation lock
     tmem.relinquish_alloc_permit()
@@ -373,19 +377,19 @@ def host_function(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor, stream):
     )
 
     # [CLUSTER] Compute multicast parameters
-    num_mcast_ctas_a = cute.size(cluster_layout_vmnk.shape[2])
-    num_mcast_ctas_b = cute.size(cluster_layout_vmnk.shape[1])
+    num_mcast_ctas_a = cute.size(cluster_layout_vmnk.shape[2]) # A multicast on dimension N
+    num_mcast_ctas_b = cute.size(cluster_layout_vmnk.shape[1]) # B multicast on dimension M
     is_a_mcast = num_mcast_ctas_a > 1
-    is_b_mcast = num_mcast_ctas_b > 1
+    is_b_mcast = num_mcast_ctas_b > 1 # if only 2 cta, just B multicast
 
-    # [CLUSTER] num_tma_producer for pipeline
+    # [CLUSTER] num_tma_producer for pipeline, 2 participants on dimension M
     num_tma_producer = num_mcast_ctas_a + num_mcast_ctas_b - 1
 
     print(f"cluster_layout_vmnk shape: {cluster_layout_vmnk.shape}")
     print(f"num_mcast_ctas_a: {num_mcast_ctas_a}, num_mcast_ctas_b: {num_mcast_ctas_b}")
     print(f"is_a_mcast: {is_a_mcast}, is_b_mcast: {is_b_mcast}")
 
-    # [CLUSTER] Construct TMA load atoms with cluster support
+    # [CLUSTER] Construct TMA load atoms with cluster support, mainly useful for pair-UMMA
     a_op = sm100_utils.cluster_shape_to_tma_atom_A(cluster_shape_mn, tiled_mma.thr_id)
     a_tma_atom, a_tma_tensor = cute.nvgpu.make_tiled_tma_atom_A(
         a_op,

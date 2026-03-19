@@ -111,7 +111,12 @@ def kernel(
     warp_idx = cute.arch.warp_idx()
     warp_idx = cute.arch.make_warp_uniform(warp_idx)
     bidx, bidy, _ = cute.arch.block_idx()
-    mma_coord_mnk = (bidx, bidy, None)
+    # [PAIR-UMMA] bidx coord
+    mma_coord_mnk = (bidx // cute.size(tiled_mma.thr_id.shape), bidy, None)
+
+    # [PAIR-UMMA] is leader cta
+    mma_tile_coord_v = bidx % cute.size(tiled_mma.thr_id.shape)
+    is_leader_cta = mma_tile_coord_v == 0
 
     # [CLUSTER] Get block's cluster coordinates
     cta_rank_in_cluster = cute.arch.make_warp_uniform(cute.arch.block_idx_in_cluster())
@@ -141,7 +146,7 @@ def kernel(
 
     # Allocate all TMEM columns
     tmem_alloc_barrier = pipeline.NamedBarrier(
-        barrier_id=1,
+        barrier_id=0,
         num_threads=threads_per_cta,
     )
     # [PAIR-UMMA] Compute use_2cta_instrs in kernel
@@ -161,6 +166,8 @@ def kernel(
     num_tma_copy_bytes = cute.size_in_bytes(
         io_dtype, cute.select(a_smem_layout, mode=[0, 1, 2])
     ) + cute.size_in_bytes(io_dtype, cute.select(b_smem_layout, mode=[0, 1, 2]))
+    # [PAIR-UMMA] tma load doubled by 2umma. Otherwise consumer hangs
+    num_tma_copy_bytes *= cute.size(tiled_mma.thr_id.shape)
     # [CLUSTER] Create pipeline with cluster layout and multicast producer count
     ab_producer, ab_consumer = pipeline.PipelineTmaUmma.create(
         num_stages=ab_stages,
@@ -172,7 +179,9 @@ def kernel(
         tx_count=num_tma_copy_bytes,
         barrier_storage=storage.ab_mbar_ptr.data_ptr(),
         cta_layout_vmnk=cluster_layout_vmnk,
+        defer_sync=True,
     ).make_participants()
+
     acc_producer, acc_consumer = pipeline.PipelineUmmaAsync.create(
         num_stages=acc_stage,
         producer_group=pipeline.CooperativeGroup(pipeline.Agent.Thread),
@@ -181,6 +190,8 @@ def kernel(
             threads_per_cta,
         ),
         barrier_storage=storage.acc_mbar_ptr.data_ptr(),
+        cta_layout_vmnk=cluster_layout_vmnk,
+        defer_sync=True,
     ).make_participants()
 
     # [CLUSTER] Initialize pipeline arrive for cluster, barrier.cluster.arrive.relaxed
@@ -188,7 +199,7 @@ def kernel(
     # [CLUSTER] Wait for pipeline to complete before tmem alloc
     pipeline_init_wait(cluster_shape_mn=cluster_layout_vmnk)
 
-    num_tmem_cols = 512
+    num_tmem_cols = 256
     tmem.allocate(num_tmem_cols)
 
     # Partition tensors for MMA and make fragments
@@ -198,7 +209,8 @@ def kernel(
     gB = cute.local_tile(mB_nkl, mma_tiler_mnk, mma_coord_mnk, proj=(None, 1, 1))
     # (bM, bN)
     gC = cute.local_tile(mC_mnl, mma_tiler_mnk, mma_coord_mnk, proj=(1, 1, None))
-    thr_mma = tiled_mma.get_slice(0)
+    # [PAIR-UMMA] mma thread, fixed 75% -> 50%
+    thr_mma = tiled_mma.get_slice(mma_tile_coord_v)
     # (MMA, MMA_M, MMA_K)
     tCgA = thr_mma.partition_A(gA)
     # (MMA, MMA_N, MMA_K)
@@ -243,15 +255,15 @@ def kernel(
     # Swap the pointer in tCtAcc
     tCtAcc = cute.make_tensor(tmem_ptr, tCtAcc.layout)
 
-    subtile_cnt = 4
+    #subtile_cnt = 4
     # (EpiTile)
-    epi_tiler = (
-        (cute.size(tCtAcc, mode=[0, 0]), cute.size(tCtAcc, mode=[0, 1]) // subtile_cnt),
-    )
+    epi_tiler = cta_tile_shape_mnk[:2]
     # (EpiTile, NumTiles)
-    tCtAcc_epi = cute.zipped_divide(tCtAcc, epi_tiler)
+    #tCtAcc_epi = cute.zipped_divide(tCtAcc, epi_tiler)
+    tCtAcc_epi = cute.flat_divide(tCtAcc[((None, None), 0, 0)], epi_tiler)
     # (EpiTile, NumTiles)
-    gC_epi = cute.zipped_divide(tCgC, epi_tiler)
+    #gC_epi = cute.zipped_divide(tCgC, epi_tiler)
+    gC_epi = cute.flat_divide(tCgC[((None, None), 0, 0)], epi_tiler)
 
     # [PAIR-UMMA] Use sm100_utils for TMEM load with pair-UMMA support
     tmem_copy_atom = sm100_utils.get_tmem_load_op(
@@ -262,18 +274,18 @@ def kernel(
         epi_tiler,
         use_2cta_instrs,
     )
-    tmem_tiled_copy = tcgen05.make_tmem_copy(tmem_copy_atom, tCtAcc_epi[None, 0])
+    #tmem_tiled_copy = tcgen05.make_tmem_copy(tmem_copy_atom, tCtAcc_epi[None, 0])
+    tmem_tiled_copy = tcgen05.make_tmem_copy(tmem_copy_atom, tCtAcc_epi[None, None, 0, 0])
     tmem_thr_copy = tmem_tiled_copy.get_slice(tidx)
 
     # (TmemCpy,NumTmemCpy,NumTiles)
     tDtC = tmem_thr_copy.partition_S(tCtAcc_epi)
     # (TmemCpy,NumTmemCpy,NumTiles)
     tDgC = tmem_thr_copy.partition_D(gC_epi)
-
     # (TmemCpy,NumTmemCpy)
-    tCrAcc = cute.make_rmem_tensor(tDgC[None, None, 0].shape, acc_dtype)
+    tCrAcc = cute.make_rmem_tensor(tDgC[None, None, None, 0, 0].shape, acc_dtype)
     # (TmemCpy,NumTmemCpy)
-    tCrC = cute.make_rmem_tensor(tDgC[None, None, 0].shape, io_dtype)
+    tCrC = cute.make_rmem_tensor(tDgC[None, None, None, 0, 0].shape, io_dtype)
 
     #
     # 2. Main loop
@@ -295,6 +307,8 @@ def kernel(
     if warp_idx == 0:
         # Wait for a empty accumulator buffer
         acc_empty = acc_producer.acquire_and_advance()
+
+        # MMA mainloop
         for k_tile_idx in cutlass.range(num_k_tiles, prefetch_stages=ab_stages - 2):
             # Issue TMA loads
             ab_empty = ab_producer.acquire_and_advance()
@@ -313,28 +327,30 @@ def kernel(
                 mcast_mask=b_full_mcast_mask,  # mcast
             )
 
-            # Execute one K-block worth of MMA instructions
-            ab_full = ab_consumer.wait_and_advance()
-            num_k_blocks = cute.size(tCrA, mode=[2])
-            for k_block_idx in cutlass.range_constexpr(num_k_blocks):
-                k_block_coord = (None, None, k_block_idx, ab_full.index)
-                cute.gemm(
-                    tiled_mma,
-                    tCtAcc,
-                    tCrA[k_block_coord],
-                    tCrB[k_block_coord],
-                    tCtAcc,
-                )
-                tiled_mma.set(tcgen05.Field.ACCUMULATE, True)
+            if is_leader_cta:
+                # Execute one K-block worth of MMA instructions
+                ab_full = ab_consumer.wait_and_advance()
+                num_k_blocks = cute.size(tCrA, mode=[2])
+                for k_block_idx in cutlass.range_constexpr(num_k_blocks):
+                    k_block_coord = (None, None, k_block_idx, ab_full.index)
+                    cute.gemm(
+                        tiled_mma,
+                        tCtAcc,
+                        tCrA[k_block_coord],
+                        tCrB[k_block_coord],
+                        tCtAcc,
+                    )
+                    tiled_mma.set(tcgen05.Field.ACCUMULATE, True)
 
-            # Signal that the A/B buffers have been consumed and are ready for the next load
-            # [CLUSTER] internally call umma_arrive_multicast
-            # PipelineTmaUmma._compute_mcast_arrival_mask
-            # PipelineTmaUmma._is_leader_cta
-            ab_full.release()
+                # Signal that the A/B buffers have been consumed and are ready for the next load
+                # [CLUSTER] internally call umma_arrive_multicast
+                # PipelineTmaUmma._compute_mcast_arrival_mask
+                # PipelineTmaUmma._is_leader_cta
+                ab_full.release()
 
         # Signal that the accumulator is fully computed
-        acc_empty.commit()
+        if is_leader_cta:
+            acc_empty.commit()
 
     #
     # 3. Epilogue
@@ -346,12 +362,18 @@ def kernel(
     # Wait for the accumulator buffer to be full
     acc_full = acc_consumer.wait_and_advance()
 
+    # [PAIR-UMMA] use CopyUniversalOp is faster than autovec_copy in 2umma
+    simt_atom = cute.make_copy_atom(cute.nvgpu.CopyUniversalOp(), io_dtype)
     # TMEM -> RMEM -> GEMM
     # Sub-tiling for better instruction-level parallelism
-    for i in cutlass.range(cute.size(tDtC, mode=[2])):
-        cute.copy(tmem_tiled_copy, tDtC[None, None, i], tCrAcc)
+    tDtC = cute.group_modes(tDtC, 3, cute.rank(tDtC))
+    tDgC = cute.group_modes(tDgC, 3, cute.rank(tDgC))
+    for i in cutlass.range(cute.size(tDtC, mode=[3])):
+        cute.copy(tmem_tiled_copy, tDtC[None, None, None, i], tCrAcc)
         tCrC.store(tCrAcc.load().to(io_dtype))
-        cute.autovec_copy(tCrC, tDgC[None, None, i])
+        #cute.autovec_copy(tCrC, tDgC[None, None, None, i])
+        cute.copy(simt_atom, tCrC, tDgC[(None, None, None, i)])
+
     acc_full.release()
 
     # Deallocate TMEM
@@ -362,16 +384,24 @@ def kernel(
 @cute.jit
 def host_function(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor, stream):
     # Construct tiled MMA
-    op = tcgen05.MmaF16BF16Op(
+    #op = tcgen05.MmaF16BF16Op(
+    #    io_dtype,
+    #    acc_dtype,
+    #    mma_inst_shape_mnk,
+    #    tcgen05.CtaGroup.TWO,  # [PAIR-UMMA] Changed from ONE to TWO for pair-UMMA
+    #    tcgen05.OperandSource.SMEM,
+    #    tcgen05.OperandMajorMode.K,
+    #    tcgen05.OperandMajorMode.K,
+    #)
+    #tiled_mma = cute.make_tiled_mma(op)
+    tiled_mma = sm100_utils.make_trivial_tiled_mma(
         io_dtype,
+        tcgen05.OperandMajorMode.K,
+        tcgen05.OperandMajorMode.K,
         acc_dtype,
-        mma_inst_shape_mnk,
-        tcgen05.CtaGroup.TWO,  # [PAIR-UMMA] Changed from ONE to TWO for pair-UMMA
-        tcgen05.OperandSource.SMEM,
-        tcgen05.OperandMajorMode.K,
-        tcgen05.OperandMajorMode.K,
+        tcgen05.CtaGroup.TWO,
+        mma_tiler_mnk[:2],
     )
-    tiled_mma = cute.make_tiled_mma(op)
 
     # [PAIR-UMMA] Compute use_2cta_instrs in host_function
     use_2cta_instrs = cute.size(tiled_mma.thr_id.shape) == 2
@@ -465,8 +495,12 @@ def host_function(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor, stream):
 
     # Launch the kernel with cluster support
     cluster_shape_mnl = (*cluster_shape_mn, 1)
+    # [PAIR-UMMA] grid size need to consider the 2cta influece on m dimension, 50% errors -> 0%
     grid_shape = cute.round_up(
-        cute.ceil_div((*c.layout.shape, 1), mma_tiler_mnk[:2]),
+        cute.ceil_div(
+            (*c.layout.shape, 1),
+            (mma_tiler_mnk[0] // cute.size(tiled_mma.thr_id.shape), mma_tiler_mnk[1])
+        ),
         cluster_shape_mnl,
     )
     # [CLUSTER] Launch kernel with cluster parameters

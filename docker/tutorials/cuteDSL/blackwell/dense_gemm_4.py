@@ -68,7 +68,7 @@ mma_tiler_mnk = (
 threads_per_cta = 128
 
 # Pipeline stage configuration
-ab_stages = 4
+ab_stages = 7 # TODO: don't hardcode this
 acc_stage = 1
 
 # Cluster configuration (Step 1: Add cluster support)
@@ -112,13 +112,16 @@ def kernel(
     warp_idx = cute.arch.make_warp_uniform(warp_idx)
     bidx, bidy, _ = cute.arch.block_idx()
     # [PAIR-UMMA] bidx coord
+    # grid size is M / (bM/2), but gA is in size bM. so bidx / 2 is needed
     mma_coord_mnk = (bidx // cute.size(tiled_mma.thr_id.shape), bidy, None)
 
     # [PAIR-UMMA] is leader cta
+    # mma_tile_coord_v 1. for is_leader_cta, 2. for slice tiled_mma
     mma_tile_coord_v = bidx % cute.size(tiled_mma.thr_id.shape)
     is_leader_cta = mma_tile_coord_v == 0
 
     # [CLUSTER] Get block's cluster coordinates
+    # block_in_cluster_coord_vmnk: 1. tma_partition, 2. mcast mask
     cta_rank_in_cluster = cute.arch.make_warp_uniform(cute.arch.block_idx_in_cluster())
     block_in_cluster_coord_vmnk = cluster_layout_vmnk.get_flat_coord(
         cta_rank_in_cluster
@@ -149,10 +152,11 @@ def kernel(
         barrier_id=0,
         num_threads=threads_per_cta,
     )
-    # [PAIR-UMMA] Compute use_2cta_instrs in kernel
     tmem = utils.TmemAllocator(
         storage.tmem_holding_buf,
         barrier_for_retrieve=tmem_alloc_barrier,
+        # [PAIR-UMMA]
+        # if 2umma, should sync 2 ctas for tmem dealloc
         is_two_cta=use_2cta_instrs,
         two_cta_tmem_dealloc_mbar_ptr=storage.tmem_dealloc_mbar_ptr,
     )
@@ -167,6 +171,9 @@ def kernel(
         io_dtype, cute.select(a_smem_layout, mode=[0, 1, 2])
     ) + cute.size_in_bytes(io_dtype, cute.select(b_smem_layout, mode=[0, 1, 2]))
     # [PAIR-UMMA] tma load doubled by 2umma. Otherwise consumer hangs
+    # for 2umma, both A and B smem_layout are bM/2 and bN/2
+    # Tricky: cp.async.bulk.tensor .cta_group::2 will make even cta notify even, odd notify even
+    #  so both smem expect_tx should double
     num_tma_copy_bytes *= cute.size(tiled_mma.thr_id.shape)
     # [CLUSTER] Create pipeline with cluster layout and multicast producer count
     ab_producer, ab_consumer = pipeline.PipelineTmaUmma.create(
@@ -179,7 +186,6 @@ def kernel(
         tx_count=num_tma_copy_bytes,
         barrier_storage=storage.ab_mbar_ptr.data_ptr(),
         cta_layout_vmnk=cluster_layout_vmnk,
-        defer_sync=True,
     ).make_participants()
 
     acc_producer, acc_consumer = pipeline.PipelineUmmaAsync.create(
@@ -191,16 +197,13 @@ def kernel(
         ),
         barrier_storage=storage.acc_mbar_ptr.data_ptr(),
         cta_layout_vmnk=cluster_layout_vmnk,
-        defer_sync=True,
     ).make_participants()
 
-    # [CLUSTER] Initialize pipeline arrive for cluster, barrier.cluster.arrive.relaxed
-    pipeline_init_arrive(cluster_shape_mn=cluster_layout_vmnk, is_relaxed=True)
-    # [CLUSTER] Wait for pipeline to complete before tmem alloc
-    pipeline_init_wait(cluster_shape_mn=cluster_layout_vmnk)
-
-    num_tmem_cols = 256
-    tmem.allocate(num_tmem_cols)
+    # [CLUSTER] Initialize pipeline if you used defer_sync
+    ## mbarrier_init_fence, cluster_arrive
+    #pipeline_init_arrive(cluster_shape_mn=cluster_layout_vmnk, is_relaxed=True)
+    ## cluster_wait
+    #pipeline_init_wait(cluster_shape_mn=cluster_layout_vmnk)
 
     # Partition tensors for MMA and make fragments
     # (bM, bK, RestK)
@@ -225,6 +228,10 @@ def kernel(
     acc_shape = tiled_mma.partition_shape_C(mma_tiler_mnk[:2])
     # (MMA, MMA_M, MMA_N)
     tCtAcc = tiled_mma.make_fragment_C(acc_shape)
+
+    num_tmem_cols = utils.get_num_tmem_alloc_cols(tCtAcc) # no hard code
+    tmem.allocate(num_tmem_cols)
+
     # Partition tensors for TMA; This requires the tensors partitioned for MMA
     # [CLUSTER] Create CTA layouts from cluster_layout_vmnk
     a_cta_layout = cute.make_layout(
@@ -344,7 +351,8 @@ def kernel(
 
                 # Signal that the A/B buffers have been consumed and are ready for the next load
                 # [CLUSTER] internally call umma_arrive_multicast
-                # PipelineTmaUmma._compute_mcast_arrival_mask
+                # PipelineTmaUmma._compute_mcast_arrival_mask: mma multicast, include all ctas that should be informed
+                # because only is_leader_cta trigger arrive, so participants remain tma count.
                 # PipelineTmaUmma._is_leader_cta
                 ab_full.release()
 
@@ -371,7 +379,6 @@ def kernel(
     for i in cutlass.range(cute.size(tDtC, mode=[3])):
         cute.copy(tmem_tiled_copy, tDtC[None, None, None, i], tCrAcc)
         tCrC.store(tCrAcc.load().to(io_dtype))
-        #cute.autovec_copy(tCrC, tDgC[None, None, None, i])
         cute.copy(simt_atom, tCrC, tDgC[(None, None, None, i)])
 
     acc_full.release()
@@ -384,16 +391,7 @@ def kernel(
 @cute.jit
 def host_function(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor, stream):
     # Construct tiled MMA
-    #op = tcgen05.MmaF16BF16Op(
-    #    io_dtype,
-    #    acc_dtype,
-    #    mma_inst_shape_mnk,
-    #    tcgen05.CtaGroup.TWO,  # [PAIR-UMMA] Changed from ONE to TWO for pair-UMMA
-    #    tcgen05.OperandSource.SMEM,
-    #    tcgen05.OperandMajorMode.K,
-    #    tcgen05.OperandMajorMode.K,
-    #)
-    #tiled_mma = cute.make_tiled_mma(op)
+    # [PAIR-UMMA] Simpler way to create than tcgen05.MmaF16BF16Op and make_tiled_mma
     tiled_mma = sm100_utils.make_trivial_tiled_mma(
         io_dtype,
         tcgen05.OperandMajorMode.K,
@@ -456,7 +454,8 @@ def host_function(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor, stream):
     is_a_mcast = num_mcast_ctas_a > 1
     is_b_mcast = num_mcast_ctas_b > 1  # if only 2 cta, just B multicast
 
-    # [CLUSTER] num_tma_producer for pipeline, 2 participants on dimension M
+    # [CLUSTER] num_tma_producer for pipeline, 1+1-1 for 2umma
+    # [PAIR-UMMA] because only is_leader_cta trigger arrive, so participants remain tma count.
     num_tma_producer = num_mcast_ctas_a + num_mcast_ctas_b - 1
 
     print(f"cluster_layout_vmnk shape: {cluster_layout_vmnk.shape}")

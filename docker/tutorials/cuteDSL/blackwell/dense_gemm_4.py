@@ -380,6 +380,8 @@ def kernel(
         cute.copy(tmem_tiled_copy, tDtC[None, None, None, i], tCrAcc)
         tCrC.store(tCrAcc.load().to(io_dtype))
         cute.copy(simt_atom, tCrC, tDgC[(None, None, None, i)])
+        # This will store v4 to smem then load v4 and store to gmem
+        #cute.autovec_copy(tCrC, tDgC[None, None, None, i])
 
     acc_full.release()
 
@@ -423,6 +425,7 @@ def host_function(a: cute.Tensor, b: cute.Tensor, c: cute.Tensor, stream):
     )
 
     # Construct SMEM layouts for A and B
+    # [PAIR-UMMA] will slice based on tiled_mma shape
     a_smem_layout = sm100_utils.make_smem_layout_a(
         tiled_mma,
         mma_tiler_mnk,

@@ -43,6 +43,7 @@ cutlass_image = (
     .pip_install("nvidia-cutlass-dsl>=4.4.1")
     # .pip_install("jax", "jaxlib")
     .pip_install("triton==3.5.1")
+    .pip_install("teraxlang==3.5.1.dev4")
     .add_local_dir(
         root_dir / "docker" / "tutorials" / "cuteDSL",
         remote_path="/workspace/cuteDSL",
@@ -65,6 +66,9 @@ def run_dense_gemm():
     dump_name = "dense_gemm" + "".join(str(datetime.now()).replace(":", ".").split())
     DUMP_DIR = "/workspace/dump/" + dump_name
     os.makedirs(DUMP_DIR, exist_ok=True)
+    os.environ["CUTE_DSL_DUMP_DIR"] = DUMP_DIR
+    os.environ["CUTE_DSL_KEEP_PTX"] = "1"
+    os.environ["CUTE_DSL_LINEINFO"] = "1"
 
     DEVICE = torch.cuda.current_device()
     print(f"GPU: {torch.cuda.get_device_name(DEVICE)}")
@@ -231,7 +235,22 @@ def run_dense_gemm():
         tflops4 = flops / time_ms / 1e9
         print(f"dense_gemm_4: {time_ms:.4f} ms, {tflops4:.2f} TFLOPS")
 
+        # Generate HTML viewers for IR files
+        print(f"\n=== Generating HTML viewers for IR files ===")
+        print(f"IR dump directory: {DUMP_DIR}")
+
+        # Python source file is mounted at /workspace/tutorials/vector_add.py
+        py_file = "/workspace/cuteDSL/blackwell/dense_gemm_4.py"
+
+        # Generate HTML viewers for all IR files in the dump directory
+        from teraxlang.tools.build_binding_view import generate_htmls
+        generate_htmls(DUMP_DIR, py_file, verbose=True)
+
+        print(f"\nHTML viewers generated!")
+        print(f"to download and view: modal volume get {VOLUME_NAME} {dump_name}")
+
     print(f"\nDone! Results saved to: {DUMP_DIR}")
+
 
 
 @app.local_entrypoint()
